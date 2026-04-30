@@ -1,3 +1,8 @@
+"use client";
+
+import { motion, useReducedMotion } from "framer-motion";
+import { createCardVariants, createHoverLift, createItemVariants } from "../motion";
+
 const fileRows = [
   {
     fileId: "F-101",
@@ -36,8 +41,18 @@ const fileRows = [
 const tableColumns = ["File ID", "Client", "Matter", "Lead", "Status", "Due"];
 
 export function ActiveFilesTable() {
+  const shouldReduceMotion = useReducedMotion();
+  const cardVariants = createCardVariants(shouldReduceMotion);
+  const rowVariants = createItemVariants(shouldReduceMotion, "y", 12);
+  const hoverLift = createHoverLift(shouldReduceMotion);
+
   return (
-    <section className="dashboard-card dashboard-card--files" aria-labelledby="active-files-title">
+    <motion.section
+      className="dashboard-card dashboard-card--files"
+      aria-labelledby="active-files-title"
+      variants={cardVariants}
+      whileHover={hoverLift}
+    >
       <div className="dashboard-card__header">
         <h2 id="active-files-title">Active Files</h2>
       </div>
@@ -52,17 +67,30 @@ export function ActiveFilesTable() {
             </tr>
           </thead>
           <tbody>
-            {fileRows.map((row) => (
-              <tr key={row.fileId}>
+            {fileRows.map((row, index) => (
+              <motion.tr
+                key={row.fileId}
+                variants={rowVariants}
+                initial={shouldReduceMotion ? false : "hidden"}
+                animate="show"
+                transition={{ delay: shouldReduceMotion ? 0 : 0.07 * index }}
+              >
                 <td>{row.fileId}</td>
                 <td>{row.client}</td>
                 <td>{row.matter}</td>
                 <td>{row.lead}</td>
                 <td>
-                  <span className="files-status-badge">{row.status}</span>
+                  <motion.span
+                    className="files-status-badge"
+                    initial={shouldReduceMotion ? false : { scale: 0.92, opacity: 0 }}
+                    animate={{ scale: 1, opacity: 1 }}
+                    transition={{ duration: 0.25, delay: shouldReduceMotion ? 0 : 0.1 + index * 0.06 }}
+                  >
+                    {row.status}
+                  </motion.span>
                 </td>
                 <td>{row.due}</td>
-              </tr>
+              </motion.tr>
             ))}
           </tbody>
         </table>
@@ -81,7 +109,7 @@ export function ActiveFilesTable() {
           </div>
         </div>
       </div>
-    </section>
+    </motion.section>
   );
 }
 

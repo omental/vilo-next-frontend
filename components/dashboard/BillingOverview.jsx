@@ -1,3 +1,8 @@
+"use client";
+
+import { motion, useReducedMotion } from "framer-motion";
+import { createCardVariants, createHoverLift, createItemVariants } from "../motion";
+
 const billingBars = [
   { label: "Paid", value: 210, tone: "is-paid" },
   { label: "Unpaid", value: 130, tone: "is-unpaid" },
@@ -8,8 +13,18 @@ const billingBars = [
 const billingAxisLabels = [400, 300, 200, 100, 0];
 
 export function BillingOverview() {
+  const shouldReduceMotion = useReducedMotion();
+  const cardVariants = createCardVariants(shouldReduceMotion);
+  const itemVariants = createItemVariants(shouldReduceMotion, "y", 10);
+  const hoverLift = createHoverLift(shouldReduceMotion);
+
   return (
-    <section className="dashboard-card dashboard-card--billing" aria-labelledby="billing-overview-title">
+    <motion.section
+      className="dashboard-card dashboard-card--billing"
+      aria-labelledby="billing-overview-title"
+      variants={cardVariants}
+      whileHover={hoverLift}
+    >
       <div className="dashboard-card__header">
         <h2 id="billing-overview-title">Billing Overview</h2>
       </div>
@@ -32,13 +47,15 @@ export function BillingOverview() {
             </div>
 
             <div className="billing-chart__bars">
-              {billingBars.map((bar) => (
-                <div key={bar.label} className="billing-bar">
-                  <span
+              {billingBars.map((bar, index) => (
+                <motion.div key={bar.label} className="billing-bar" variants={itemVariants}>
+                  <motion.span
                     className={`billing-bar__fill ${bar.tone}`}
-                    style={{ height: `${(bar.value / 400) * 100}%` }}
+                    initial={shouldReduceMotion ? false : { height: 0 }}
+                    animate={{ height: `${(bar.value / 400) * 100}%` }}
+                    transition={{ duration: 0.6, delay: shouldReduceMotion ? 0 : 0.08 * index, ease: "easeOut" }}
                   />
-                </div>
+                </motion.div>
               ))}
             </div>
           </div>
@@ -46,16 +63,16 @@ export function BillingOverview() {
 
         <div className="billing-summary">
           {billingBars.map((bar) => (
-            <article key={bar.label} className="billing-summary__card">
+            <motion.article key={bar.label} className="billing-summary__card" variants={itemVariants}>
               <p>
                 <span className={`billing-summary__dot ${bar.tone}`} />
                 {bar.label}:
               </p>
               <strong>{bar.value}</strong>
-            </article>
+            </motion.article>
           ))}
         </div>
       </div>
-    </section>
+    </motion.section>
   );
 }

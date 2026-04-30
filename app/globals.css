@@ -1,10 +1,12 @@
+@import url("https://fonts.googleapis.com/css2?family=Outfit:wght@500;600;700&family=Public+Sans:wght@400;500;600;700&display=swap");
+
 :root {
   --color-bg: #f8f7fa;
   --color-border: #e9e7f1;
   --color-text: #3f3d4d;
   --color-text-soft: #7a768f;
   --sidebar-width: 280px;
-  font-family: var(--font-public-sans), sans-serif;
+  font-family: "Public Sans", sans-serif;
   color: var(--color-text);
   background: var(--color-bg);
 }
@@ -210,7 +212,7 @@ button {
 .dashboard-card__header h2,
 .financial-copy h3,
 .overview-table-block h3 {
-  font-family: var(--font-outfit), sans-serif;
+  font-family: "Outfit", sans-serif;
 }
 
 .dashboard-row-grid {

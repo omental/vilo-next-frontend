@@ -1,3 +1,8 @@
+"use client";
+
+import { motion, useReducedMotion } from "framer-motion";
+import { createCardVariants, createHoverLift, createItemVariants } from "../motion";
+
 const menuItems = [
   { label: "Dashboard", icon: HomeIcon, active: true },
   { label: "Files", icon: FileTextIcon },
@@ -33,8 +38,24 @@ const quickActions = [
 ];
 
 export function Sidebar({ isMobileOpen = false }) {
+  const shouldReduceMotion = useReducedMotion();
+  const itemVariants = createItemVariants(shouldReduceMotion, "y", 10);
+  const hoverLift = createHoverLift(shouldReduceMotion, -2, 1.01);
+  const activeHover = shouldReduceMotion
+    ? {}
+    : {
+        scale: 1.015,
+        boxShadow: "0 10px 24px rgba(67, 44, 241, 0.35)",
+        transition: { duration: 0.18 }
+      };
+
   return (
-    <aside className={`sidebar vilo-sidebar${isMobileOpen ? " is-mobile-open" : ""}`}>
+    <motion.aside
+      className={`sidebar vilo-sidebar${isMobileOpen ? " is-mobile-open" : ""}`}
+      initial="hidden"
+      animate="show"
+      variants={createCardVariants(shouldReduceMotion)}
+    >
       <div className="vilo-sidebar__inner">
         <div className="vilo-sidebar__brand">
           <BrandMark />
@@ -49,10 +70,12 @@ export function Sidebar({ isMobileOpen = false }) {
               const Icon = item.icon;
 
               return (
-                <button
+                <motion.button
                   key={item.label}
                   type="button"
                   className={`vilo-sidebar__item${item.active ? " is-active" : ""}`}
+                  variants={itemVariants}
+                  whileHover={item.active ? activeHover : hoverLift}
                 >
                   <span className="vilo-sidebar__item-main">
                     <span className="vilo-sidebar__icon-wrap">
@@ -61,7 +84,7 @@ export function Sidebar({ isMobileOpen = false }) {
                     <span>{item.label}</span>
                   </span>
                   {item.expandable ? <ChevronDownIcon /> : null}
-                </button>
+                </motion.button>
               );
             })}
           </nav>
@@ -69,7 +92,12 @@ export function Sidebar({ isMobileOpen = false }) {
 
         <div className="vilo-sidebar__divider" />
 
-        <button type="button" className="vilo-sidebar__new-row">
+        <motion.button
+          type="button"
+          className="vilo-sidebar__new-row"
+          variants={itemVariants}
+          whileHover={hoverLift}
+        >
           <span className="vilo-sidebar__item-main">
             <span className="vilo-sidebar__icon-wrap">
               <PlusIcon />
@@ -77,7 +105,7 @@ export function Sidebar({ isMobileOpen = false }) {
             <span>New</span>
           </span>
           <ChevronDownIcon />
-        </button>
+        </motion.button>
 
         <div className="vilo-sidebar__divider" />
 
@@ -104,7 +132,13 @@ export function Sidebar({ isMobileOpen = false }) {
 
           <div className="vilo-activity">
             {recentActivity.map((item, index) => (
-              <button key={`${item.title}-${index}`} type="button" className="vilo-activity__item">
+              <motion.button
+                key={`${item.title}-${index}`}
+                type="button"
+                className="vilo-activity__item"
+                variants={itemVariants}
+                whileHover={hoverLift}
+              >
                 <span className="vilo-activity__status">
                   <CheckCircleIcon />
                 </span>
@@ -113,7 +147,7 @@ export function Sidebar({ isMobileOpen = false }) {
                   <span className="vilo-activity__time">{item.timestamp}</span>
                 </span>
                 <ChevronRightIcon />
-              </button>
+              </motion.button>
             ))}
           </div>
         </section>
@@ -126,16 +160,22 @@ export function Sidebar({ isMobileOpen = false }) {
               const Icon = action.icon;
 
               return (
-                <button key={action.label} type="button" className="vilo-actions__button">
+                <motion.button
+                  key={action.label}
+                  type="button"
+                  className="vilo-actions__button"
+                  variants={itemVariants}
+                  whileHover={hoverLift}
+                >
                   <Icon />
                   <span>{action.label}</span>
-                </button>
+                </motion.button>
               );
             })}
           </div>
         </section>
       </div>
-    </aside>
+    </motion.aside>
   );
 }
 
@@ -143,34 +183,41 @@ function ProgressRing({ value }) {
   const radius = 27;
   const circumference = 2 * Math.PI * radius;
   const dashOffset = circumference - (value / 100) * circumference;
+  const shouldReduceMotion = useReducedMotion();
 
   return (
     <div className="vilo-ring" aria-label={`Completion ${value}%`}>
       <svg viewBox="0 0 72 72" aria-hidden="true">
         <circle cx="36" cy="36" r="27" className="vilo-ring__track" />
-        <circle
+        <motion.circle
           cx="36"
           cy="36"
           r="27"
           className="vilo-ring__segment is-indigo"
+          initial={shouldReduceMotion ? false : { strokeDashoffset: circumference }}
+          animate={{ strokeDashoffset: dashOffset }}
+          transition={{ duration: 0.75, ease: "easeOut" }}
           strokeDasharray={circumference}
-          strokeDashoffset={dashOffset}
         />
-        <circle
+        <motion.circle
           cx="36"
           cy="36"
           r="21"
           className="vilo-ring__segment is-green"
+          initial={shouldReduceMotion ? false : { strokeDashoffset: circumference }}
+          animate={{ strokeDashoffset: circumference - 0.68 * circumference }}
+          transition={{ duration: 0.75, delay: 0.08, ease: "easeOut" }}
           strokeDasharray={circumference}
-          strokeDashoffset={circumference - 0.68 * circumference}
         />
-        <circle
+        <motion.circle
           cx="36"
           cy="36"
           r="33"
           className="vilo-ring__segment is-cyan"
+          initial={shouldReduceMotion ? false : { strokeDashoffset: circumference }}
+          animate={{ strokeDashoffset: circumference - 0.56 * circumference }}
+          transition={{ duration: 0.75, delay: 0.16, ease: "easeOut" }}
           strokeDasharray={circumference}
-          strokeDashoffset={circumference - 0.56 * circumference}
         />
       </svg>
       <div className="vilo-ring__center">

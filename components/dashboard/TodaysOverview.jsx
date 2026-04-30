@@ -1,3 +1,8 @@
+"use client";
+
+import { motion, useReducedMotion } from "framer-motion";
+import { createCardVariants, createHoverLift, createItemVariants } from "../motion";
+
 const statItems = [
   { label: "Due Today", value: 12 },
   { label: "Overdue", value: 4 },
@@ -11,18 +16,28 @@ const timelineRows = [
 ];
 
 export function TodaysOverview() {
+  const shouldReduceMotion = useReducedMotion();
+  const cardVariants = createCardVariants(shouldReduceMotion);
+  const itemVariants = createItemVariants(shouldReduceMotion, "y", 10);
+  const hoverLift = createHoverLift(shouldReduceMotion);
+
   return (
-    <section className="dashboard-card dashboard-card--overview" aria-labelledby="todays-overview-title">
+    <motion.section
+      className="dashboard-card dashboard-card--overview"
+      aria-labelledby="todays-overview-title"
+      variants={cardVariants}
+      whileHover={hoverLift}
+    >
       <div className="dashboard-card__header">
         <h2 id="todays-overview-title">Today&apos;s Overview</h2>
       </div>
 
       <div className="overview-stats">
         {statItems.map((item) => (
-          <article key={item.label} className="overview-stat">
+          <motion.article key={item.label} className="overview-stat" variants={itemVariants}>
             <p>{item.label}:</p>
             <strong>{item.value}</strong>
-          </article>
+          </motion.article>
         ))}
       </div>
 
@@ -40,10 +55,17 @@ export function TodaysOverview() {
             </thead>
             <tbody>
               {timelineRows.map((row, index) => (
-                <tr key={`${row.priority}-${index}`}>
+                <motion.tr key={`${row.priority}-${index}`} variants={itemVariants}>
                   <td>{row.label}</td>
                   <td>
-                    <span className={`priority-badge ${row.tone}`}>{row.priority}</span>
+                    <motion.span
+                      className={`priority-badge ${row.tone}`}
+                      initial={shouldReduceMotion ? false : { scale: 0.9, opacity: 0 }}
+                      animate={{ scale: 1, opacity: 1 }}
+                      transition={{ duration: 0.28, delay: shouldReduceMotion ? 0 : index * 0.08 }}
+                    >
+                      {row.priority}
+                    </motion.span>
                   </td>
                   <td>
                     <button type="button" className="overview-table__action" aria-label={`More actions for ${row.label}`}>
@@ -52,12 +74,12 @@ export function TodaysOverview() {
                       <span />
                     </button>
                   </td>
-                </tr>
+                </motion.tr>
               ))}
             </tbody>
           </table>
         </div>
       </div>
-    </section>
+    </motion.section>
   );
 }

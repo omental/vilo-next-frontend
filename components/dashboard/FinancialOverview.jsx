@@ -1,3 +1,8 @@
+"use client";
+
+import { motion, useReducedMotion } from "framer-motion";
+import { createCardVariants, createHoverLift, createItemVariants } from "../motion";
+
 const chartValues = [190, 105, 210, 80, 175, 240, 260];
 
 const summaryItems = [
@@ -9,12 +14,21 @@ const summaryItems = [
 const axisLabels = [400, 300, 200, 100, 0];
 
 export function FinancialOverview() {
+  const shouldReduceMotion = useReducedMotion();
   const chartPoints = buildChartPoints(chartValues);
   const linePath = buildSmoothPath(chartPoints);
   const areaPath = `${linePath} L 100 100 L 0 100 Z`;
+  const cardVariants = createCardVariants(shouldReduceMotion);
+  const itemVariants = createItemVariants(shouldReduceMotion, "y", 10);
+  const hoverLift = createHoverLift(shouldReduceMotion);
 
   return (
-    <section className="dashboard-card dashboard-card--financial" aria-labelledby="financial-overview-title">
+    <motion.section
+      className="dashboard-card dashboard-card--financial"
+      aria-labelledby="financial-overview-title"
+      variants={cardVariants}
+      whileHover={hoverLift}
+    >
       <div className="dashboard-card__header">
         <h2 id="financial-overview-title">Financial Overview</h2>
       </div>
@@ -51,16 +65,31 @@ export function FinancialOverview() {
                     <line x1="0" y1="100" x2="100" y2="100" />
                   </g>
 
-                  <path d={areaPath} className="financial-chart__area" />
-                  <path d={linePath} className="financial-chart__line" />
+                  <motion.path
+                    d={areaPath}
+                    className="financial-chart__area"
+                    initial={shouldReduceMotion ? false : { opacity: 0 }}
+                    animate={{ opacity: 1 }}
+                    transition={{ duration: 0.35, delay: shouldReduceMotion ? 0 : 0.45 }}
+                  />
+                  <motion.path
+                    d={linePath}
+                    className="financial-chart__line"
+                    initial={shouldReduceMotion ? false : { pathLength: 0 }}
+                    animate={{ pathLength: 1 }}
+                    transition={{ duration: 0.7, ease: "easeOut" }}
+                  />
 
                   {chartPoints.slice(1, -1).map((point, index) => (
-                    <circle
+                    <motion.circle
                       key={index}
                       className="financial-chart__point"
                       cx={point.x}
                       cy={point.y}
                       r="1.6"
+                      initial={shouldReduceMotion ? false : { scale: 0, opacity: 0 }}
+                      animate={{ scale: 1, opacity: 1 }}
+                      transition={{ duration: 0.22, delay: shouldReduceMotion ? 0 : 0.42 + index * 0.08 }}
                     />
                   ))}
                 </svg>
@@ -74,7 +103,7 @@ export function FinancialOverview() {
             const Icon = item.icon;
 
             return (
-              <article key={item.label} className="financial-summary__item">
+              <motion.article key={item.label} className="financial-summary__item" variants={itemVariants}>
                 <span className={`financial-summary__icon ${item.tone}`}>
                   <Icon />
                 </span>
@@ -82,12 +111,12 @@ export function FinancialOverview() {
                   <p>{item.label}:</p>
                   <strong>{item.value}</strong>
                 </div>
-              </article>
+              </motion.article>
             );
           })}
         </div>
       </div>
-    </section>
+    </motion.section>
   );
 }
 

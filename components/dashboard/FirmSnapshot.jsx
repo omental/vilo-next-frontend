@@ -1,3 +1,8 @@
+"use client";
+
+import { motion, useReducedMotion } from "framer-motion";
+import { createCardVariants, createHoverLift, createItemVariants } from "../motion";
+
 const snapshotStats = [
   {
     label: "Total Files",
@@ -33,8 +38,18 @@ const legendItems = [
 ];
 
 export function FirmSnapshot() {
+  const shouldReduceMotion = useReducedMotion();
+  const cardVariants = createCardVariants(shouldReduceMotion);
+  const itemVariants = createItemVariants(shouldReduceMotion, "y", 10);
+  const hoverLift = createHoverLift(shouldReduceMotion);
+
   return (
-    <section className="dashboard-card dashboard-card--snapshot" aria-labelledby="firm-snapshot-title">
+    <motion.section
+      className="dashboard-card dashboard-card--snapshot"
+      aria-labelledby="firm-snapshot-title"
+      variants={cardVariants}
+      whileHover={hoverLift}
+    >
       <div className="dashboard-card__header">
         <h2 id="firm-snapshot-title">Firm Snapshot</h2>
       </div>
@@ -58,7 +73,7 @@ export function FirmSnapshot() {
             const Icon = item.icon;
 
             return (
-              <article key={item.label} className="snapshot-stat">
+              <motion.article key={item.label} className="snapshot-stat" variants={itemVariants}>
                 <div className="snapshot-stat__copy">
                   <p>{item.label}:</p>
                   <strong>{item.value}</strong>
@@ -66,46 +81,54 @@ export function FirmSnapshot() {
                 <span className={`snapshot-stat__icon ${item.tone}`}>
                   <Icon />
                 </span>
-              </article>
+              </motion.article>
             );
           })}
         </div>
       </div>
-    </section>
+    </motion.section>
   );
 }
 
 function SnapshotDonut() {
+  const shouldReduceMotion = useReducedMotion();
+
   return (
     <div className="snapshot-donut" aria-label="Case Status 72 percent">
       <svg viewBox="0 0 240 240" aria-hidden="true">
         <circle className="snapshot-donut__track" cx="120" cy="120" r="78" />
-        <circle
+        <motion.circle
           className="snapshot-donut__segment is-active"
           cx="120"
           cy="120"
           r="78"
           pathLength="100"
           strokeDasharray="50 50"
-          strokeDashoffset="11"
+          initial={shouldReduceMotion ? false : { strokeDashoffset: 100 }}
+          animate={{ strokeDashoffset: 11 }}
+          transition={{ duration: 0.8, ease: "easeOut" }}
         />
-        <circle
+        <motion.circle
           className="snapshot-donut__segment is-court"
           cx="120"
           cy="120"
           r="78"
           pathLength="100"
           strokeDasharray="8 92"
-          strokeDashoffset="-39"
+          initial={shouldReduceMotion ? false : { strokeDashoffset: 100 }}
+          animate={{ strokeDashoffset: -39 }}
+          transition={{ duration: 0.8, delay: 0.08, ease: "easeOut" }}
         />
-        <circle
+        <motion.circle
           className="snapshot-donut__segment is-pending"
           cx="120"
           cy="120"
           r="78"
           pathLength="100"
           strokeDasharray="17 83"
-          strokeDashoffset="-49"
+          initial={shouldReduceMotion ? false : { strokeDashoffset: 100 }}
+          animate={{ strokeDashoffset: -49 }}
+          transition={{ duration: 0.8, delay: 0.16, ease: "easeOut" }}
         />
       </svg>
 

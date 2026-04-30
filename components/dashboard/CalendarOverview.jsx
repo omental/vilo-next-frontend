@@ -1,3 +1,8 @@
+"use client";
+
+import { motion, useReducedMotion } from "framer-motion";
+import { createCardVariants, createHoverLift, createItemVariants } from "../motion";
+
 const dayLabels = ["SUN", "MON", "TUE", "WED", "THU", "FRI", "SAT"];
 
 const calendarDates = [
@@ -48,8 +53,18 @@ const eventItems = [
 ];
 
 export function CalendarOverview() {
+  const shouldReduceMotion = useReducedMotion();
+  const cardVariants = createCardVariants(shouldReduceMotion);
+  const eventVariants = createItemVariants(shouldReduceMotion, "x", 16);
+  const hoverLift = createHoverLift(shouldReduceMotion);
+
   return (
-    <section className="dashboard-card dashboard-card--calendar" aria-labelledby="calendar-overview-title">
+    <motion.section
+      className="dashboard-card dashboard-card--calendar"
+      aria-labelledby="calendar-overview-title"
+      variants={cardVariants}
+      whileHover={hoverLift}
+    >
       <div className="dashboard-card__header">
         <h2 id="calendar-overview-title">Today&apos;s Overview</h2>
       </div>
@@ -83,13 +98,20 @@ export function CalendarOverview() {
 
         <div className="calendar-events">
           {eventItems.map((item, index) => (
-            <article key={`${item.color}-${index}`} className={`calendar-event ${item.color}`}>
+            <motion.article
+              key={`${item.color}-${index}`}
+              className={`calendar-event ${item.color}`}
+              variants={eventVariants}
+              initial={shouldReduceMotion ? false : "hidden"}
+              animate="show"
+              transition={{ delay: shouldReduceMotion ? 0 : 0.08 * index }}
+            >
               <p>Miller hearing (Court room)</p>
               <span>12:00 PM</span>
-            </article>
+            </motion.article>
           ))}
         </div>
       </div>
-    </section>
+    </motion.section>
   );
 }
