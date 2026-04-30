@@ -1,6 +1,6 @@
 # Vuexy Pattern Notes
 
-Source inspected: `/Users/muba/Desktop/vuexy/Demo_ Dashboard - Analytics _ Vuexy - Bootstrap Dashboard PRO.html`
+Source inspected: saved Vuexy analytics dashboard reference markup.
 
 Patterns extracted from the saved Vuexy page:
 
@@ -13,8 +13,6 @@ Patterns extracted from the saved Vuexy page:
 
 Implementation in this workspace:
 
-- `src/components/layout/*`: shell, sidebar, and navbar
-- `src/components/ui/*`: generic card and data table primitives
-- `src/components/charts/*`: small React chart components built with SVG/divs
-- `src/components/patterns/*`: dashboard-specific compositions built on top of the primitives
-- `src/App.jsx`: demo page showing the extracted patterns working together
+- `app/*`: Next.js App Router entrypoints and global styles
+- `components/layout/*`: shell, sidebar, and navbar
+- `components/dashboard/*`: dashboard-specific sections built with static mock data
