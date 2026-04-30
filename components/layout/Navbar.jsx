@@ -1,7 +1,15 @@
-export function Navbar() {
+export function Navbar({ onMobileMenuClick }) {
   return (
     <header className="dashboard-navbar" aria-label="Top navigation">
       <div className="dashboard-navbar__search">
+        <button
+          type="button"
+          className="dashboard-navbar__mobile-menu"
+          aria-label="Open sidebar menu"
+          onClick={onMobileMenuClick}
+        >
+          <MenuIcon />
+        </button>
         <SearchIcon />
         <span className="dashboard-navbar__placeholder">Search</span>
       </div>
@@ -25,6 +33,16 @@ export function Navbar() {
         </button>
       </div>
     </header>
+  );
+}
+
+function MenuIcon() {
+  return (
+    <IconBase>
+      <path d="M4 7h16" />
+      <path d="M4 12h16" />
+      <path d="M4 17h16" />
+    </IconBase>
   );
 }
 

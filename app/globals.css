@@ -1,12 +1,10 @@
-@import url("https://fonts.googleapis.com/css2?family=Outfit:wght@500;600;700&display=swap");
-
 :root {
   --color-bg: #f8f7fa;
   --color-border: #e9e7f1;
-  --color-text: #444050;
-  --color-text-soft: #69667a;
+  --color-text: #3f3d4d;
+  --color-text-soft: #7a768f;
   --sidebar-width: 280px;
-  font-family: "Public Sans", sans-serif;
+  font-family: var(--font-public-sans), sans-serif;
   color: var(--color-text);
   background: var(--color-bg);
 }
@@ -26,6 +24,15 @@ body {
     radial-gradient(circle at top left, rgba(115, 103, 240, 0.08), transparent 28%),
     linear-gradient(180deg, #faf9fc 0%, #f7f6fb 100%);
   color: var(--color-text);
+}
+
+::-webkit-scrollbar {
+  width: 5px;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #d6d3e5;
+  border-radius: 4px;
 }
 
 button,
@@ -56,7 +63,7 @@ button {
 
 .dashboard-main {
   min-width: 0;
-  padding: 1.5rem;
+  padding: 1.75rem;
 }
 
 .dashboard-navbar {
@@ -82,8 +89,17 @@ button {
   color: #30364d;
 }
 
+.dashboard-navbar__mobile-menu {
+  display: none;
+  border: 0;
+  background: transparent;
+  padding: 0;
+  color: #243553;
+}
+
 .dashboard-navbar__search svg,
-.dashboard-navbar__icon-button svg {
+.dashboard-navbar__icon-button svg,
+.dashboard-navbar__mobile-menu svg {
   width: 1.2rem;
   height: 1.2rem;
 }
@@ -115,6 +131,12 @@ button {
 .dashboard-navbar__icon-button {
   width: 1.5rem;
   height: 1.5rem;
+  border-radius: 8px;
+  transition: background 0.2s ease;
+}
+
+.dashboard-navbar__icon-button:hover {
+  background: rgba(76, 66, 255, 0.08);
 }
 
 .dashboard-navbar__icon-button.is-notification {
@@ -167,15 +189,20 @@ button {
   display: block;
 }
 
+.mobile-sidebar-overlay {
+  display: none;
+}
+
 .dashboard-page-heading {
   margin-bottom: 1.35rem;
 }
 
 .dashboard-page-heading h1 {
   margin: 0;
-  font-size: 2rem;
+  font-size: 1.85rem;
   line-height: 1.1;
   font-weight: 700;
+  letter-spacing: -0.02em;
   color: #49455d;
 }
 
@@ -183,18 +210,18 @@ button {
 .dashboard-card__header h2,
 .financial-copy h3,
 .overview-table-block h3 {
-  font-family: "Outfit", sans-serif;
+  font-family: var(--font-outfit), sans-serif;
 }
 
 .dashboard-row-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 1.5rem;
+  gap: 1.25rem;
   align-items: stretch;
 }
 
 .dashboard-row-grid + .dashboard-row-grid {
-  margin-top: 1.5rem;
+  margin-top: 1.25rem;
 }
 
 .dashboard-row-grid--secondary {
@@ -213,10 +240,15 @@ button {
   display: flex;
   flex-direction: column;
   height: 100%;
-  border: 1px solid rgba(232, 233, 242, 0.95);
-  border-radius: 14px;
+  border: 1px solid rgba(232, 233, 242, 0.8);
+  border-radius: 16px;
   background: #fff;
-  box-shadow: 0 8px 30px rgba(47, 43, 61, 0.08);
+  box-shadow: 0 6px 18px rgba(47, 43, 61, 0.06);
+  transition: box-shadow 0.2s ease;
+}
+
+.dashboard-card:hover {
+  box-shadow: 0 10px 28px rgba(47, 43, 61, 0.08);
 }
 
 .dashboard-card__header {
@@ -225,8 +257,9 @@ button {
 
 .dashboard-card__header h2 {
   margin: 0;
-  font-size: 1.1rem;
+  font-size: 1.05rem;
   font-weight: 600;
+  letter-spacing: -0.01em;
   color: #4f4b63;
 }
 
@@ -590,7 +623,7 @@ button {
 }
 
 .calendar-panel__cell {
-  min-height: 64px;
+  min-height: 60px;
   padding: 10px;
   border-right: 1px solid rgba(228, 230, 238, 0.98);
   border-bottom: 1px solid rgba(228, 230, 238, 0.98);
@@ -614,7 +647,8 @@ button {
 }
 
 .calendar-panel__date.is-active {
-  background: #e9e5ff;
+  background: #e7e4ff;
+  box-shadow: 0 2px 6px rgba(76, 66, 255, 0.15);
   color: #5443f7;
 }
 
@@ -642,6 +676,12 @@ button {
   background: #fff;
   box-shadow: 0 2px 10px rgba(47, 43, 61, 0.04);
   flex-shrink: 0;
+  transition: transform 0.15s ease, box-shadow 0.15s ease;
+}
+
+.calendar-event:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 6px 14px rgba(47, 43, 61, 0.08);
 }
 
 .calendar-event p,
@@ -652,7 +692,7 @@ button {
 }
 
 .calendar-event p {
-  font-size: 0.92rem;
+  font-size: 0.9rem;
   font-weight: 600;
   min-width: 0;
   overflow: hidden;
@@ -880,11 +920,11 @@ button {
 
 .files-table th {
   position: relative;
-  font-size: 0.92rem;
+  font-size: 0.8rem;
   font-weight: 700;
   letter-spacing: 0.02em;
   text-transform: uppercase;
-  color: #555266;
+  color: #8b8899;
 }
 
 .files-table th:not(:last-child)::after {
@@ -899,7 +939,13 @@ button {
 }
 
 .files-table td {
+  font-size: 0.9rem;
+  padding: 0.75rem 1.1rem;
   color: #5d596f;
+}
+
+.files-table tbody tr:hover {
+  background: rgba(76, 66, 255, 0.03);
 }
 
 .files-table td:first-child,
@@ -918,7 +964,7 @@ button {
   justify-content: center;
   min-width: 4.6rem;
   padding: 0.35rem 0.75rem;
-  border-radius: 7px;
+  border-radius: 999px;
   background: #dff7ec;
   color: #23b86f;
   font-size: 0.78rem;
@@ -1065,6 +1111,11 @@ button {
   display: block;
   width: min(2.75rem, 72%);
   border-radius: 8px 8px 0 0;
+  transition: height 0.4s ease;
+}
+
+.billing-bar__fill:hover {
+  opacity: 0.9;
 }
 
 .billing-bar__fill.is-paid,
@@ -1097,8 +1148,14 @@ button {
 .billing-summary__card {
   padding: 0.6rem 0.65rem;
   border: 1px solid rgba(226, 229, 238, 0.98);
-  border-radius: 10px;
+  border-radius: 8px;
   background: #fff;
+  transition: all 0.2s ease;
+}
+
+.billing-summary__card:hover {
+  border-color: #dcd8ff;
+  background: #faf9ff;
 }
 
 .billing-summary__card p {
@@ -1423,14 +1480,60 @@ button {
 
 @media (max-width: 960px) {
   .dashboard-shell {
-    grid-template-columns: 1fr;
+    display: block;
   }
 
   .sidebar {
-    position: static;
-    height: auto;
-    border-right: 0;
-    border-bottom: 1px solid var(--color-border);
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 280px;
+    height: 100vh;
+    z-index: 1000;
+    transform: translateX(-100%);
+    transition: transform 0.25s ease;
+    border-right: 1px solid var(--color-border);
+    border-bottom: 0;
+    background: #fff;
+  }
+
+  .sidebar.is-mobile-open {
+    transform: translateX(0);
+  }
+
+  .dashboard-main {
+    width: 100%;
+    padding: 1rem;
+  }
+
+  .dashboard-navbar {
+    height: 62px;
+    border-radius: 8px;
+    padding: 0 1rem;
+    margin-bottom: 1rem;
+  }
+
+  .dashboard-navbar__mobile-menu {
+    display: inline-flex;
+  }
+
+  .dashboard-navbar__placeholder {
+    display: none;
+  }
+
+  .dashboard-navbar__search {
+    gap: 0;
+  }
+
+  .mobile-sidebar-overlay {
+    position: fixed;
+    inset: 0;
+    z-index: 999;
+    background: rgba(20, 20, 30, 0.35);
+  }
+
+  .mobile-sidebar-overlay.is-visible {
+    display: block;
   }
 
   .dashboard-row-grid,
@@ -1440,6 +1543,109 @@ button {
   .calendar-overview {
     grid-template-columns: 1fr;
     align-items: stretch;
+  }
+
+  .dashboard-card {
+    width: 100%;
+  }
+
+  /* Calendar mobile fix */
+  .calendar-overview {
+    grid-template-columns: 1fr;
+    gap: 1rem;
+    overflow: hidden;
+  }
+
+  .calendar-panel {
+    width: 100%;
+    overflow-x: auto;
+  }
+
+  .calendar-panel__days,
+  .calendar-panel__grid {
+    min-width: 520px;
+  }
+
+  .calendar-events {
+    padding-left: 0;
+    width: 100%;
+    overflow: visible;
+  }
+
+  .calendar-event {
+    width: 100%;
+  }
+
+  /* Active Files mobile fix */
+  .dashboard-card--files {
+    overflow: hidden;
+  }
+
+  .files-table-wrap {
+    width: 100%;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .files-table {
+    min-width: 760px;
+  }
+
+  /* Billing mobile fix */
+  .dashboard-card--billing {
+    height: auto;
+    min-height: 520px;
+    overflow: visible;
+  }
+
+  .billing-card__body {
+    display: flex;
+    flex-direction: column;
+    overflow: visible;
+  }
+
+  .billing-chart {
+    width: 100%;
+    display: grid;
+    grid-template-columns: 2rem minmax(0, 1fr);
+    overflow: visible;
+    margin-bottom: 1rem;
+  }
+
+  .billing-chart__plot {
+    position: relative;
+    width: 100%;
+    min-width: 0;
+    height: 240px;
+    min-height: 240px;
+    overflow: visible;
+  }
+
+  .billing-chart__bars {
+    position: absolute;
+    inset: 0;
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    align-items: end;
+    padding: 0 1rem;
+  }
+
+  .billing-bar {
+    height: 100%;
+    display: flex;
+    align-items: flex-end;
+    justify-content: center;
+  }
+
+  .billing-bar__fill {
+    display: block;
+    width: 34px;
+  }
+
+  .billing-summary {
+    grid-template-columns: 1fr;
+    gap: 0.6rem;
+    margin-top: 0.75rem;
   }
 }
 
@@ -1483,5 +1689,11 @@ button {
 
   .billing-summary {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 520px) {
+  .billing-summary {
+    grid-template-columns: 1fr;
   }
 }

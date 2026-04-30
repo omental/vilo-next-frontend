@@ -32,9 +32,9 @@ const quickActions = [
   { label: "Upload Document", icon: UploadIcon }
 ];
 
-export function Sidebar() {
+export function Sidebar({ isMobileOpen = false }) {
   return (
-    <aside className="sidebar vilo-sidebar">
+    <aside className={`sidebar vilo-sidebar${isMobileOpen ? " is-mobile-open" : ""}`}>
       <div className="vilo-sidebar__inner">
         <div className="vilo-sidebar__brand">
           <BrandMark />

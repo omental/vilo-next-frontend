@@ -1,3 +1,6 @@
+"use client";
+
+import { useState } from "react";
 import { ActiveFilesTable } from "../components/dashboard/ActiveFilesTable";
 import { BillingOverview } from "../components/dashboard/BillingOverview";
 import { CalendarOverview } from "../components/dashboard/CalendarOverview";
@@ -8,11 +11,18 @@ import { Navbar } from "../components/layout/Navbar";
 import { Sidebar } from "../components/layout/Sidebar";
 
 export default function HomePage() {
+  const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false);
+
   return (
     <div className="dashboard-shell">
-      <Sidebar />
+      <div
+        className={`mobile-sidebar-overlay${isMobileSidebarOpen ? " is-visible" : ""}`}
+        onClick={() => setIsMobileSidebarOpen(false)}
+        aria-hidden="true"
+      />
+      <Sidebar isMobileOpen={isMobileSidebarOpen} />
       <main className="dashboard-main">
-        <Navbar />
+        <Navbar onMobileMenuClick={() => setIsMobileSidebarOpen(true)} />
         <section className="dashboard-home" aria-label="Dashboard content">
           <div className="dashboard-page-heading">
             <h1>Dashboard</h1>
