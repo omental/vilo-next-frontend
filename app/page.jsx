@@ -25,9 +25,12 @@ export default function HomePage() {
         onClick={() => setIsMobileSidebarOpen(false)}
         aria-hidden="true"
       />
-      <Sidebar isMobileOpen={isMobileSidebarOpen} />
+      <Sidebar
+        isMobileOpen={isMobileSidebarOpen}
+        onClose={() => setIsMobileSidebarOpen(false)}
+      />
       <main className="dashboard-main">
-        <Navbar onMobileMenuClick={() => setIsMobileSidebarOpen(true)} />
+        <Navbar onMenuClick={() => setIsMobileSidebarOpen(true)} />
         <section className="dashboard-home" aria-label="Dashboard content">
           <motion.div
             className="dashboard-page-heading"

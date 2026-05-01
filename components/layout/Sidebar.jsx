@@ -1,7 +1,7 @@
 "use client";
 
 import { motion, useReducedMotion } from "framer-motion";
-import { createCardVariants, createHoverLift, createItemVariants } from "../motion";
+import { motionEase, createHoverLift, createItemVariants } from "../motion";
 
 const menuItems = [
   { label: "Dashboard", icon: HomeIcon, active: true },
@@ -37,10 +37,27 @@ const quickActions = [
   { label: "Upload Document", icon: UploadIcon }
 ];
 
-export function Sidebar({ isMobileOpen = false }) {
+export function Sidebar({ isMobileOpen = false, onClose = () => {} }) {
   const shouldReduceMotion = useReducedMotion();
   const itemVariants = createItemVariants(shouldReduceMotion, "y", 10);
   const hoverLift = createHoverLift(shouldReduceMotion, -2, 1.01);
+  const sidebarVariants = shouldReduceMotion
+    ? {
+        hidden: { opacity: 1 },
+        show: { opacity: 1 }
+      }
+    : {
+        hidden: { opacity: 0 },
+        show: {
+          opacity: 1,
+          transition: {
+            duration: 0.3,
+            ease: motionEase,
+            when: "beforeChildren",
+            staggerChildren: 0.04
+          }
+        }
+      };
   const activeHover = shouldReduceMotion
     ? {}
     : {
@@ -54,7 +71,7 @@ export function Sidebar({ isMobileOpen = false }) {
       className={`sidebar vilo-sidebar${isMobileOpen ? " is-mobile-open" : ""}`}
       initial="hidden"
       animate="show"
-      variants={createCardVariants(shouldReduceMotion)}
+      variants={sidebarVariants}
     >
       <div className="vilo-sidebar__inner">
         <div className="vilo-sidebar__brand">
@@ -76,6 +93,7 @@ export function Sidebar({ isMobileOpen = false }) {
                   className={`vilo-sidebar__item${item.active ? " is-active" : ""}`}
                   variants={itemVariants}
                   whileHover={item.active ? activeHover : hoverLift}
+                  onClick={onClose}
                 >
                   <span className="vilo-sidebar__item-main">
                     <span className="vilo-sidebar__icon-wrap">
@@ -97,6 +115,7 @@ export function Sidebar({ isMobileOpen = false }) {
           className="vilo-sidebar__new-row"
           variants={itemVariants}
           whileHover={hoverLift}
+          onClick={onClose}
         >
           <span className="vilo-sidebar__item-main">
             <span className="vilo-sidebar__icon-wrap">
@@ -138,6 +157,7 @@ export function Sidebar({ isMobileOpen = false }) {
                 className="vilo-activity__item"
                 variants={itemVariants}
                 whileHover={hoverLift}
+                onClick={onClose}
               >
                 <span className="vilo-activity__status">
                   <CheckCircleIcon />
@@ -166,6 +186,7 @@ export function Sidebar({ isMobileOpen = false }) {
                   className="vilo-actions__button"
                   variants={itemVariants}
                   whileHover={hoverLift}
+                  onClick={onClose}
                 >
                   <Icon />
                   <span>{action.label}</span>

@@ -1,4 +1,4 @@
-export function Navbar({ onMobileMenuClick }) {
+export function Navbar({ onMenuClick }) {
   return (
     <header className="dashboard-navbar" aria-label="Top navigation">
       <div className="dashboard-navbar__search">
@@ -6,7 +6,7 @@ export function Navbar({ onMobileMenuClick }) {
           type="button"
           className="dashboard-navbar__mobile-menu"
           aria-label="Open sidebar menu"
-          onClick={onMobileMenuClick}
+          onClick={onMenuClick}
         >
           <MenuIcon />
         </button>
