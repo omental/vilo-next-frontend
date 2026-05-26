@@ -27,3 +27,4 @@ Thumbs.db
 coverage/
 .vercel/
 backend/storage/generated/*.pdf
+backend/.venv/
