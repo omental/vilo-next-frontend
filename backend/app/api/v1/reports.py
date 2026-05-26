@@ -1,4 +1,4 @@
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 
 from fastapi import APIRouter, Depends
@@ -14,10 +14,13 @@ from app.models.case_timeline_event import CaseTimelineEvent
 from app.models.client import Client
 from app.models.expense import Expense
 from app.models.invoice import Invoice
+from app.models.notification import Notification
 from app.models.task import Task
 from app.models.time_entry import TimeEntry
 from app.models.trust_ledger import TrustLedger
 from app.models.trust_transaction import TrustTransaction
+from app.models.user import User
+from app.schemas.dashboard import DashboardWidgetsResponse
 from app.services.pdf import generate_report_pdf
 
 router = APIRouter(prefix="/reports", tags=["reports"])
@@ -31,6 +34,199 @@ def d(value):
     if isinstance(value, Decimal):
         return value
     return Decimal(str(value))
+
+
+def _month_bounds(now: datetime) -> tuple[date, date]:
+    month_start = date(now.year, now.month, 1)
+    if now.month == 12:
+        next_start = date(now.year + 1, 1, 1)
+    else:
+        next_start = date(now.year, now.month + 1, 1)
+    return month_start, next_start
+
+
+@router.get("/dashboard/widgets", response_model=DashboardWidgetsResponse)
+async def dashboard_widgets(db: AsyncSession = Depends(get_db), current_user=Depends(role_guard(OPER_REPORTS))):
+    org_id = current_user.organization_id
+    now = datetime.now(timezone.utc)
+    today = now.date()
+    month_start, next_month_start = _month_bounds(now)
+
+    total_cases = int((await db.scalar(select(func.count(Case.id)).where(Case.organization_id == org_id))) or 0)
+    active_cases = int((await db.scalar(select(func.count(Case.id)).where(Case.organization_id == org_id, Case.status == "active"))) or 0)
+    closed_cases = int((await db.scalar(select(func.count(Case.id)).where(Case.organization_id == org_id, Case.status == "closed"))) or 0)
+    pending_cases = int((await db.scalar(select(func.count(Case.id)).where(Case.organization_id == org_id, Case.status == "draft"))) or 0)
+    high_priority_cases = int((await db.scalar(select(func.count(Case.id)).where(Case.organization_id == org_id, Case.priority == "high"))) or 0)
+    total_tasks = int((await db.scalar(select(func.count(Task.id)).where(Task.organization_id == org_id))) or 0)
+    stalled_cases = int((await db.scalar(select(func.count(Case.id)).where(Case.organization_id == org_id, Case.status == "active", Case.updated_at < (now.replace(hour=0, minute=0, second=0, microsecond=0) - timedelta(days=30))))) or 0)
+
+    court_cases = int((await db.scalar(
+        select(func.count(func.distinct(CalendarEvent.case_id))).where(
+            CalendarEvent.organization_id == org_id,
+            CalendarEvent.case_id.is_not(None),
+            CalendarEvent.event_type == "court",
+        )
+    )) or 0)
+    case_status_percentage = int(round((active_cases / total_cases) * 100)) if total_cases else 0
+
+    due_today_count = int((await db.scalar(
+        select(func.count(Task.id)).where(
+            Task.organization_id == org_id,
+            Task.status.in_(["pending", "in_progress"]),
+            Task.due_date.is_not(None),
+            func.date(Task.due_date) == today,
+        )
+    )) or 0)
+    overdue_count = int((await db.scalar(
+        select(func.count(Task.id)).where(
+            Task.organization_id == org_id,
+            Task.status.in_(["pending", "in_progress"]),
+            Task.due_date.is_not(None),
+            Task.due_date < now,
+        )
+    )) or 0)
+    unread_messages_count = int((await db.scalar(
+        select(func.count(Notification.id)).where(
+            Notification.organization_id == org_id,
+            Notification.user_id == current_user.id,
+            Notification.is_read == False,
+        )
+    )) or 0)
+    priority_rows = (await db.execute(
+        select(Task.id, Task.title, Task.priority, Task.due_date, Task.case_id)
+        .where(
+            Task.organization_id == org_id,
+            Task.status.in_(["pending", "in_progress"]),
+        )
+        .order_by(Task.due_date.asc().nullslast(), Task.created_at.desc())
+        .limit(8)
+    )).all()
+
+    upcoming_rows = (await db.execute(
+        select(CalendarEvent.id, CalendarEvent.title, CalendarEvent.event_type, CalendarEvent.start_at, CalendarEvent.case_id)
+        .where(CalendarEvent.organization_id == org_id, CalendarEvent.start_at >= now)
+        .order_by(CalendarEvent.start_at.asc())
+        .limit(12)
+    )).all()
+
+    monthly_revenue = d(await db.scalar(
+        select(func.coalesce(func.sum(Invoice.total), 0)).where(
+            Invoice.organization_id == org_id,
+            Invoice.issue_date >= month_start,
+            Invoice.issue_date < next_month_start,
+        )
+    ))
+    monthly_expenses = d(await db.scalar(
+        select(func.coalesce(func.sum(Expense.amount), 0)).where(
+            Expense.organization_id == org_id,
+            Expense.expense_date >= month_start,
+            Expense.expense_date < next_month_start,
+        )
+    ))
+    trust_account_balance = d(await db.scalar(
+        select(func.coalesce(func.sum(TrustLedger.current_balance), 0)).where(TrustLedger.organization_id == org_id)
+    ))
+    net_profit = monthly_revenue - monthly_expenses
+
+    month_series = (await db.execute(
+        select(func.date_trunc("month", Invoice.issue_date).label("month"), func.coalesce(func.sum(Invoice.total), 0).label("amount"))
+        .where(Invoice.organization_id == org_id)
+        .group_by("month")
+        .order_by("month")
+    )).all()
+
+    paid_total = d(await db.scalar(select(func.coalesce(func.sum(Invoice.total), 0)).where(Invoice.organization_id == org_id, Invoice.status == "paid")))
+    unpaid_total = d(await db.scalar(select(func.coalesce(func.sum(Invoice.balance_due), 0)).where(Invoice.organization_id == org_id, Invoice.status.in_(["sent", "overdue"]))))
+    draft_total = d(await db.scalar(select(func.coalesce(func.sum(Invoice.total), 0)).where(Invoice.organization_id == org_id, Invoice.status == "draft")))
+    overdue_total = d(await db.scalar(select(func.coalesce(func.sum(Invoice.balance_due), 0)).where(Invoice.organization_id == org_id, Invoice.status == "overdue")))
+
+    case_rows = (await db.execute(
+        select(Case.id, Case.title, Case.status, Client.name, User.name.label("lead_name"), func.min(Task.due_date).label("next_due"))
+        .join(Client, Client.id == Case.client_id)
+        .join(User, User.id == Case.created_by)
+        .outerjoin(Task, and_(Task.case_id == Case.id, Task.organization_id == org_id, Task.status.in_(["pending", "in_progress"])))
+        .where(Case.organization_id == org_id, Case.status == "active")
+        .group_by(Case.id, Case.title, Case.status, Client.name, User.name)
+        .order_by(Case.updated_at.desc())
+        .limit(20)
+    )).all()
+
+    return {
+        "firm_snapshot": {
+            "total_cases": total_cases,
+            "active_cases": active_cases,
+            "court_cases": court_cases,
+            "cases_in_court": court_cases,
+            "closed_cases": closed_cases,
+            "pending_cases": pending_cases,
+            "high_priority_cases": high_priority_cases,
+            "total_tasks": total_tasks,
+            "stalled_cases": stalled_cases,
+            "case_status_percentage": case_status_percentage,
+        },
+        "today_overview": {
+            "due_today_count": due_today_count,
+            "overdue_count": overdue_count,
+            "unread_messages_count": unread_messages_count,
+            "priority_timeline": [
+                {
+                    "id": r.id,
+                    "title": r.title,
+                    "type": "task",
+                    "priority": (r.priority or "medium"),
+                    "due_date": r.due_date,
+                    "related_case_id": r.case_id,
+                }
+                for r in priority_rows
+            ],
+        },
+        "calendar_overview": {
+            "month": month_start.month,
+            "year": month_start.year,
+            "upcoming_events": [
+                {
+                    "id": r.id,
+                    "title": r.title,
+                    "type": r.event_type,
+                    "starts_at": r.start_at,
+                    "time": r.start_at.strftime("%I:%M %p"),
+                    "related_case_id": r.case_id,
+                }
+                for r in upcoming_rows
+            ],
+        },
+        "financial_overview": {
+            "monthly_revenue": monthly_revenue,
+            "monthly_expenses": monthly_expenses,
+            "net_profit": net_profit,
+            "trust_account_balance": trust_account_balance,
+            "monthly_chart_series": [{"month": r.month, "amount": d(r.amount)} for r in month_series],
+        },
+        "billing_overview": {
+            "paid_total": paid_total,
+            "unpaid_total": unpaid_total,
+            "draft_total": draft_total,
+            "overdue_total": overdue_total,
+            "chart_series": [
+                {"label": "Paid", "value": paid_total},
+                {"label": "Unpaid", "value": unpaid_total},
+                {"label": "Draft", "value": draft_total},
+                {"label": "Overdue", "value": overdue_total},
+            ],
+        },
+        "active_cases": [
+            {
+                "case_id": r.id,
+                "display_number": f"C-{r.id}",
+                "client_name": r.name,
+                "matter": r.title,
+                "lead": r.lead_name,
+                "status": r.status,
+                "due_date": r.next_due,
+            }
+            for r in case_rows
+        ],
+    }
 
 
 @router.get("/dashboard-summary")

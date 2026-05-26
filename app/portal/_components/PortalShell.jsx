@@ -91,7 +91,7 @@ export default function PortalShell({ children }) {
             <span>{user?.email || ""}</span>
           </div>
           <div className="portal-topbar__actions">
-            <button className="portal-topbar__notify" onClick={() => setOpenNotifications((prev) => !prev)}>
+            <button className="portal-topbar__notify vilo-btn vilo-btn--secondary vilo-btn--xs" onClick={() => setOpenNotifications((prev) => !prev)}>
               Notifications
               {unreadCount > 0 ? <b>{unreadCount}</b> : null}
             </button>
@@ -112,7 +112,7 @@ export default function PortalShell({ children }) {
               </div>
             ) : null}
           </div>
-          <button onClick={logout}>Logout</button>
+          <button className="vilo-btn vilo-btn--secondary vilo-btn--xs" onClick={logout}>Logout</button>
         </div>
         {children}
       </main>

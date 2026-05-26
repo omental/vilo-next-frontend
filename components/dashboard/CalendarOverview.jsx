@@ -43,7 +43,7 @@ const calendarDates = [
   { value: 3, muted: true }
 ];
 
-const eventItems = [
+const fallbackEventItems = [
   { color: "is-purple" },
   { color: "is-green" },
   { color: "is-red" },
@@ -52,11 +52,26 @@ const eventItems = [
   { color: "is-gray" }
 ];
 
-export function CalendarOverview() {
+function colorByType(type) {
+  if (type === "court") return "is-purple";
+  if (type === "meeting") return "is-green";
+  if (type === "deadline") return "is-red";
+  if (type === "hearing") return "is-orange";
+  return "is-gray";
+}
+
+export function CalendarOverview({ events = [] }) {
   const shouldReduceMotion = useReducedMotion();
   const cardVariants = createCardVariants(shouldReduceMotion);
   const eventVariants = createItemVariants(shouldReduceMotion, "x", 16);
   const hoverLift = createHoverLift(shouldReduceMotion);
+  const eventItems = events.length
+    ? events.slice(0, 6).map((item) => ({
+        color: colorByType(item.type),
+        title: item.title,
+        time: item.time,
+      }))
+    : fallbackEventItems.map((item) => ({ ...item, title: "Miller hearing (Court room)", time: "12:00 PM" }));
 
   return (
     <motion.section
@@ -106,8 +121,8 @@ export function CalendarOverview() {
               animate="show"
               transition={{ delay: shouldReduceMotion ? 0 : 0.08 * index }}
             >
-              <p>Miller hearing (Court room)</p>
-              <span>12:00 PM</span>
+              <p>{item.title}</p>
+              <span>{item.time}</span>
             </motion.article>
           ))}
         </div>

@@ -28,16 +28,18 @@ export default function PortalInvoiceDetailPage() {
     <section className="dashboard-page-stack">
       <div className="dashboard-page-heading"><h1>Invoice Detail</h1></div>
       <Link href="/portal/invoices">Back to invoices</Link>
-      {loading ? <p className="vilo-state">Loading invoice...</p> : null}
-      {error ? <p className="vilo-state vilo-state--error">{error}</p> : null}
+      {loading ? <div className="vilo-state-block"><p className="vilo-state vilo-state--loading">Loading invoice...</p></div> : null}
+      {error ? <div className="vilo-state-block"><p className="vilo-state vilo-state--error">{error}</p></div> : null}
       {!loading && !error && invoice ? (
         <>
           <article className="dashboard-card vilo-table-card">
-            <button type="button" onClick={() => apiDownload(`/api/v1/invoices/${id}/pdf`)}>Download PDF</button>
+            <div className="vilo-form-grid">
+              <button className="vilo-btn vilo-btn--primary" type="button" onClick={() => apiDownload(`/api/v1/invoices/${id}/pdf`)}>Download PDF</button>
+            </div>
           </article>
           <article className="dashboard-card vilo-table-card">
             <div className="dashboard-card__header"><h2>{invoice.invoice_number}</h2></div>
-            <p className="vilo-state">Status: {invoice.status}</p>
+            <p className="vilo-state">Status: <span className={`vilo-badge vilo-badge--${invoice.status}`}>{invoice.status}</span></p>
             <p className="vilo-state">Total: {money(invoice.total)} | Paid: {money(invoice.paid_amount)} | Balance Due: {money(invoice.balance_due)}</p>
           </article>
           <article className="dashboard-card vilo-table-card">

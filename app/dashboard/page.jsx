@@ -1,22 +1,28 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import { apiRequest } from "../../lib/api";
+import { ActiveFilesTable } from "../../components/dashboard/ActiveFilesTable";
+import { BillingOverview } from "../../components/dashboard/BillingOverview";
+import { CalendarOverview } from "../../components/dashboard/CalendarOverview";
+import { FinancialOverview } from "../../components/dashboard/FinancialOverview";
+import { FirmSnapshot } from "../../components/dashboard/FirmSnapshot";
+import { TodaysOverview } from "../../components/dashboard/TodaysOverview";
 
 function fmtCurrency(value) {
   const n = Number(value || 0);
   return new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 2 }).format(n);
 }
 
-function fmtDate(value) {
+function fmtShortDate(value) {
   if (!value) return "-";
   const d = new Date(value);
   if (Number.isNaN(d.getTime())) return "-";
-  return d.toLocaleString();
+  return d.toLocaleDateString("en-US", { month: "short", day: "numeric" });
 }
 
 export default function DashboardPage() {
-  const [data, setData] = useState(null);
+  const [widgets, setWidgets] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 
@@ -26,8 +32,10 @@ export default function DashboardPage() {
       setLoading(true);
       setError("");
       try {
-        const res = await apiRequest("/api/v1/reports/dashboard-summary");
-        if (mounted) setData(res);
+        const summaryRes = await apiRequest("/api/v1/reports/dashboard/widgets");
+        if (mounted) {
+          setWidgets(summaryRes);
+        }
       } catch (err) {
         if (mounted) setError(err.message || "Failed to load dashboard summary");
       } finally {
@@ -40,108 +48,74 @@ export default function DashboardPage() {
     };
   }, []);
 
-  const cards = useMemo(() => {
-    if (!data) return [];
-    return [
-      { label: "Total Clients", value: data.total_clients ?? 0 },
-      { label: "Active Cases", value: data.active_cases ?? 0 },
-      { label: "Pending Tasks", value: data.pending_tasks ?? 0 },
-      { label: "Outstanding Invoices", value: data.outstanding_invoices ?? 0 },
-      { label: "Trust Balance", value: fmtCurrency(data.total_trust_balance) },
-      { label: "Balance Due", value: fmtCurrency(data.total_balance_due) },
-    ];
-  }, [data]);
+  const today = widgets?.today_overview;
+  const firm = widgets?.firm_snapshot;
+  const calendar = widgets?.calendar_overview;
+  const financial = widgets?.financial_overview;
+  const billing = widgets?.billing_overview;
+
+  const todaysStats = [
+    { label: "Due Today", value: Math.max(0, Number(today?.due_today_count ?? 12)) },
+    { label: "Overdue", value: Math.max(0, Number(today?.overdue_count ?? 4)) },
+    { label: "Messages", value: Math.max(0, Number(today?.unread_messages_count ?? 9)) },
+  ];
+
+  const timelineRows = (today?.priority_timeline || []).slice(0, 3).map((task) => ({
+    label: task.title || `Task #${task.id}`,
+    priority: task.priority || "medium",
+    tone: task.priority === "high" ? "is-high" : task.priority === "low" ? "is-low" : "is-normal",
+  }));
+
+  const snapshotStats = [
+    { label: "Total Cases", value: Number(firm?.total_cases ?? 100), tone: "is-violet" },
+    { label: "High Priority", value: Number(firm?.high_priority_cases ?? 15), tone: "is-orange" },
+    { label: "Tasks", value: Number(firm?.total_tasks ?? 88), tone: "is-green" },
+    { label: "Stalled Cases", value: Number(firm?.stalled_cases ?? 10), tone: "is-red" },
+  ];
+
+  const financialSummaryItems = [
+    { label: "Monthly expenses", value: fmtCurrency(financial?.monthly_expenses), tone: "is-green" },
+    { label: "Net Profit", value: fmtCurrency(financial?.net_profit), tone: "is-orange" },
+    { label: "Trust Account", value: fmtCurrency(financial?.trust_account_balance), tone: "is-violet" },
+  ];
+
+  const activeCaseRows = (widgets?.active_cases || []).slice(0, 4).map((item) => ({
+    caseId: item.display_number || `C-${item.case_id}`,
+    client: item.client_name || "-",
+    matter: item.matter || "Case matter",
+    lead: item.lead || "Team",
+    status: item.status || "active",
+    due: fmtShortDate(item.due_date),
+  }));
 
   return (
-    <section className="dashboard-page-stack">
+    <section className="dashboard-home">
       <div className="dashboard-page-heading"><h1>Dashboard</h1></div>
 
-      {loading ? <p className="vilo-state">Loading dashboard metrics...</p> : null}
-      {error ? <p className="vilo-state vilo-state--error">{error}</p> : null}
+      {loading ? <div className="vilo-state-block"><p className="vilo-state vilo-state--loading">Loading dashboard metrics...</p></div> : null}
+      {error ? <div className="vilo-state-block"><p className="vilo-state vilo-state--error">{error}</p></div> : null}
 
-      {!loading && !error && data ? (
+      {!loading && !error ? (
         <>
-          <div className="dashboard-row-grid">
-            {cards.map((card) => (
-              <article key={card.label} className="dashboard-card vilo-table-card">
-                <div className="dashboard-card__header"><h2>{card.label}</h2></div>
-                <div style={{ padding: "0 1.25rem 1.25rem", fontSize: "1.75rem", fontWeight: 700 }}>{card.value}</div>
-              </article>
-            ))}
+          <div className="dashboard-row-grid dashboard-row-grid--secondary">
+            <TodaysOverview stats={todaysStats} timelineRows={timelineRows.length ? timelineRows : undefined} />
+            <FirmSnapshot
+              snapshotStats={snapshotStats}
+              caseStatusPercent={Number(firm?.case_status_percentage ?? 72)}
+            />
           </div>
 
-          <div className="dashboard-row-grid" style={{ marginTop: "1rem" }}>
-            <article className="dashboard-card vilo-table-card">
-              <div className="dashboard-card__header"><h2>Recent Activity</h2></div>
-              {data.recent_activity?.length ? (
-                <div className="vilo-table-wrap">
-                  <table className="team-table">
-                    <thead><tr><th>Event</th><th>Case</th><th>When</th></tr></thead>
-                    <tbody>
-                      {data.recent_activity.slice(0, 10).map((item) => (
-                        <tr key={item.id}>
-                          <td>{item.title || item.event_type}</td>
-                          <td>{item.case_id ? `#${item.case_id}` : "-"}</td>
-                          <td>{fmtDate(item.created_at)}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              ) : <p className="vilo-state">No recent activity.</p>}
-            </article>
-
-            <article className="dashboard-card vilo-table-card">
-              <div className="dashboard-card__header"><h2>Upcoming Events</h2></div>
-              {data.upcoming_events_items?.length ? (
-                <div className="vilo-table-wrap">
-                  <table className="team-table">
-                    <thead><tr><th>Title</th><th>Type</th><th>Start</th></tr></thead>
-                    <tbody>
-                      {data.upcoming_events_items.map((item) => (
-                        <tr key={item.id}>
-                          <td>{item.title}</td>
-                          <td>{item.event_type}</td>
-                          <td>{fmtDate(item.start_at)}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              ) : <p className="vilo-state">No upcoming events.</p>}
-            </article>
+          <div className="dashboard-row-grid dashboard-row-grid--tertiary">
+            <CalendarOverview events={calendar?.upcoming_events || []} />
+            <FinancialOverview
+              revenueText={fmtCurrency(financial?.monthly_revenue)}
+              summaryItems={financialSummaryItems}
+            />
           </div>
 
-          <div className="dashboard-row-grid" style={{ marginTop: "1rem" }}>
-            <article className="dashboard-card vilo-table-card">
-              <div className="dashboard-card__header"><h2>Overdue Tasks</h2></div>
-              {data.overdue_tasks_items?.length ? (
-                <div className="vilo-table-wrap">
-                  <table className="team-table">
-                    <thead><tr><th>Title</th><th>Status</th><th>Due</th></tr></thead>
-                    <tbody>
-                      {data.overdue_tasks_items.map((task) => (
-                        <tr key={task.id}>
-                          <td>{task.title}</td>
-                          <td>{task.status}</td>
-                          <td>{fmtDate(task.due_date)}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              ) : <p className="vilo-state">No overdue tasks.</p>}
-            </article>
-
-            <article className="dashboard-card vilo-table-card">
-              <div className="dashboard-card__header"><h2>Financial Snapshot</h2></div>
-              <div style={{ padding: "0 1.25rem 1.25rem" }}>
-                <p><strong>Invoice Total:</strong> {fmtCurrency(data.total_invoice_amount)}</p>
-                <p><strong>Paid Total:</strong> {fmtCurrency(data.total_paid_amount)}</p>
-                <p><strong>Balance Due:</strong> {fmtCurrency(data.total_balance_due)}</p>
-                <p><strong>Trust Balance:</strong> {fmtCurrency(data.total_trust_balance)}</p>
-              </div>
-            </article>
+          <div className="dashboard-row-grid dashboard-row-grid--tertiary">
+            <ActiveFilesTable rows={activeCaseRows.length ? activeCaseRows : undefined} />
+            <BillingOverview series={billing?.chart_series || []} />
           </div>
         </>
       ) : null}

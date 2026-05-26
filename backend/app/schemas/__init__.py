@@ -5,7 +5,7 @@ from app.schemas.client import ClientCreate, ClientUpdate, ClientResponse
 from app.schemas.case import CaseCreate, CaseUpdate, CaseResponse, CaseAssignmentRequest, AssignedUser
 from app.schemas.task import TaskCreate, TaskUpdate, TaskResponse
 from app.schemas.calendar_event import CalendarEventCreate, CalendarEventUpdate, CalendarEventResponse
-from app.schemas.timeline import CaseTimelineResponse
+from app.schemas.timeline import CaseTimelineResponse, TimelineEventCreate, TimelineEventUpdate
 from app.schemas.document import DocumentResponse, DocumentUpdate
 from app.schemas.case_note import CaseNoteCreate, CaseNoteUpdate, CaseNoteResponse
 from app.schemas.time_entry import TimeEntryCreate, TimeEntryUpdate, TimeEntryResponse
@@ -28,7 +28,7 @@ __all__ = [
     "CaseCreate","CaseUpdate","CaseResponse","CaseAssignmentRequest","AssignedUser",
     "TaskCreate","TaskUpdate","TaskResponse",
     "CalendarEventCreate","CalendarEventUpdate","CalendarEventResponse",
-    "CaseTimelineResponse","DocumentResponse","DocumentUpdate","CaseNoteCreate","CaseNoteUpdate","CaseNoteResponse",
+    "CaseTimelineResponse","TimelineEventCreate","TimelineEventUpdate","DocumentResponse","DocumentUpdate","CaseNoteCreate","CaseNoteUpdate","CaseNoteResponse",
     "TimeEntryCreate","TimeEntryUpdate","TimeEntryResponse","ExpenseCreate","ExpenseUpdate","ExpenseResponse",
     "InvoiceCreate","InvoiceUpdate","InvoiceResponse","InvoiceLineItemResponse","InvoiceSummaryResponse",
     "TrustAccountCreate","TrustAccountResponse","TrustAdjustmentCreate","TrustApplyToInvoiceCreate",
@@ -40,6 +40,9 @@ __all__ = [
     "InviteCreate","InviteResponse","AdminUserUpdate","AcceptInviteRequest",
     "NotificationResponse","NotificationListResponse","MarkNotificationsReadRequest",
     "AuditLogResponse","AuditLogListResponse",
+    "FirmSnapshot","TodayOverview","PriorityTimelineItem",
+    "CalendarOverview","CalendarEventItem","FinancialOverview",
+    "BillingOverview","ActiveCaseRow","DashboardWidgetsResponse",
 ]
 
 from app.schemas.conversation import (
@@ -50,3 +53,8 @@ from app.schemas.conversation import (
 from app.schemas.admin import InviteCreate, InviteResponse, AdminUserUpdate, AcceptInviteRequest
 from app.schemas.notification import NotificationResponse, NotificationListResponse, MarkNotificationsReadRequest
 from app.schemas.audit import AuditLogResponse, AuditLogListResponse
+from app.schemas.dashboard import (
+    FirmSnapshot, TodayOverview, PriorityTimelineItem,
+    CalendarOverview, CalendarEventItem, FinancialOverview,
+    BillingOverview, ActiveCaseRow, DashboardWidgetsResponse,
+)

@@ -3,19 +3,19 @@
 import { motion, useReducedMotion } from "framer-motion";
 import { createCardVariants, createHoverLift, createItemVariants } from "../motion";
 
-const statItems = [
+const fallbackStatItems = [
   { label: "Due Today", value: 12 },
   { label: "Overdue", value: 4 },
   { label: "Messages", value: 9 }
 ];
 
-const timelineRows = [
+const fallbackTimelineRows = [
   { label: "JMMB Bank - 103XXX", priority: "High", tone: "is-high" },
   { label: "JMMB Bank - 103XXX", priority: "Low", tone: "is-low" },
   { label: "JMMB Bank - 103XXX", priority: "Normal", tone: "is-normal" }
 ];
 
-export function TodaysOverview() {
+export function TodaysOverview({ stats = fallbackStatItems, timelineRows = fallbackTimelineRows }) {
   const shouldReduceMotion = useReducedMotion();
   const cardVariants = createCardVariants(shouldReduceMotion);
   const itemVariants = createItemVariants(shouldReduceMotion, "y", 10);
@@ -33,7 +33,7 @@ export function TodaysOverview() {
       </div>
 
       <div className="overview-stats">
-        {statItems.map((item) => (
+        {stats.map((item) => (
           <motion.article key={item.label} className="overview-stat" variants={itemVariants}>
             <p>{item.label}:</p>
             <strong>{item.value}</strong>

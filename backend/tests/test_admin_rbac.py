@@ -54,6 +54,9 @@ class AdminDBStub:
     async def commit(self):
         return None
 
+    async def flush(self):
+        return None
+
     async def refresh(self, obj):
         if getattr(obj, "id", None) is None:
             obj.id = 1

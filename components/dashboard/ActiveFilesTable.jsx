@@ -3,9 +3,9 @@
 import { motion, useReducedMotion } from "framer-motion";
 import { createCardVariants, createHoverLift, createItemVariants } from "../motion";
 
-const fileRows = [
+const fallbackRows = [
   {
-    fileId: "F-101",
+    caseId: "C-101",
     client: "Apex Group",
     matter: "Corporate Merger",
     lead: "Sarah J.",
@@ -13,7 +13,7 @@ const fileRows = [
     due: "Oct 30"
   },
   {
-    fileId: "F-102",
+    caseId: "C-102",
     client: "Rahman Holdings",
     matter: "Land Dispute",
     lead: "David K.",
@@ -21,7 +21,7 @@ const fileRows = [
     due: "Nov 04"
   },
   {
-    fileId: "F-103",
+    caseId: "C-103",
     client: "Blue Ocean Ltd",
     matter: "Contract Review",
     lead: "Maria A.",
@@ -29,7 +29,7 @@ const fileRows = [
     due: "Nov 12"
   },
   {
-    fileId: "F-104",
+    caseId: "C-104",
     client: "Northline Corp",
     matter: "Employment Matter",
     lead: "Sarah J.",
@@ -38,9 +38,9 @@ const fileRows = [
   }
 ];
 
-const tableColumns = ["File ID", "Client", "Matter", "Lead", "Status", "Due"];
+const tableColumns = ["Case ID", "Client", "Matter", "Lead", "Status", "Due"];
 
-export function ActiveFilesTable() {
+export function ActiveFilesTable({ rows = fallbackRows }) {
   const shouldReduceMotion = useReducedMotion();
   const cardVariants = createCardVariants(shouldReduceMotion);
   const rowVariants = createItemVariants(shouldReduceMotion, "y", 12);
@@ -54,7 +54,7 @@ export function ActiveFilesTable() {
       whileHover={hoverLift}
     >
       <div className="dashboard-card__header">
-        <h2 id="active-files-title">Active Files</h2>
+        <h2 id="active-files-title">Active Cases</h2>
       </div>
 
       <div className="files-table-wrap">
@@ -67,15 +67,15 @@ export function ActiveFilesTable() {
             </tr>
           </thead>
           <tbody>
-            {fileRows.map((row, index) => (
+            {rows.map((row, index) => (
               <motion.tr
-                key={row.fileId}
+                key={row.caseId}
                 variants={rowVariants}
                 initial={shouldReduceMotion ? false : "hidden"}
                 animate="show"
                 transition={{ delay: shouldReduceMotion ? 0 : 0.07 * index }}
               >
-                <td>{row.fileId}</td>
+                <td>{row.caseId}</td>
                 <td>{row.client}</td>
                 <td>{row.matter}</td>
                 <td>{row.lead}</td>
@@ -96,7 +96,7 @@ export function ActiveFilesTable() {
         </table>
 
         <div className="files-table__footer">
-          <p>Showing 1 to 4 of 4 file records</p>
+          <p>Showing 1 to {rows.length} of {rows.length} timeline events</p>
 
           <div className="files-pagination" aria-label="Pagination">
             <button type="button" className="files-pagination__button is-arrow" aria-label="Previous page">

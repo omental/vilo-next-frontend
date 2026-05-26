@@ -50,7 +50,7 @@ export function Navbar({ onMenuClick }) {
           <MenuIcon />
         </button>
         <SearchIcon />
-        <span className="dashboard-navbar__placeholder">Search</span>
+        <input className="dashboard-navbar__search-input" type="text" placeholder="Search 98K" aria-label="Search dashboard" />
       </div>
 
       <div className="dashboard-navbar__actions">

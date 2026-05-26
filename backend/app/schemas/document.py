@@ -6,6 +6,7 @@ class DocumentResponse(BaseModel):
     id: int
     organization_id: int
     case_id: int | None
+    client_id: int | None
     uploaded_by: int
     title: str
     description: str | None

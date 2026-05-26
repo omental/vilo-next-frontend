@@ -6,7 +6,7 @@ import { motionEase, createHoverLift, createItemVariants } from "../motion";
 
 const menuItems = [
   { label: "Dashboard", icon: HomeIcon, href: "/dashboard" },
-  { label: "Cases", icon: FileTextIcon, href: "/dashboard/cases" },
+  { label: "Files", icon: FileTextIcon, href: "/dashboard/cases" },
   { label: "Clients", icon: UsersIcon, href: "/dashboard/clients" },
   { label: "Calendar", icon: CalendarIcon, href: "/dashboard/calendar" },
   { label: "Tasks", icon: ClipboardListIcon, href: "/dashboard/tasks" },
@@ -14,14 +14,9 @@ const menuItems = [
   { label: "Precedents", icon: ListIcon, href: "/dashboard/precedents" },
   { label: "Messages", icon: MessageCircleIcon, href: "/dashboard/messages" },
   { label: "Billing", icon: DollarSignIcon, href: "/dashboard/billing", expandable: true },
-  { label: "Invoices", icon: DollarSignIcon, href: "/dashboard/invoices" },
-  { label: "Time Entries", icon: ClipboardListIcon, href: "/dashboard/time-entries" },
   { label: "Finance", icon: LinkIcon, href: "/dashboard/finance", expandable: true },
-  { label: "Trust", icon: LinkIcon, href: "/dashboard/trust" },
-  { label: "Expenses", icon: DollarSignIcon, href: "/dashboard/expenses" },
   { label: "Team", icon: NetworkIcon, href: "/dashboard/team" },
   { label: "Reports", icon: ClipboardIcon, href: "/dashboard/reports" },
-  { label: "Audit Logs", icon: ClipboardIcon, href: "/dashboard/audit-logs" },
   { label: "Settings", icon: SettingsIcon, href: "/dashboard/settings" }
 ];
 
@@ -38,7 +33,7 @@ const recentActivity = [
 ];
 
 const quickActions = [
-  { label: "Create File", icon: PlusSquareIcon },
+  { label: "Create Case", icon: PlusSquareIcon },
   { label: "Add Client", icon: UserPlusIcon },
   { label: "Upload Document", icon: UploadIcon }
 ];

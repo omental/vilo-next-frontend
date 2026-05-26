@@ -1,0 +1,171 @@
+"use client";
+
+import { useEffect, useMemo, useState } from "react";
+
+const initialState = {
+  client_type: "individual",
+  first_name: "",
+  last_name: "",
+  company_name: "",
+  billing_currency: "USD",
+  address: "",
+  trn_no: "",
+  date_of_birth: "",
+  email: "",
+  phone: "",
+  preferred_contact_method: "email",
+  notes: "",
+};
+
+function readMetaLine(notes, label) {
+  const token = `${label}:`;
+  const idx = String(notes || "").indexOf(token);
+  if (idx === -1) return "";
+  return String(notes || "").slice(idx + token.length).split("\n")[0].trim();
+}
+
+function parseClient(client) {
+  const name = String(client?.name || "").trim();
+  const [first_name = "", ...rest] = name.split(" ");
+  const last_name = rest.join(" ").trim();
+
+  return {
+    ...initialState,
+    client_type: client?.client_type || readMetaLine(client?.notes, "Client Type").toLowerCase() || "individual",
+    first_name: readMetaLine(client?.notes, "First Name") || first_name,
+    last_name: readMetaLine(client?.notes, "Last Name") || last_name,
+    company_name: readMetaLine(client?.notes, "Company Name"),
+    billing_currency: client?.billing_currency || readMetaLine(client?.notes, "Billing Currency") || "USD",
+    address: client?.address || readMetaLine(client?.notes, "Address") || "",
+    trn_no: client?.trn_no || readMetaLine(client?.notes, "TRN No") || "",
+    date_of_birth: client?.date_of_birth || readMetaLine(client?.notes, "Date of Birth") || "",
+    email: client?.email || "",
+    phone: client?.phone || "",
+    preferred_contact_method: client?.preferred_contact_method || readMetaLine(client?.notes, "Preferred Contact Method") || "email",
+    notes: readMetaLine(client?.notes, "Notes") || client?.notes || "",
+  };
+}
+
+function payloadFromState(state, existingClient) {
+  const fullName = `${state.first_name} ${state.last_name}`.trim();
+  const fallbackName = state.client_type === "corporate" ? state.company_name : state.first_name;
+
+  return {
+    name: fullName || fallbackName || existingClient?.name || "Client",
+    email: state.email || null,
+    phone: state.phone || null,
+    address: state.address || null,
+    notes: state.notes || null,
+    client_type: state.client_type || "individual",
+    trn_no: state.trn_no || null,
+    preferred_contact_method: state.preferred_contact_method || null,
+    date_of_birth: state.date_of_birth || null,
+    billing_currency: state.billing_currency || "USD",
+  };
+}
+
+export default function ClientIntakeModal({ open, mode = "create", client = null, saving = false, apiError = "", onClose, onSubmit }) {
+  const [form, setForm] = useState(initialState);
+  const [idFile, setIdFile] = useState(null);
+  const [errors, setErrors] = useState({});
+
+  useEffect(() => {
+    if (!open) return;
+    setErrors({});
+    setIdFile(null);
+    setForm(client ? parseClient(client) : initialState);
+  }, [open, client]);
+
+  const title = useMemo(() => (mode === "edit" ? "Edit Client" : "Client Intake Form"), [mode]);
+  if (!open) return null;
+
+  function validate() {
+    const next = {};
+    if (!form.first_name.trim()) next.first_name = "First name is required.";
+    if (!form.last_name.trim()) next.last_name = "Last name is required.";
+    if (!form.company_name.trim()) next.company_name = "Company name is required.";
+    if (!form.address.trim()) next.address = "Address is required.";
+    if (!form.trn_no.trim()) next.trn_no = "TRN No. is required.";
+    if (!form.date_of_birth.trim()) next.date_of_birth = "Date of birth is required.";
+    if (!form.email.trim()) next.email = "Email is required.";
+    if (!form.phone.trim()) next.phone = "Phone is required.";
+    if (!form.notes.trim()) next.notes = "Notes are required.";
+    setErrors(next);
+    return Object.keys(next).length === 0;
+  }
+
+  async function handleSubmit(e) {
+    e.preventDefault();
+    if (!validate()) return;
+    await onSubmit(payloadFromState(form, client), idFile);
+  }
+
+  return (
+    <div className="vilo-modal-overlay" onClick={onClose}>
+      <div className="vilo-modal vilo-modal--intake" onClick={(e) => e.stopPropagation()}>
+        <div className="vilo-modal__header">
+          <h3>{title}</h3>
+          <button type="button" className="vilo-btn vilo-btn--ghost vilo-btn--xs" onClick={onClose}>Close</button>
+        </div>
+        <form className="vilo-modal__body" onSubmit={handleSubmit}>
+          <div className="client-intake-type-row">
+            <span>Client Type:</span>
+            <label><input type="radio" checked={form.client_type === "individual"} onChange={() => setForm({ ...form, client_type: "individual" })} /> Individual</label>
+            <label><input type="radio" checked={form.client_type === "corporate"} onChange={() => setForm({ ...form, client_type: "corporate" })} /> Corporate</label>
+          </div>
+
+          <div className="client-intake-grid">
+            <Field label="First Name *" value={form.first_name} onChange={(v) => setForm({ ...form, first_name: v })} error={errors.first_name} placeholder="Enter First Name" />
+            <Field label="Last Name *" value={form.last_name} onChange={(v) => setForm({ ...form, last_name: v })} error={errors.last_name} placeholder="Enter Last Name" />
+            <Field label="Company Name *" value={form.company_name} onChange={(v) => setForm({ ...form, company_name: v })} error={errors.company_name} placeholder="Enter Company Name" />
+            <div><label>Billing Currency *</label><select value={form.billing_currency} onChange={(e) => setForm({ ...form, billing_currency: e.target.value })}><option value="USD">USD</option><option value="EUR">EUR</option><option value="AED">AED</option></select></div>
+            <Field label="Address *" value={form.address} onChange={(v) => setForm({ ...form, address: v })} error={errors.address} placeholder="Enter Address" />
+            <Field label="TRN No. *" value={form.trn_no} onChange={(v) => setForm({ ...form, trn_no: v })} error={errors.trn_no} placeholder="Enter TRN" />
+            <Field label="Date of Birth *" value={form.date_of_birth} onChange={(v) => setForm({ ...form, date_of_birth: v })} error={errors.date_of_birth} placeholder="YYYY-MM-DD" />
+            <Field label="Email *" value={form.email} onChange={(v) => setForm({ ...form, email: v })} error={errors.email} placeholder="Enter Email" />
+            <Field label="Phone *" value={form.phone} onChange={(v) => setForm({ ...form, phone: v })} error={errors.phone} placeholder="Enter Phone" />
+            <div><label>Preferred Contact Method *</label><select value={form.preferred_contact_method} onChange={(e) => setForm({ ...form, preferred_contact_method: e.target.value })}><option value="email">Email</option><option value="phone">Phone</option><option value="sms">SMS</option></select></div>
+          </div>
+
+          <div className="client-upload-block">
+            <p>Upload ID</p>
+            <label className="client-upload-dropzone">
+              <strong>Drag &amp; drop or Browse</strong>
+              <span>PDF, DOC/DOCX, JPG, PNG. Max file size 50MB</span>
+              <input
+                type="file"
+                accept=".pdf,.doc,.docx,.jpg,.jpeg,.png"
+                onChange={(e) => setIdFile(e.target.files?.[0] || null)}
+                style={{ display: "none" }}
+              />
+            </label>
+            {idFile ? <p className="vilo-state">Selected file: {idFile.name}</p> : null}
+          </div>
+
+          <div>
+            <label>Notes *</label>
+            <textarea value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })} placeholder="Notes" />
+            {errors.notes ? <small className="vilo-form-error">{errors.notes}</small> : null}
+          </div>
+
+          {apiError ? <p className="vilo-state vilo-state--error">{apiError}</p> : null}
+
+          <div className="vilo-table-actions client-intake-footer">
+            <button className="vilo-btn vilo-btn--secondary" type="button" onClick={onClose}>Cancel</button>
+            <button className="vilo-btn vilo-btn--primary" type="submit" disabled={saving}>{saving ? "Saving..." : mode === "edit" ? "Save Client" : "Add Client"}</button>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+}
+
+function Field({ label, value, onChange, placeholder, error }) {
+  return (
+    <div>
+      <label>{label}</label>
+      <input value={value} onChange={(e) => onChange(e.target.value)} placeholder={placeholder} />
+      {error ? <small className="vilo-form-error">{error}</small> : null}
+    </div>
+  );
+}

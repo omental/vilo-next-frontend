@@ -1,5 +1,5 @@
-from datetime import datetime
-from sqlalchemy import DateTime, ForeignKey, String, Text
+from datetime import date, datetime
+from sqlalchemy import Date, DateTime, ForeignKey, String, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base
@@ -16,6 +16,12 @@ class Client(Base):
     phone: Mapped[str | None] = mapped_column(String(100), nullable=True)
     address: Mapped[str | None] = mapped_column(Text, nullable=True)
     notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    client_type: Mapped[str] = mapped_column(String(50), nullable=False, default="individual")
+    trn_no: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    preferred_contact_method: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    date_of_birth: Mapped[date | None] = mapped_column(Date, nullable=True)
+    billing_currency: Mapped[str | None] = mapped_column(String(10), nullable=True, default="USD")
+    archived_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
@@ -27,3 +33,4 @@ class Client(Base):
     trust_ledgers = relationship("TrustLedger", back_populates="client")
     trust_transactions = relationship("TrustTransaction", back_populates="client")
     intakes = relationship("ClientIntake", back_populates="client", cascade="all, delete-orphan")
+    documents = relationship("Document", back_populates="client")

@@ -3,7 +3,7 @@
 import { motion, useReducedMotion } from "framer-motion";
 import { createCardVariants, createHoverLift, createItemVariants } from "../motion";
 
-const snapshotStats = [
+const fallbackSnapshotStats = [
   {
     label: "Total Files",
     value: 100,
@@ -37,7 +37,7 @@ const legendItems = [
   { label: "Pending", tone: "is-pending" }
 ];
 
-export function FirmSnapshot() {
+export function FirmSnapshot({ snapshotStats = fallbackSnapshotStats, caseStatusPercent = 72 }) {
   const shouldReduceMotion = useReducedMotion();
   const cardVariants = createCardVariants(shouldReduceMotion);
   const itemVariants = createItemVariants(shouldReduceMotion, "y", 10);
@@ -56,7 +56,7 @@ export function FirmSnapshot() {
 
       <div className="snapshot-layout">
         <div className="snapshot-chart-block">
-          <SnapshotDonut />
+          <SnapshotDonut percent={caseStatusPercent} />
 
           <ul className="snapshot-legend" aria-label="Firm snapshot legend">
             {legendItems.map((item) => (
@@ -70,7 +70,7 @@ export function FirmSnapshot() {
 
         <div className="snapshot-stats">
           {snapshotStats.map((item) => {
-            const Icon = item.icon;
+            const Icon = item.icon || StackIcon;
 
             return (
               <motion.article key={item.label} className="snapshot-stat" variants={itemVariants}>
@@ -90,11 +90,11 @@ export function FirmSnapshot() {
   );
 }
 
-function SnapshotDonut() {
+function SnapshotDonut({ percent = 72 }) {
   const shouldReduceMotion = useReducedMotion();
 
   return (
-    <div className="snapshot-donut" aria-label="Case Status 72 percent">
+    <div className="snapshot-donut" aria-label={`Case Status ${percent} percent`}>
       <svg viewBox="0 0 240 240" aria-hidden="true">
         <circle className="snapshot-donut__track" cx="120" cy="120" r="78" />
         <motion.circle
@@ -134,7 +134,7 @@ function SnapshotDonut() {
 
       <div className="snapshot-donut__center">
         <span>Case Status</span>
-        <strong>72%</strong>
+        <strong>{percent}%</strong>
       </div>
     </div>
   );

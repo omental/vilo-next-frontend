@@ -3,7 +3,7 @@
 import { motion, useReducedMotion } from "framer-motion";
 import { createCardVariants, createHoverLift, createItemVariants } from "../motion";
 
-const billingBars = [
+const fallbackBillingBars = [
   { label: "Paid", value: 210, tone: "is-paid" },
   { label: "Unpaid", value: 130, tone: "is-unpaid" },
   { label: "Draft", value: 360, tone: "is-draft" },
@@ -12,11 +12,23 @@ const billingBars = [
 
 const billingAxisLabels = [400, 300, 200, 100, 0];
 
-export function BillingOverview() {
+function toneByLabel(label) {
+  const key = (label || "").toLowerCase();
+  if (key === "paid") return "is-paid";
+  if (key === "unpaid") return "is-unpaid";
+  if (key === "draft") return "is-draft";
+  if (key === "overdue") return "is-overdue";
+  return "is-paid";
+}
+
+export function BillingOverview({ series = [] }) {
   const shouldReduceMotion = useReducedMotion();
   const cardVariants = createCardVariants(shouldReduceMotion);
   const itemVariants = createItemVariants(shouldReduceMotion, "y", 10);
   const hoverLift = createHoverLift(shouldReduceMotion);
+  const billingBars = series.length
+    ? series.map((item) => ({ label: item.label, value: Number(item.value || 0), tone: toneByLabel(item.label) }))
+    : fallbackBillingBars;
 
   return (
     <motion.section

@@ -5,7 +5,7 @@ import { createCardVariants, createHoverLift, createItemVariants } from "../moti
 
 const chartValues = [190, 105, 210, 80, 175, 240, 260];
 
-const summaryItems = [
+const defaultSummaryItems = [
   { label: "Monthly expenses", value: "$21,450", tone: "is-green", icon: WalletIcon },
   { label: "Net Profit", value: "$21,450", tone: "is-orange", icon: FlagIcon },
   { label: "Trust Account", value: "$21,450", tone: "is-violet", icon: CheckCircleIcon }
@@ -13,7 +13,13 @@ const summaryItems = [
 
 const axisLabels = [400, 300, 200, 100, 0];
 
-export function FinancialOverview() {
+function iconByTone(tone) {
+  if (tone === "is-green") return WalletIcon;
+  if (tone === "is-orange") return FlagIcon;
+  return CheckCircleIcon;
+}
+
+export function FinancialOverview({ revenueText = "$230,000", summaryItems = defaultSummaryItems }) {
   const shouldReduceMotion = useReducedMotion();
   const chartPoints = buildChartPoints(chartValues);
   const linePath = buildSmoothPath(chartPoints);
@@ -36,7 +42,7 @@ export function FinancialOverview() {
       <div className="financial-card__body">
         <div className="financial-copy">
           <h3>Monthly Earnings - March 2026</h3>
-          <p>Total Revenue: $230,000</p>
+          <p>Total Revenue: {revenueText}</p>
         </div>
 
         <div className="financial-chart-wrap">
@@ -100,7 +106,7 @@ export function FinancialOverview() {
 
         <div className="financial-summary">
           {summaryItems.map((item) => {
-            const Icon = item.icon;
+            const Icon = item.icon || iconByTone(item.tone);
 
             return (
               <motion.article key={item.label} className="financial-summary__item" variants={itemVariants}>

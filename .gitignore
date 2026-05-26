@@ -28,3 +28,5 @@ coverage/
 .vercel/
 backend/storage/generated/*.pdf
 backend/.venv/
+__pycache__/
+*.pyc

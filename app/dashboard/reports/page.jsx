@@ -110,14 +110,14 @@ export default function ReportsPage() {
               <input type="date" value={dateTo} onChange={(e) => setDateTo(e.target.value)} />
             </div>
           ) : null}
-          {pdfPath ? <button type="button" onClick={() => apiDownload(pdfPath)}>Export Report PDF</button> : null}
+          {pdfPath ? <button className="vilo-btn vilo-btn--primary" type="button" onClick={() => apiDownload(pdfPath)}>Export Report PDF</button> : null}
         </div>
       </article>
 
       <article className="dashboard-card vilo-table-card">
         <div className="dashboard-card__header"><h2>{tab[0].toUpperCase() + tab.slice(1)} Report</h2></div>
-        {loading ? <p className="vilo-state">Loading report...</p> : null}
-        {error ? <p className="vilo-state vilo-state--error">{error}</p> : null}
+        {loading ? <div className="vilo-state-block"><p className="vilo-state vilo-state--loading">Loading report...</p></div> : null}
+        {error ? <div className="vilo-state-block"><p className="vilo-state vilo-state--error">{error}</p></div> : null}
 
         {!loading && !error && tab === "cases" && data ? (
           <>

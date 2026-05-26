@@ -34,6 +34,7 @@ def to_response(document: Document) -> DocumentResponse:
         id=document.id,
         organization_id=document.organization_id,
         case_id=document.case_id,
+        client_id=document.client_id,
         uploaded_by=document.uploaded_by,
         title=document.title,
         description=document.description,
@@ -176,12 +177,15 @@ async def upload_document(
 @router.get("", response_model=list[DocumentResponse])
 async def list_documents(
     case_id: int | None = None,
+    client_id: int | None = None,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(role_guard(ALLOWED_STAFF)),
 ):
     query = select(Document).where(Document.organization_id == current_user.organization_id)
     if case_id is not None:
         query = query.where(Document.case_id == case_id)
+    if client_id is not None:
+        query = query.where(Document.client_id == client_id)
     rows = await db.scalars(query.order_by(Document.created_at.desc()))
     return [to_response(d) for d in rows.all()]
 

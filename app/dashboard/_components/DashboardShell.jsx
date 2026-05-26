@@ -51,7 +51,7 @@ export default function DashboardShell({ children }) {
               <strong>{user?.name || "Loading..."}</strong>
               <span>{user?.role || ""}</span>
             </div>
-            <button className="dashboard-userbar__logout" onClick={logout}>Logout</button>
+            <button className="dashboard-userbar__logout vilo-btn vilo-btn--secondary vilo-btn--xs" onClick={logout}>Logout</button>
           </div>
           {children}
         </div>

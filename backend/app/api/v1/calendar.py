@@ -13,7 +13,10 @@ from app.services.timeline import create_case_timeline_event
 
 router = APIRouter(prefix="/calendar/events", tags=["calendar"])
 ALLOWED_STAFF = ["partner", "admin", "lawyer", "paralegal"]
-VALID_EVENT_TYPES = {"meeting", "hearing", "deadline", "todo", "consultation"}
+VALID_EVENT_TYPES = {
+    "meeting", "hearing", "deadline", "todo", "consultation",
+    "court", "client", "travel", "staff", "note",
+}
 
 
 def serialize(event: CalendarEvent) -> CalendarEventResponse:

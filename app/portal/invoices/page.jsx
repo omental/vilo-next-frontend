@@ -29,9 +29,9 @@ export default function PortalInvoicesPage() {
   return (
     <section className="dashboard-page-stack">
       <div className="dashboard-page-heading"><h1>Invoices</h1></div>
-      {loading ? <p className="vilo-state">Loading invoices...</p> : null}
-      {error ? <p className="vilo-state vilo-state--error">{error}</p> : null}
-      {!loading && !error && !rows.items.length ? <p className="vilo-state">No invoices found.</p> : null}
+      {loading ? <div className="vilo-state-block"><p className="vilo-state vilo-state--loading">Loading invoices...</p></div> : null}
+      {error ? <div className="vilo-state-block"><p className="vilo-state vilo-state--error">{error}</p></div> : null}
+      {!loading && !error && !rows.items.length ? <div className="vilo-state-block"><p className="vilo-state">No invoices found.</p></div> : null}
       {!loading && !error && rows.items.length ? (
         <article className="dashboard-card vilo-table-card">
           <div className="vilo-table-wrap">
@@ -41,19 +41,19 @@ export default function PortalInvoicesPage() {
                 {rows.items.map((inv) => (
                   <tr key={inv.id}>
                     <td>{inv.invoice_number}</td>
-                    <td>{inv.status}</td>
+                    <td><span className={`vilo-badge vilo-badge--${inv.status}`}>{inv.status}</span></td>
                     <td>{money(inv.total)}</td>
                     <td>{money(inv.balance_due)}</td>
-                    <td><Link href={`/portal/invoices/${inv.id}`}>View</Link></td>
+                    <td><Link className="vilo-btn vilo-btn--secondary vilo-btn--xs" href={`/portal/invoices/${inv.id}`}>View</Link></td>
                   </tr>
                 ))}
               </tbody>
             </table>
           </div>
           <div className="vilo-pagination">
-            <button onClick={() => setPage((p) => p - 1)} disabled={!hasPrev}>Previous</button>
+            <button className="vilo-btn vilo-btn--secondary vilo-btn--xs" onClick={() => setPage((p) => p - 1)} disabled={!hasPrev}>Previous</button>
             <span>Page {rows.page}</span>
-            <button onClick={() => setPage((p) => p + 1)} disabled={!hasNext}>Next</button>
+            <button className="vilo-btn vilo-btn--secondary vilo-btn--xs" onClick={() => setPage((p) => p + 1)} disabled={!hasNext}>Next</button>
           </div>
         </article>
       ) : null}
