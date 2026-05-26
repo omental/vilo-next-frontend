@@ -1,4 +1,43 @@
+"use client";
+
+import { useEffect, useState } from "react";
+import { apiRequest } from "../../lib/api";
+
 export function Navbar({ onMenuClick }) {
+  const [open, setOpen] = useState(false);
+  const [items, setItems] = useState([]);
+  const [unreadCount, setUnreadCount] = useState(0);
+
+  async function loadNotifications() {
+    try {
+      const data = await apiRequest("/api/v1/notifications?page=1&page_size=10");
+      setItems(data.items || []);
+      setUnreadCount(data.unread_count || 0);
+    } catch {
+      setItems([]);
+      setUnreadCount(0);
+    }
+  }
+
+  useEffect(() => {
+    loadNotifications();
+    const id = setInterval(loadNotifications, 25000);
+    return () => clearInterval(id);
+  }, []);
+
+  async function markRead(id) {
+    await apiRequest("/api/v1/notifications/mark-read", {
+      method: "POST",
+      body: JSON.stringify({ notification_ids: [id] }),
+    });
+    loadNotifications();
+  }
+
+  async function markAllRead() {
+    await apiRequest("/api/v1/notifications/mark-all-read", { method: "POST" });
+    loadNotifications();
+  }
+
   return (
     <header className="dashboard-navbar" aria-label="Top navigation">
       <div className="dashboard-navbar__search">
@@ -21,10 +60,36 @@ export function Navbar({ onMenuClick }) {
         <button type="button" className="dashboard-navbar__icon-button" aria-label="Time tracker">
           <ClockIcon />
         </button>
-        <button type="button" className="dashboard-navbar__icon-button is-notification" aria-label="Notifications">
+        <button
+          type="button"
+          className="dashboard-navbar__icon-button is-notification"
+          aria-label="Notifications"
+          onClick={() => setOpen((prev) => !prev)}
+        >
           <BellIcon />
-          <span className="dashboard-navbar__alert-dot" />
+          {unreadCount > 0 ? <span className="dashboard-navbar__alert-dot" /> : null}
         </button>
+        {open ? (
+          <div className="dashboard-navbar__notifications">
+            <div className="dashboard-navbar__notifications-header">
+              <strong>Notifications</strong>
+              <button type="button" onClick={markAllRead}>Mark all read</button>
+            </div>
+            <div className="dashboard-navbar__notifications-list">
+              {items.length === 0 ? <p>No notifications yet.</p> : null}
+              {items.map((item) => (
+                <button key={item.id} type="button" className="dashboard-navbar__notification-item" onClick={() => markRead(item.id)}>
+                  <div>
+                    <strong>{item.title}</strong>
+                    {item.body ? <span>{item.body}</span> : null}
+                    <small>{new Date(item.created_at).toLocaleString()}</small>
+                  </div>
+                  {!item.is_read ? <em>New</em> : null}
+                </button>
+              ))}
+            </div>
+          </div>
+        ) : null}
         <button type="button" className="dashboard-navbar__avatar-button" aria-label="User profile">
           <span className="dashboard-navbar__avatar">
             <AvatarIcon />

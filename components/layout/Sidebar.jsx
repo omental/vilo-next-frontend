@@ -1,22 +1,28 @@
 "use client";
 
 import { motion, useReducedMotion } from "framer-motion";
+import { usePathname, useRouter } from "next/navigation";
 import { motionEase, createHoverLift, createItemVariants } from "../motion";
 
 const menuItems = [
-  { label: "Dashboard", icon: HomeIcon, active: true },
-  { label: "Files", icon: FileTextIcon },
-  { label: "Clients", icon: UsersIcon },
-  { label: "Calendar", icon: CalendarIcon },
-  { label: "Tasks", icon: ClipboardListIcon },
-  { label: "Documents", icon: FileStackIcon },
-  { label: "Precedents", icon: ListIcon },
-  { label: "Messages", icon: MessageCircleIcon },
-  { label: "Billing", icon: DollarSignIcon, expandable: true },
-  { label: "Finance", icon: LinkIcon, expandable: true },
-  { label: "Team", icon: NetworkIcon },
-  { label: "Reports", icon: ClipboardIcon },
-  { label: "Settings", icon: SettingsIcon }
+  { label: "Dashboard", icon: HomeIcon, href: "/dashboard" },
+  { label: "Cases", icon: FileTextIcon, href: "/dashboard/cases" },
+  { label: "Clients", icon: UsersIcon, href: "/dashboard/clients" },
+  { label: "Calendar", icon: CalendarIcon, href: "/dashboard/calendar" },
+  { label: "Tasks", icon: ClipboardListIcon, href: "/dashboard/tasks" },
+  { label: "Documents", icon: FileStackIcon, href: "/dashboard/documents" },
+  { label: "Precedents", icon: ListIcon, href: "/dashboard/precedents" },
+  { label: "Messages", icon: MessageCircleIcon, href: "/dashboard/messages" },
+  { label: "Billing", icon: DollarSignIcon, href: "/dashboard/billing", expandable: true },
+  { label: "Invoices", icon: DollarSignIcon, href: "/dashboard/invoices" },
+  { label: "Time Entries", icon: ClipboardListIcon, href: "/dashboard/time-entries" },
+  { label: "Finance", icon: LinkIcon, href: "/dashboard/finance", expandable: true },
+  { label: "Trust", icon: LinkIcon, href: "/dashboard/trust" },
+  { label: "Expenses", icon: DollarSignIcon, href: "/dashboard/expenses" },
+  { label: "Team", icon: NetworkIcon, href: "/dashboard/team" },
+  { label: "Reports", icon: ClipboardIcon, href: "/dashboard/reports" },
+  { label: "Audit Logs", icon: ClipboardIcon, href: "/dashboard/audit-logs" },
+  { label: "Settings", icon: SettingsIcon, href: "/dashboard/settings" }
 ];
 
 const quickMetrics = [
@@ -38,6 +44,8 @@ const quickActions = [
 ];
 
 export function Sidebar({ isMobileOpen = false, onClose = () => {} }) {
+  const router = useRouter();
+  const pathname = usePathname();
   const shouldReduceMotion = useReducedMotion();
   const itemVariants = createItemVariants(shouldReduceMotion, "y", 10);
   const hoverLift = createHoverLift(shouldReduceMotion, -2, 1.01);
@@ -85,15 +93,20 @@ export function Sidebar({ isMobileOpen = false, onClose = () => {} }) {
           <nav className="vilo-sidebar__nav" aria-label="Sidebar navigation">
             {menuItems.map((item) => {
               const Icon = item.icon;
+              const isActive =
+                item.href === "/dashboard" ? pathname === item.href : pathname.startsWith(item.href);
 
               return (
                 <motion.button
                   key={item.label}
                   type="button"
-                  className={`vilo-sidebar__item${item.active ? " is-active" : ""}`}
+                  className={`vilo-sidebar__item${isActive ? " is-active" : ""}`}
                   variants={itemVariants}
-                  whileHover={item.active ? activeHover : hoverLift}
-                  onClick={onClose}
+                  whileHover={isActive ? activeHover : hoverLift}
+                  onClick={() => {
+                    router.push(item.href);
+                    onClose();
+                  }}
                 >
                   <span className="vilo-sidebar__item-main">
                     <span className="vilo-sidebar__icon-wrap">

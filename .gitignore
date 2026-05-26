@@ -26,3 +26,4 @@ Thumbs.db
 # misc
 coverage/
 .vercel/
+backend/storage/generated/*.pdf
