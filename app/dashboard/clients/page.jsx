@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 import { apiRequest, apiUpload } from "../../../lib/api";
 import ClientIntakeModal from "../../../components/dashboard/ClientIntakeModal";
@@ -31,6 +32,7 @@ function inferPrimaryCase(client) {
 }
 
 export default function ClientsPage() {
+  const router = useRouter();
   const [clients, setClients] = useState([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -241,13 +243,13 @@ export default function ClientsPage() {
                 </thead>
                 <tbody>
                   {pageRows.map((client) => (
-                    <tr key={client.id}>
-                      <td>{client.name || "-"}</td>
+                    <tr key={client.id} className="cases-row-link" onClick={() => router.push(`/dashboard/clients/${client.id}`)}>
+                      <td><Link href={`/dashboard/clients/${client.id}`} className="cases-title-link">{client.name || "-"}</Link></td>
                       <td><span className={`vilo-badge ${client.clientType === "Corporate" ? "vilo-badge--completed" : "vilo-badge--priority-medium"}`}>{client.clientType}</span></td>
                       <td>{client.primaryCase || "-"}</td>
                       <td>{client.email || "-"}</td>
                       <td>{client.phone || "-"}</td>
-                      <td>
+                      <td onClick={(e) => e.stopPropagation()}>
                         <div className="vilo-table-actions" style={{ position: "relative" }}>
                           <button className="vilo-btn vilo-btn--ghost vilo-btn--xs" type="button" onClick={() => setActionOpenId((openId) => (openId === client.id ? null : client.id))}>•••</button>
                           {actionOpenId === client.id ? (

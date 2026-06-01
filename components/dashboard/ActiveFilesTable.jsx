@@ -1,6 +1,8 @@
 "use client";
 
 import { motion, useReducedMotion } from "framer-motion";
+import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { createCardVariants, createHoverLift, createItemVariants } from "../motion";
 
 const fallbackRows = [
@@ -41,6 +43,7 @@ const fallbackRows = [
 const tableColumns = ["Case ID", "Client", "Matter", "Lead", "Status", "Due"];
 
 export function ActiveFilesTable({ rows = fallbackRows }) {
+  const router = useRouter();
   const shouldReduceMotion = useReducedMotion();
   const cardVariants = createCardVariants(shouldReduceMotion);
   const rowVariants = createItemVariants(shouldReduceMotion, "y", 12);
@@ -70,13 +73,15 @@ export function ActiveFilesTable({ rows = fallbackRows }) {
             {rows.map((row, index) => (
               <motion.tr
                 key={row.caseId}
+                className={row.href ? "files-table__row-link" : ""}
                 variants={rowVariants}
                 initial={shouldReduceMotion ? false : "hidden"}
                 animate="show"
                 transition={{ delay: shouldReduceMotion ? 0 : 0.07 * index }}
+                onClick={row.href ? () => router.push(row.href) : undefined}
               >
-                <td>{row.caseId}</td>
-                <td>{row.client}</td>
+                <td>{row.href ? <Link href={row.href} className="files-table__link">{row.caseId}</Link> : row.caseId}</td>
+                <td>{row.clientHref ? <Link href={row.clientHref} className="files-table__link" onClick={(event) => event.stopPropagation()}>{row.client}</Link> : row.client}</td>
                 <td>{row.matter}</td>
                 <td>{row.lead}</td>
                 <td>

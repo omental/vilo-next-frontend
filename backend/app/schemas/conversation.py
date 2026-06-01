@@ -14,9 +14,22 @@ class ParticipantResponse(BaseModel):
     created_at: datetime
 
 
+class CaseReferenceResponse(BaseModel):
+    case_id: int
+    case_title: str
+    case_display_number: str | None = None
+
+
+class CaseSearchResult(BaseModel):
+    id: int
+    title: str
+    display_number: str | None = None
+
+
 class MessageCreate(BaseModel):
     body: str
     parent_message_id: int | None = None
+    case_reference_ids: list[int] = Field(default_factory=list)
 
 
 class MessageUpdate(BaseModel):
@@ -29,6 +42,9 @@ class MessageResponse(BaseModel):
     sender_id: int
     parent_message_id: int | None
     body: str
+    sender_name: str | None = None
+    sender_role: str | None = None
+    case_references: list["CaseReferenceResponse"] = Field(default_factory=list)
     created_at: datetime
     updated_at: datetime
     deleted_at: datetime | None
@@ -43,12 +59,15 @@ class ConversationCreate(BaseModel):
 
 class ConversationUpdate(BaseModel):
     title: str | None = None
+    case_id: int | None = None
 
 
 class ConversationResponse(BaseModel):
     id: int
     organization_id: int
     case_id: int | None
+    case_title: str | None = None
+    case_display_number: str | None = None
     conversation_type: str
     title: str | None
     created_by: int

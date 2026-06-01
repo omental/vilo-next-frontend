@@ -64,6 +64,10 @@ function payloadFromState(state, existingClient) {
   };
 }
 
+function isCorporateType(type) {
+  return String(type || "").toLowerCase() === "corporate";
+}
+
 export default function ClientIntakeModal({ open, mode = "create", client = null, saving = false, apiError = "", onClose, onSubmit }) {
   const [form, setForm] = useState(initialState);
   const [idFile, setIdFile] = useState(null);
@@ -80,13 +84,14 @@ export default function ClientIntakeModal({ open, mode = "create", client = null
   if (!open) return null;
 
   function validate() {
+    const corporate = isCorporateType(form.client_type);
     const next = {};
-    if (!form.first_name.trim()) next.first_name = "First name is required.";
-    if (!form.last_name.trim()) next.last_name = "Last name is required.";
-    if (!form.company_name.trim()) next.company_name = "Company name is required.";
+    if (!corporate && !form.first_name.trim()) next.first_name = "First name is required.";
+    if (!corporate && !form.last_name.trim()) next.last_name = "Last name is required.";
+    if (corporate && !form.company_name.trim()) next.company_name = "Company name is required.";
     if (!form.address.trim()) next.address = "Address is required.";
     if (!form.trn_no.trim()) next.trn_no = "TRN No. is required.";
-    if (!form.date_of_birth.trim()) next.date_of_birth = "Date of birth is required.";
+    if (!corporate && !form.date_of_birth.trim()) next.date_of_birth = "Date of birth is required.";
     if (!form.email.trim()) next.email = "Email is required.";
     if (!form.phone.trim()) next.phone = "Phone is required.";
     if (!form.notes.trim()) next.notes = "Notes are required.";
@@ -99,6 +104,11 @@ export default function ClientIntakeModal({ open, mode = "create", client = null
     if (!validate()) return;
     await onSubmit(payloadFromState(form, client), idFile);
   }
+
+  const corporate = isCorporateType(form.client_type);
+  const firstNameLabel = corporate ? "Contact First Name" : "First Name *";
+  const lastNameLabel = corporate ? "Contact Last Name" : "Last Name *";
+  const companyLabel = corporate ? "Company Name *" : "Company Name";
 
   return (
     <div className="vilo-modal-overlay" onClick={onClose}>
@@ -115,13 +125,13 @@ export default function ClientIntakeModal({ open, mode = "create", client = null
           </div>
 
           <div className="client-intake-grid">
-            <Field label="First Name *" value={form.first_name} onChange={(v) => setForm({ ...form, first_name: v })} error={errors.first_name} placeholder="Enter First Name" />
-            <Field label="Last Name *" value={form.last_name} onChange={(v) => setForm({ ...form, last_name: v })} error={errors.last_name} placeholder="Enter Last Name" />
-            <Field label="Company Name *" value={form.company_name} onChange={(v) => setForm({ ...form, company_name: v })} error={errors.company_name} placeholder="Enter Company Name" />
+            <Field label={firstNameLabel} value={form.first_name} onChange={(v) => setForm({ ...form, first_name: v })} error={errors.first_name} placeholder={corporate ? "Contact first name (optional)" : "Enter First Name"} />
+            <Field label={lastNameLabel} value={form.last_name} onChange={(v) => setForm({ ...form, last_name: v })} error={errors.last_name} placeholder={corporate ? "Contact last name (optional)" : "Enter Last Name"} />
+            <Field label={companyLabel} value={form.company_name} onChange={(v) => setForm({ ...form, company_name: v })} error={errors.company_name} placeholder={corporate ? "Enter Company Name" : "Company name (optional)"} />
             <div><label>Billing Currency *</label><select value={form.billing_currency} onChange={(e) => setForm({ ...form, billing_currency: e.target.value })}><option value="USD">USD</option><option value="EUR">EUR</option><option value="AED">AED</option></select></div>
             <Field label="Address *" value={form.address} onChange={(v) => setForm({ ...form, address: v })} error={errors.address} placeholder="Enter Address" />
             <Field label="TRN No. *" value={form.trn_no} onChange={(v) => setForm({ ...form, trn_no: v })} error={errors.trn_no} placeholder="Enter TRN" />
-            <Field label="Date of Birth *" value={form.date_of_birth} onChange={(v) => setForm({ ...form, date_of_birth: v })} error={errors.date_of_birth} placeholder="YYYY-MM-DD" />
+            {!corporate ? <Field label="Date of Birth *" value={form.date_of_birth} onChange={(v) => setForm({ ...form, date_of_birth: v })} error={errors.date_of_birth} placeholder="YYYY-MM-DD" /> : null}
             <Field label="Email *" value={form.email} onChange={(v) => setForm({ ...form, email: v })} error={errors.email} placeholder="Enter Email" />
             <Field label="Phone *" value={form.phone} onChange={(v) => setForm({ ...form, phone: v })} error={errors.phone} placeholder="Enter Phone" />
             <div><label>Preferred Contact Method *</label><select value={form.preferred_contact_method} onChange={(e) => setForm({ ...form, preferred_contact_method: e.target.value })}><option value="email">Email</option><option value="phone">Phone</option><option value="sms">SMS</option></select></div>

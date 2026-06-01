@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import Image from "next/image";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { apiRequest } from "../../lib/api";
@@ -31,7 +32,9 @@ export default function RegisterPage() {
   return (
     <main className="auth-page">
       <form className="auth-card" onSubmit={onSubmit}>
-        <p className="auth-brand">VILO</p>
+        <div className="auth-brand">
+          <Image src="/assets/vilo-logo.png" alt="VILO" width={132} height={40} className="auth-brand__logo" priority />
+        </div>
         <h1>Create your firm workspace</h1>
         <p className="auth-subtitle">Start with owner access and invite your team later.</p>
         <input placeholder="Organization name" value={form.organization_name} onChange={(e) => setForm({ ...form, organization_name: e.target.value })} required />

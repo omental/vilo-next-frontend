@@ -1,6 +1,7 @@
 "use client";
 
 import { motion, useReducedMotion } from "framer-motion";
+import Image from "next/image";
 import { usePathname, useRouter } from "next/navigation";
 import { motionEase, createHoverLift, createItemVariants } from "../motion";
 
@@ -78,8 +79,7 @@ export function Sidebar({ isMobileOpen = false, onClose = () => {} }) {
     >
       <div className="vilo-sidebar__inner">
         <div className="vilo-sidebar__brand">
-          <BrandMark />
-          <span>VILO</span>
+          <Image src="/assets/vilo-logo.png" alt="VILO" width={120} height={36} className="vilo-brand-logo" priority />
         </div>
 
         <div className="vilo-sidebar__block">
@@ -253,31 +253,6 @@ function ProgressRing({ value }) {
         <strong>{value}%</strong>
       </div>
     </div>
-  );
-}
-
-function BrandMark() {
-  return (
-    <svg viewBox="0 0 52 40" aria-hidden="true" className="vilo-brand-mark">
-      <defs>
-        <linearGradient id="vilo-brand-a" x1="0%" x2="100%" y1="0%" y2="100%">
-          <stop offset="0%" stopColor="#8ef0f8" />
-          <stop offset="100%" stopColor="#5bc5f9" />
-        </linearGradient>
-        <linearGradient id="vilo-brand-b" x1="0%" x2="100%" y1="0%" y2="100%">
-          <stop offset="0%" stopColor="#574bff" />
-          <stop offset="100%" stopColor="#2d16dd" />
-        </linearGradient>
-      </defs>
-      <path
-        d="M6.5 17.8c-3-3-3-7.8 0-10.8l2-2c3-3 7.8-3 10.8 0l8.6 8.5-6.4 6.5c-3 3-7.8 3-10.8 0l-4.2-4.2Z"
-        fill="url(#vilo-brand-a)"
-      />
-      <path
-        d="M28 13.5 36.6 5c3-3 7.8-3 10.8 0l2 2c3 3 3 7.8 0 10.8L32.2 35c-3 3-7.8 3-10.8 0l-2-2c-3-3-3-7.8 0-10.8l8.6-8.7Z"
-        fill="url(#vilo-brand-b)"
-      />
-    </svg>
   );
 }
 

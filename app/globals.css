@@ -1,4 +1,4 @@
-@import url("https://fonts.googleapis.com/css2?family=Outfit:wght@500;600;700&family=Public+Sans:wght@400;500;600;700&display=swap");
+@import url("https://fonts.googleapis.com/css2?family=Public+Sans:wght@400;500;600;700&display=swap");
 
 :root {
   --color-bg: #f8f7fa;
@@ -6,7 +6,8 @@
   --color-text: #3f3d4d;
   --color-text-soft: #7a768f;
   --sidebar-width: 280px;
-  font-family: "Public Sans", sans-serif;
+  --font-family-base: "Public Sans", sans-serif;
+  font-family: var(--font-family-base);
   color: var(--color-text);
   background: var(--color-bg);
 }
@@ -26,6 +27,7 @@ body {
     radial-gradient(circle at top left, rgba(115, 103, 240, 0.08), transparent 28%),
     linear-gradient(180deg, #faf9fc 0%, #f7f6fb 100%);
   color: var(--color-text);
+  font-family: var(--font-family-base);
 }
 
 ::-webkit-scrollbar {
@@ -40,6 +42,12 @@ body {
 button,
 input {
   font: inherit;
+}
+
+h1, h2, h3, h4, h5, h6,
+table, th, td,
+textarea, select {
+  font-family: var(--font-family-base);
 }
 
 button {
@@ -125,6 +133,23 @@ button {
   align-items: center;
   gap: 0.9rem;
   flex: none;
+}
+
+.dashboard-navbar__identity {
+  display: grid;
+  gap: 0.1rem;
+  text-align: right;
+}
+
+.dashboard-navbar__identity strong {
+  font-size: 0.83rem;
+  line-height: 1.1;
+}
+
+.dashboard-navbar__identity span {
+  font-size: 0.76rem;
+  text-transform: capitalize;
+  color: #7a768f;
 }
 
 .dashboard-navbar__icon-button,
@@ -295,13 +320,6 @@ button {
   color: #49455d;
 }
 
-.dashboard-page-heading h1,
-.dashboard-card__header h2,
-.financial-copy h3,
-.overview-table-block h3 {
-  font-family: "Outfit", sans-serif;
-}
-
 .dashboard-row-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -453,6 +471,17 @@ button {
   color: #5a566b;
 }
 
+.overview-table__link {
+  color: inherit;
+  text-decoration: none;
+}
+
+.overview-table__link:hover,
+.overview-table__link:focus-visible {
+  color: #4d48f5;
+  text-decoration: underline;
+}
+
 .priority-badge {
   display: inline-flex;
   align-items: center;
@@ -515,6 +544,13 @@ button {
   align-items: center;
   justify-content: center;
   padding: 0.5rem 0 0.3rem;
+}
+
+.snapshot-chart-block__label {
+  margin: 0 0 0.45rem;
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: #5e5a72;
 }
 
 .snapshot-donut {
@@ -774,6 +810,7 @@ button {
 }
 
 .calendar-event p,
+.calendar-event__link,
 .financial-copy p,
 .financial-summary__copy p {
   margin: 0;
@@ -787,6 +824,322 @@ button {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.calendar-event__link {
+  font-size: 0.9rem;
+  font-weight: 600;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-decoration: none;
+}
+
+.calendar-event__link:hover,
+.calendar-event__link:focus-visible {
+  color: #4d48f5;
+  text-decoration: underline;
+}
+
+.messages-layout {
+  display: grid;
+  grid-template-columns: 340px minmax(0, 1fr);
+  gap: 1rem;
+  min-height: 72vh;
+}
+
+.messages-layout--portal {
+  min-height: 68vh;
+}
+
+.messages-sidebar,
+.messages-thread {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.messages-sidebar__head {
+  padding: 1rem 1rem 0.5rem;
+}
+
+.messages-sidebar__head h2 {
+  margin: 0;
+  font-size: 1.15rem;
+}
+
+.messages-sidebar__search {
+  padding: 0 1rem 0.7rem;
+}
+
+.messages-filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  padding: 0 1rem 0.8rem;
+  border-bottom: 1px solid #ece8f5;
+}
+
+.messages-filters .case-tab-btn {
+  border-bottom: 0;
+  border: 1px solid #e2ddf2;
+  border-radius: 999px;
+  padding: 0.35rem 0.65rem;
+}
+
+.messages-sidebar__list {
+  flex: 1;
+  overflow: auto;
+  padding: 0.4rem 0.55rem 0.7rem;
+}
+
+.messages-conversation-item {
+  width: 100%;
+  border: 1px solid #ece8f5;
+  border-radius: 12px;
+  background: #fff;
+  padding: 0.65rem;
+  display: flex;
+  align-items: flex-start;
+  gap: 0.65rem;
+  text-align: left;
+  margin-bottom: 0.5rem;
+}
+
+.messages-conversation-item.is-active {
+  border-color: #7a6ff5;
+  background: #f7f6ff;
+}
+
+.messages-conversation-item__avatar {
+  width: 34px;
+  height: 34px;
+  border-radius: 999px;
+  background: linear-gradient(135deg, #6e5ef6 0%, #5847ec 100%);
+  color: #fff;
+  font-weight: 700;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: none;
+}
+
+.messages-conversation-item__main {
+  min-width: 0;
+  display: grid;
+  gap: 0.35rem;
+  width: 100%;
+}
+
+.messages-conversation-item__top,
+.messages-conversation-item__bottom {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+}
+
+.messages-conversation-item__top {
+  justify-content: space-between;
+}
+
+.messages-conversation-item__top strong {
+  font-size: 0.88rem;
+}
+
+.messages-conversation-item__top small {
+  color: #8d89a0;
+  font-size: 0.74rem;
+  white-space: nowrap;
+}
+
+.messages-conversation-item__preview {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: #6a667d;
+  font-size: 0.8rem;
+}
+
+.messages-conversation-item__bottom em {
+  font-style: normal;
+  min-width: 1.2rem;
+  height: 1.2rem;
+  border-radius: 999px;
+  background: #4f42f0;
+  color: #fff;
+  font-size: 0.72rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  margin-left: auto;
+}
+
+.messages-thread__head {
+  border-bottom: 1px solid #ece8f5;
+  padding: 0.9rem 1rem;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.8rem;
+}
+
+.messages-thread__head h3 {
+  margin: 0;
+  font-size: 1.03rem;
+}
+
+.messages-thread__head p {
+  margin: 0.2rem 0 0;
+  color: #7b7790;
+  font-size: 0.8rem;
+}
+
+.messages-thread__body {
+  flex: 1;
+  overflow: auto;
+  padding: 1rem;
+  background: linear-gradient(180deg, #fcfbff 0%, #f8f7fd 100%);
+}
+
+.message-bubble-row {
+  display: flex;
+  margin-bottom: 0.7rem;
+}
+
+.message-bubble-row.is-mine {
+  justify-content: flex-end;
+}
+
+.message-bubble {
+  max-width: min(78%, 660px);
+  border: 1px solid #e3dff2;
+  border-radius: 14px 14px 14px 6px;
+  background: #fff;
+  padding: 0.6rem 0.7rem;
+  box-shadow: 0 2px 8px rgba(47, 43, 61, 0.04);
+}
+
+.message-bubble.is-mine {
+  background: #5e4ff1;
+  border-color: #5e4ff1;
+  color: #fff;
+  border-radius: 14px 14px 6px;
+}
+
+.message-bubble__sender {
+  display: block;
+  font-size: 0.72rem;
+  color: #7d7991;
+  margin-bottom: 0.2rem;
+}
+
+.message-bubble p {
+  margin: 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.message-bubble span {
+  margin-top: 0.35rem;
+  display: inline-block;
+  font-size: 0.7rem;
+  opacity: 0.9;
+}
+
+.message-bubble__refs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  margin-top: 0.45rem;
+}
+
+.message-case-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  border: 1px solid #dcd8ec;
+  border-radius: 999px;
+  background: #f4f2ff;
+  color: #4d45c7;
+  font-size: 0.74rem;
+  text-decoration: none;
+  padding: 0.22rem 0.55rem;
+}
+
+.message-case-chip button {
+  border: 0;
+  background: transparent;
+  color: #6c67a3;
+  font-size: 0.85rem;
+  line-height: 1;
+  padding: 0;
+}
+
+.message-composer-refs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+}
+
+.messages-case-search-list {
+  display: grid;
+  gap: 0.45rem;
+  max-height: 280px;
+  overflow: auto;
+}
+
+.messages-case-search-item {
+  width: 100%;
+  border: 1px solid #e4e0f0;
+  border-radius: 10px;
+  background: #fff;
+  padding: 0.55rem 0.65rem;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.8rem;
+  text-align: left;
+}
+
+.messages-case-search-item strong {
+  font-size: 0.86rem;
+  color: #4d4960;
+}
+
+.messages-case-search-item span {
+  font-size: 0.78rem;
+  color: #7a768f;
+}
+
+.messages-thread__composer {
+  border-top: 1px solid #ece8f5;
+  padding: 0.8rem 1rem 1rem;
+  display: grid;
+  gap: 0.55rem;
+  background: #fff;
+}
+
+.messages-thread__composer input,
+.messages-thread__composer textarea {
+  width: 100%;
+  border: 1px solid #dcd8ec;
+  border-radius: 10px;
+  padding: 0.65rem 0.75rem;
+}
+
+.messages-thread__composer textarea {
+  min-height: 78px;
+  resize: vertical;
+}
+
+.messages-empty {
+  flex: 1;
+  display: grid;
+  place-items: center;
+  padding: 1rem;
 }
 
 .calendar-event span {
@@ -909,18 +1262,23 @@ button {
 
 .financial-summary {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
   gap: 1rem;
   margin-top: 1rem;
   padding-top: 0;
   position: static;
+  align-items: stretch;
 }
 
 .financial-summary__item {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   gap: 0.9rem;
   min-width: 0;
+  padding: 0.65rem 0.75rem;
+  border: 1px solid rgba(226, 229, 238, 0.75);
+  border-radius: 10px;
+  background: #fff;
 }
 
 .financial-summary__icon {
@@ -1035,6 +1393,26 @@ button {
 
 .files-table tbody tr:hover {
   background: rgba(76, 66, 255, 0.03);
+}
+
+.files-table__row-link {
+  cursor: pointer;
+}
+
+.files-table__row-link:focus-within,
+.files-table__row-link:hover {
+  background: rgba(76, 66, 255, 0.06);
+}
+
+.files-table__link {
+  color: inherit;
+  text-decoration: none;
+}
+
+.files-table__link:hover,
+.files-table__link:focus-visible {
+  color: #4d48f5;
+  text-decoration: underline;
 }
 
 .files-table td:first-child,
@@ -1234,6 +1612,12 @@ button {
   padding-top: 0.85rem;
 }
 
+.billing-empty {
+  margin: 0.65rem 0 0;
+  font-size: 0.84rem;
+  color: #88849b;
+}
+
 .billing-summary__card {
   padding: 0.6rem 0.65rem;
   border: 1px solid rgba(226, 229, 238, 0.98);
@@ -1282,19 +1666,14 @@ button {
 .vilo-sidebar__brand {
   display: flex;
   align-items: center;
-  gap: 0.8rem;
   padding: 0 1.35rem;
   margin-bottom: 1.7rem;
-  font-size: 2rem;
-  font-weight: 800;
-  letter-spacing: 0.18em;
-  color: #3a2af6;
 }
 
-.vilo-brand-mark {
-  width: 3.35rem;
-  height: 2.6rem;
-  flex: none;
+.vilo-brand-logo {
+  width: 132px;
+  height: auto;
+  object-fit: contain;
 }
 
 .vilo-sidebar__block {
@@ -1794,41 +2173,6 @@ button {
   margin: 0 auto;
 }
 
-.dashboard-userbar {
-  margin-bottom: 1rem;
-  padding: 0.75rem 1rem;
-  border: 1px solid rgba(226, 229, 238, 0.95);
-  border-radius: 12px;
-  background: #fff;
-  box-shadow: 0 2px 10px rgba(25, 35, 58, 0.04);
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-}
-
-.dashboard-userbar__identity {
-  display: flex;
-  align-items: baseline;
-  gap: 0.65rem;
-}
-
-.dashboard-userbar__identity strong {
-  font-size: 0.95rem;
-}
-
-.dashboard-userbar__identity span {
-  text-transform: capitalize;
-  color: #7a768f;
-  font-size: 0.85rem;
-}
-
-.dashboard-userbar__logout {
-  border: 1px solid #d9d7e5;
-  border-radius: 8px;
-  background: #fff;
-  padding: 0.45rem 0.8rem;
-}
-
 .vilo-btn {
   display: inline-flex;
   align-items: center;
@@ -1919,7 +2263,6 @@ button {
 .vilo-stat-card__value {
   margin: 0.55rem 0 0.25rem;
   font-size: 1.55rem;
-  font-family: "Outfit", sans-serif;
   color: #3f3d4d;
 }
 
@@ -2165,10 +2508,12 @@ button {
 
 .auth-brand {
   margin: 0;
-  font-family: "Outfit", sans-serif;
-  letter-spacing: 0.08em;
-  font-weight: 700;
-  color: #7367f0;
+}
+
+.auth-brand__logo {
+  width: 132px;
+  height: auto;
+  object-fit: contain;
 }
 
 .auth-card h1 {
@@ -2195,12 +2540,6 @@ button {
 }
 
 @media (max-width: 720px) {
-  .dashboard-userbar {
-    flex-direction: column;
-    align-items: flex-start;
-    gap: 0.6rem;
-  }
-
   .vilo-summary-grid,
   .vilo-form-row-two,
   .vilo-detail-grid {
@@ -2458,9 +2797,8 @@ button {
 
 .case-tab-panel h2 {
   margin: 0 0 0.85rem;
-  font-family: "Outfit", sans-serif;
   color: #494460;
-  font-size: 1.85rem;
+  font-size: 1.25rem;
 }
 
 .case-toolbar-row {
@@ -2506,6 +2844,14 @@ button {
   padding: 0;
 }
 
+.case-table-wrap--menu-visible {
+  overflow: visible;
+}
+
+.case-table-wrap .team-table {
+  overflow: visible;
+}
+
 .case-actions-menu {
   position: absolute;
   top: calc(100% + 4px);
@@ -2515,7 +2861,7 @@ button {
   border-radius: 10px;
   background: #fff;
   box-shadow: 0 12px 22px rgba(39, 31, 79, 0.1);
-  z-index: 5;
+  z-index: 40;
 }
 
 .case-actions-menu button {
@@ -2585,8 +2931,68 @@ button {
 
 .vilo-modal__header h3 {
   margin: 0;
-  font-family: "Outfit", sans-serif;
   color: #494460;
+}
+
+.case-assign-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.case-assigned-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+}
+
+.case-assigned-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  border: 1px solid #e2ddf2;
+  border-radius: 999px;
+  padding: 0.3rem 0.55rem;
+  font-size: 0.8rem;
+  background: #f9f8fd;
+  color: #4f4b63;
+}
+
+.case-assigned-pill button {
+  border: 0;
+  background: transparent;
+  color: #7b7790;
+  padding: 0;
+  line-height: 1;
+}
+
+.case-assigned-empty {
+  color: #8f8aa2;
+  font-size: 0.86rem;
+}
+
+.case-row-actions {
+  justify-content: flex-end;
+}
+
+.cases-row-link {
+  cursor: pointer;
+}
+
+.cases-row-link:hover {
+  background: rgba(76, 66, 255, 0.04);
+}
+
+.cases-title-link {
+  color: inherit;
+  text-decoration: none;
+  font-weight: 600;
+}
+
+.cases-title-link:hover,
+.cases-title-link:focus-visible {
+  color: #4f42f0;
+  text-decoration: underline;
 }
 
 .vilo-modal__body {
@@ -2725,6 +3131,14 @@ button {
   align-content: start;
 }
 
+.client-detail-right .dashboard-card {
+  padding: 0.35rem 0.35rem 0.55rem;
+}
+
+.client-detail-right .dashboard-card__header {
+  padding: 0.85rem 0.85rem 0.35rem;
+}
+
 .client-detail-toolbar-row {
   padding-top: 0.75rem;
 }
@@ -2749,14 +3163,28 @@ button {
   font-size: 1.9rem;
 }
 
+.client-overview-inner {
+  padding: 0.2rem 0.85rem 0.55rem;
+}
+
 .client-overview-row {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   justify-content: space-between;
   gap: 0.6rem;
   border-top: 1px solid #efebf8;
   padding: 0.75rem 0;
   color: #57536a;
+}
+
+.client-overview-row span:first-child {
+  color: #66627b;
+  min-width: 8.8rem;
+}
+
+.client-overview-row strong {
+  text-align: right;
+  word-break: break-word;
 }
 
 .client-overview-row:first-of-type {
@@ -2766,7 +3194,8 @@ button {
 .client-team-list {
   display: grid;
   gap: 0.55rem;
-  margin-bottom: 0.8rem;
+  margin: 0.2rem 0 0.8rem;
+  padding: 0 0.55rem;
 }
 
 .client-team-row {
@@ -2783,6 +3212,7 @@ button {
 .client-quick-actions {
   display: grid;
   gap: 0.6rem;
+  padding: 0.2rem 0.55rem 0.55rem;
 }
 
 .vilo-modal--intake {
@@ -2873,6 +3303,28 @@ button {
 .client-intake-footer {
   justify-content: flex-end;
   margin-top: 0.8rem;
+}
+
+.vilo-modal--doc-preview {
+  width: min(900px, 100%);
+}
+
+.client-doc-preview-image {
+  display: block;
+  width: 100%;
+  max-height: 70vh;
+  object-fit: contain;
+  border: 1px solid #e8e4f3;
+  border-radius: 10px;
+  background: #f7f6fb;
+}
+
+.client-doc-preview-frame {
+  width: 100%;
+  height: 70vh;
+  border: 1px solid #e8e4f3;
+  border-radius: 10px;
+  background: #fff;
 }
 
 .calendar-layout-grid {
@@ -3199,6 +3651,19 @@ button {
 
   .calendar-layout-grid {
     grid-template-columns: 1fr;
+  }
+
+  .messages-layout {
+    grid-template-columns: 1fr;
+    min-height: auto;
+  }
+
+  .messages-sidebar {
+    min-height: 280px;
+  }
+
+  .messages-thread {
+    min-height: 62vh;
   }
 
   .calendar-day-cell {

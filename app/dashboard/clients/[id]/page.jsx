@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { apiDownload, apiRequest, apiUpload } from "../../../../lib/api";
+import { getToken } from "../../../../lib/auth";
 import ClientIntakeModal from "../../../../components/dashboard/ClientIntakeModal";
 
 function readMetaLine(notes, label) {
@@ -54,6 +55,15 @@ export default function ClientDetailPage() {
   const [documentSearch, setDocumentSearch] = useState("");
   const [documentOrder, setDocumentOrder] = useState("newest");
   const [deleteDocumentId, setDeleteDocumentId] = useState(null);
+  const [replaceTarget, setReplaceTarget] = useState(null);
+  const [replaceFile, setReplaceFile] = useState(null);
+  const [replaceNotes, setReplaceNotes] = useState("");
+  const [versionTarget, setVersionTarget] = useState(null);
+  const [versionRows, setVersionRows] = useState([]);
+  const [previewDoc, setPreviewDoc] = useState(null);
+  const [previewUrl, setPreviewUrl] = useState("");
+  const [previewLoading, setPreviewLoading] = useState(false);
+  const [previewError, setPreviewError] = useState("");
 
   async function load() {
     setLoading(true);
@@ -87,6 +97,10 @@ export default function ClientDetailPage() {
   useEffect(() => {
     if (id) load();
   }, [id]);
+
+  useEffect(() => () => {
+    if (previewUrl) URL.revokeObjectURL(previewUrl);
+  }, [previewUrl]);
 
   async function handleEdit(payload, idFile) {
     if (!client) return;
@@ -252,6 +266,82 @@ export default function ClientDetailPage() {
     }
   }
 
+  async function replaceIdDocument(e) {
+    e.preventDefault();
+    if (!replaceTarget || !replaceFile) {
+      setError("Select a replacement file.");
+      return;
+    }
+    setSaving(true);
+    setError("");
+    try {
+      const formData = new FormData();
+      formData.set("file", replaceFile);
+      if (replaceNotes.trim()) formData.set("notes", replaceNotes.trim());
+      await apiUpload(`/api/v1/documents/${replaceTarget.id}/replace`, formData);
+      setReplaceTarget(null);
+      setReplaceFile(null);
+      setReplaceNotes("");
+      await load();
+    } catch (err) {
+      setError(err.message || "Failed to replace document");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function openVersionHistory(row) {
+    setVersionTarget(row);
+    setVersionRows([]);
+    setError("");
+    try {
+      const rows = await apiRequest(`/api/v1/documents/${row.id}/versions`);
+      setVersionRows(rows || []);
+    } catch (err) {
+      setError(err.message || "Failed to load versions");
+    }
+  }
+
+  async function openDocumentPreview(row) {
+    if (previewUrl) URL.revokeObjectURL(previewUrl);
+    const name = String(row.file_name || "").toLowerCase();
+    const ext = name.includes(".") ? name.split(".").pop() : "";
+    if (ext === "doc" || ext === "docx") {
+      setPreviewDoc({ ...row, previewType: "doc" });
+      setPreviewUrl("");
+      setPreviewError("");
+      setPreviewLoading(false);
+      return;
+    }
+
+    setPreviewDoc({ ...row, previewType: ext === "pdf" ? "pdf" : "image" });
+    setPreviewLoading(true);
+    setPreviewError("");
+    setPreviewUrl("");
+    try {
+      const token = getToken();
+      const base = process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:8000";
+      const response = await fetch(`${base}/api/v1/clients/${id}/id-documents/${row.id}/download`, {
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      });
+      if (!response.ok) throw new Error("Failed to load preview");
+      const blob = await response.blob();
+      setPreviewUrl(URL.createObjectURL(blob));
+    } catch (err) {
+      setPreviewError(err.message || "Failed to load preview");
+    } finally {
+      setPreviewLoading(false);
+    }
+  }
+
+  function closePreview() {
+    if (previewUrl) URL.revokeObjectURL(previewUrl);
+    setPreviewUrl("");
+    setPreviewError("");
+    setPreviewLoading(false);
+    setPreviewDoc(null);
+  }
+
   if (loading) {
     return <section className="dashboard-page-stack"><p className="vilo-state vilo-state--loading">Loading client details...</p></section>;
   }
@@ -392,7 +482,10 @@ export default function ClientDetailPage() {
                           <td>{formatDate(row.created_at)}</td>
                           <td>
                             <div className="vilo-table-actions">
+                              <button className="vilo-btn vilo-btn--secondary vilo-btn--xs" type="button" onClick={() => openDocumentPreview(row)}>View</button>
                               <button className="vilo-btn vilo-btn--ghost vilo-btn--xs" type="button" onClick={() => apiDownload(`/api/v1/clients/${id}/id-documents/${row.id}/download`)}>Download</button>
+                              <button className="vilo-btn vilo-btn--ghost vilo-btn--xs" type="button" onClick={() => setReplaceTarget(row)}>Edit / Replace</button>
+                              <button className="vilo-btn vilo-btn--ghost vilo-btn--xs" type="button" onClick={() => openVersionHistory(row)}>Versions</button>
                               <button className="vilo-btn vilo-btn--danger vilo-btn--xs" type="button" onClick={() => setDeleteDocumentId(row.id)}>Delete</button>
                             </div>
                           </td>
@@ -412,16 +505,18 @@ export default function ClientDetailPage() {
         <aside className="client-detail-right">
           <article className="dashboard-card">
             <div className="dashboard-card__header"><h2>Client Overview</h2></div>
-            <div className="client-overview-avatar">{(client?.name || "C").slice(0, 1).toUpperCase()}</div>
-            <div className="client-overview-row"><span>TRN No:</span><strong>{trn}</strong></div>
-            <div className="client-overview-row"><span>Status:</span><span className={`vilo-badge ${client?.archived_at ? "vilo-badge--archived" : "vilo-badge--active"}`}>{statusLabel}</span></div>
-            <div className="client-overview-row"><span>Type:</span><span className="vilo-badge vilo-badge--priority-medium">{type}</span></div>
-            <div className="client-overview-row"><span>Preferred Contact:</span><strong>{preferredContact}</strong></div>
-            <div className="client-overview-row"><span>Billing Currency:</span><strong>{billingCurrency}</strong></div>
-            <div className="client-overview-row"><span>Date of Birth:</span><strong>{dob}</strong></div>
-            <div className="client-overview-row"><span>{client?.email || "-"}</span></div>
-            <div className="client-overview-row"><span>{client?.phone || "-"}</span></div>
-            <div className="client-overview-row"><span>{created}</span></div>
+            <div className="client-overview-inner">
+              <div className="client-overview-avatar">{(client?.name || "C").slice(0, 1).toUpperCase()}</div>
+              <div className="client-overview-row"><span>TRN No:</span><strong>{trn}</strong></div>
+              <div className="client-overview-row"><span>Status:</span><span className={`vilo-badge ${client?.archived_at ? "vilo-badge--archived" : "vilo-badge--active"}`}>{statusLabel}</span></div>
+              <div className="client-overview-row"><span>Type:</span><span className="vilo-badge vilo-badge--priority-medium">{type}</span></div>
+              <div className="client-overview-row"><span>Preferred Contact:</span><strong>{preferredContact}</strong></div>
+              <div className="client-overview-row"><span>Billing Currency:</span><strong>{billingCurrency}</strong></div>
+              <div className="client-overview-row"><span>Date of Birth:</span><strong>{dob}</strong></div>
+              <div className="client-overview-row"><span>Email:</span><strong>{client?.email || "-"}</strong></div>
+              <div className="client-overview-row"><span>Phone:</span><strong>{client?.phone || "-"}</strong></div>
+              <div className="client-overview-row"><span>Created:</span><strong>{created}</strong></div>
+            </div>
           </article>
 
           <article className="dashboard-card">
@@ -479,6 +574,86 @@ export default function ClientDetailPage() {
                 </button>
                 <button type="button" className="vilo-btn vilo-btn--secondary" onClick={() => setDeleteDocumentId(null)}>Cancel</button>
               </div>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {previewDoc ? (
+        <div className="vilo-modal-overlay" onClick={closePreview}>
+          <div className="vilo-modal vilo-modal--doc-preview" onClick={(e) => e.stopPropagation()}>
+            <div className="vilo-modal__header">
+              <h3>Document Preview</h3>
+              <button type="button" className="vilo-btn vilo-btn--ghost vilo-btn--xs" onClick={closePreview}>Close</button>
+            </div>
+            <div className="vilo-modal__body">
+              {previewLoading ? <p className="vilo-state vilo-state--loading">Preparing preview...</p> : null}
+              {previewError ? <p className="vilo-state vilo-state--error">{previewError}</p> : null}
+              {!previewLoading && !previewError && previewDoc.previewType === "doc" ? (
+                <div className="vilo-state-block">
+                  <p className="vilo-state">Preview is not available for DOC/DOCX files. Use download to view this file.</p>
+                </div>
+              ) : null}
+              {!previewLoading && !previewError && previewDoc.previewType === "image" && previewUrl ? (
+                <img src={previewUrl} alt={previewDoc.file_name || "ID document"} className="client-doc-preview-image" />
+              ) : null}
+              {!previewLoading && !previewError && previewDoc.previewType === "pdf" && previewUrl ? (
+                <iframe title={previewDoc.file_name || "PDF preview"} src={previewUrl} className="client-doc-preview-frame" />
+              ) : null}
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {replaceTarget ? (
+        <div className="vilo-modal-overlay" onClick={() => { setReplaceTarget(null); setReplaceFile(null); setReplaceNotes(""); }}>
+          <div className="vilo-modal" onClick={(e) => e.stopPropagation()}>
+            <div className="vilo-modal__header">
+              <h3>Replace Document</h3>
+              <button type="button" className="vilo-btn vilo-btn--ghost vilo-btn--xs" onClick={() => { setReplaceTarget(null); setReplaceFile(null); setReplaceNotes(""); }}>Close</button>
+            </div>
+            <div className="vilo-modal__body">
+              <form className="vilo-form-grid" onSubmit={replaceIdDocument}>
+                <p>Current file: <strong>{replaceTarget.file_name}</strong></p>
+                <input type="file" accept=".pdf,.doc,.docx,.jpg,.jpeg,.png" onChange={(e) => setReplaceFile(e.target.files?.[0] || null)} required />
+                <textarea placeholder="Version notes (optional)" value={replaceNotes} onChange={(e) => setReplaceNotes(e.target.value)} />
+                <div className="vilo-table-actions">
+                  <button type="button" className="vilo-btn vilo-btn--secondary" onClick={() => { setReplaceTarget(null); setReplaceFile(null); setReplaceNotes(""); }}>Cancel</button>
+                  <button type="submit" className="vilo-btn vilo-btn--primary" disabled={saving}>{saving ? "Replacing..." : "Replace Document"}</button>
+                </div>
+              </form>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {versionTarget ? (
+        <div className="vilo-modal-overlay" onClick={() => setVersionTarget(null)}>
+          <div className="vilo-modal" onClick={(e) => e.stopPropagation()}>
+            <div className="vilo-modal__header">
+              <h3>Version History</h3>
+              <button type="button" className="vilo-btn vilo-btn--ghost vilo-btn--xs" onClick={() => setVersionTarget(null)}>Close</button>
+            </div>
+            <div className="vilo-modal__body">
+              {!versionRows.length ? <p className="vilo-state">No previous versions.</p> : null}
+              {versionRows.length ? (
+                <div className="vilo-table-wrap">
+                  <table className="team-table">
+                    <thead><tr><th>Version</th><th>File</th><th>Uploaded</th><th>Notes</th><th>Action</th></tr></thead>
+                    <tbody>
+                      {versionRows.map((row) => (
+                        <tr key={row.id}>
+                          <td>v{row.version_number}</td>
+                          <td>{row.file_name}</td>
+                          <td>{new Date(row.created_at).toLocaleString()}</td>
+                          <td>{row.notes || "-"}</td>
+                          <td><button type="button" className="vilo-btn vilo-btn--ghost vilo-btn--xs" onClick={() => apiDownload(`/api/v1/documents/${versionTarget.id}/versions/${row.id}/download`)}>Download</button></td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              ) : null}
             </div>
           </div>
         </div>

@@ -29,3 +29,4 @@ class Document(Base):
     case = relationship("Case", back_populates="documents")
     client = relationship("Client", back_populates="documents")
     uploader = relationship("User", back_populates="uploaded_documents")
+    versions = relationship("DocumentVersion", back_populates="document", cascade="all, delete-orphan")

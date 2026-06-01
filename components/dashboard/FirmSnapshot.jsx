@@ -56,6 +56,7 @@ export function FirmSnapshot({ snapshotStats = fallbackSnapshotStats, caseStatus
 
       <div className="snapshot-layout">
         <div className="snapshot-chart-block">
+          <p className="snapshot-chart-block__label">Case Status</p>
           <SnapshotDonut percent={caseStatusPercent} />
 
           <ul className="snapshot-legend" aria-label="Firm snapshot legend">
@@ -133,7 +134,6 @@ function SnapshotDonut({ percent = 72 }) {
       </svg>
 
       <div className="snapshot-donut__center">
-        <span>Case Status</span>
         <strong>{percent}%</strong>
       </div>
     </div>

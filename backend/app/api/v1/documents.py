@@ -13,8 +13,9 @@ from app.db.session import get_db
 from app.models.case import Case
 from app.models.client import Client
 from app.models.document import Document
+from app.models.document_version import DocumentVersion
 from app.models.user import User
-from app.schemas.document import DocumentResponse, DocumentUpdate
+from app.schemas.document import DocumentResponse, DocumentUpdate, DocumentVersionResponse
 from app.services.audit import log_audit_event
 from app.services.email import build_document_shared_email
 from app.services.jobs import enqueue_email
@@ -39,7 +40,6 @@ def to_response(document: Document) -> DocumentResponse:
         title=document.title,
         description=document.description,
         file_name=document.file_name,
-        file_path=document.file_path,
         file_type=document.file_type,
         file_size=document.file_size,
         category=document.category,
@@ -47,6 +47,21 @@ def to_response(document: Document) -> DocumentResponse:
         version=document.version,
         created_at=document.created_at,
         updated_at=document.updated_at,
+    )
+
+
+def to_version_response(version: DocumentVersion) -> DocumentVersionResponse:
+    return DocumentVersionResponse(
+        id=version.id,
+        document_id=version.document_id,
+        organization_id=version.organization_id,
+        file_name=version.file_name,
+        file_type=version.file_type,
+        file_size=version.file_size,
+        version_number=version.version_number,
+        uploaded_by=version.uploaded_by,
+        notes=version.notes,
+        created_at=version.created_at,
     )
 
 
@@ -76,6 +91,16 @@ def validate_extension(file_name: str) -> str:
     return ext
 
 
+def persist_file(organization_id: int, original_name: str, data: bytes) -> tuple[str, str]:
+    ext = validate_extension(original_name)
+    org_dir = STORAGE_ROOT / str(organization_id)
+    org_dir.mkdir(parents=True, exist_ok=True)
+    stored_name = f"{uuid4().hex}.{ext}"
+    file_path = org_dir / stored_name
+    file_path.write_bytes(data)
+    return str(file_path), stored_name
+
+
 @router.post("/upload", response_model=DocumentResponse)
 async def upload_document(
     title: str = Form(...),
@@ -94,18 +119,13 @@ async def upload_document(
     case = await validate_case(db, current_user.organization_id, case_id)
 
     original_name = safe_original_name(file.filename or "")
-    ext = validate_extension(original_name)
     data = await file.read()
     if not data:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Empty file")
     if len(data) > MAX_UPLOAD_BYTES:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="File exceeds upload size limit")
 
-    org_dir = STORAGE_ROOT / str(current_user.organization_id)
-    org_dir.mkdir(parents=True, exist_ok=True)
-    stored_name = f"{uuid4().hex}.{ext}"
-    file_path = org_dir / stored_name
-    file_path.write_bytes(data)
+    file_path, _stored_name = persist_file(current_user.organization_id, original_name, data)
 
     now = datetime.now(timezone.utc)
     document = Document(
@@ -271,6 +291,127 @@ async def update_document(
     await db.commit()
     await db.refresh(doc)
     return to_response(doc)
+
+
+@router.post("/{document_id}/replace", response_model=DocumentResponse)
+async def replace_document(
+    document_id: int,
+    file: UploadFile = File(...),
+    notes: str | None = Form(default=None),
+    request: Request = None,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(role_guard(ALLOWED_STAFF)),
+):
+    doc = await db.scalar(select(Document).where(Document.id == document_id, Document.organization_id == current_user.organization_id))
+    if not doc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document not found")
+
+    previous_path = doc.file_path
+    previous_name = doc.file_name
+    previous_type = doc.file_type
+    previous_size = doc.file_size
+    previous_version = doc.version
+
+    original_name = safe_original_name(file.filename or "")
+    data = await file.read()
+    if not data:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Empty file")
+    if len(data) > MAX_UPLOAD_BYTES:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="File exceeds upload size limit")
+
+    file_path, _stored_name = persist_file(current_user.organization_id, original_name, data)
+    now = datetime.now(timezone.utc)
+
+    version_row = DocumentVersion(
+        document_id=doc.id,
+        organization_id=doc.organization_id,
+        file_name=previous_name,
+        file_path=previous_path,
+        file_type=previous_type,
+        file_size=previous_size,
+        version_number=previous_version,
+        uploaded_by=current_user.id,
+        notes=notes,
+        created_at=now,
+    )
+    db.add(version_row)
+
+    doc.file_name = original_name
+    doc.file_path = file_path
+    doc.file_type = file.content_type
+    doc.file_size = len(data)
+    doc.version = previous_version + 1
+    doc.uploaded_by = current_user.id
+    doc.updated_at = now
+
+    await log_audit_event(
+        db,
+        organization_id=current_user.organization_id,
+        user_id=current_user.id,
+        action="document_replaced",
+        entity_type="document",
+        entity_id=str(doc.id),
+        description=f"Document replaced: {doc.title}",
+        metadata_json={"previous_version": previous_version, "new_version": doc.version},
+        ip_address=request.client.host if request and request.client else None,
+        user_agent=request.headers.get("user-agent") if request else None,
+    )
+    if doc.case_id:
+        await create_case_timeline_event(
+            db,
+            organization_id=current_user.organization_id,
+            case_id=doc.case_id,
+            actor_id=current_user.id,
+            event_type="document_replaced",
+            title=f"Document replaced: {doc.title}",
+            metadata_json={"document_id": doc.id, "version": doc.version},
+        )
+
+    await db.commit()
+    await db.refresh(doc)
+    return to_response(doc)
+
+
+@router.get("/{document_id}/versions", response_model=list[DocumentVersionResponse])
+async def list_document_versions(
+    document_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(role_guard(ALLOWED_STAFF)),
+):
+    doc = await db.scalar(select(Document).where(Document.id == document_id, Document.organization_id == current_user.organization_id))
+    if not doc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document not found")
+    rows = await db.scalars(
+        select(DocumentVersion)
+        .where(DocumentVersion.document_id == document_id, DocumentVersion.organization_id == current_user.organization_id)
+        .order_by(DocumentVersion.version_number.desc())
+    )
+    return [to_version_response(row) for row in rows.all()]
+
+
+@router.get("/{document_id}/versions/{version_id}/download")
+async def download_document_version(
+    document_id: int,
+    version_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(role_guard(ALLOWED_STAFF)),
+):
+    doc = await db.scalar(select(Document).where(Document.id == document_id, Document.organization_id == current_user.organization_id))
+    if not doc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document not found")
+    version = await db.scalar(
+        select(DocumentVersion).where(
+            DocumentVersion.id == version_id,
+            DocumentVersion.document_id == document_id,
+            DocumentVersion.organization_id == current_user.organization_id,
+        )
+    )
+    if not version:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Version not found")
+    path = Path(version.file_path)
+    if not path.exists():
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Stored file not found")
+    return FileResponse(path=str(path), filename=version.file_name, media_type=version.file_type or "application/octet-stream")
 
 
 @router.delete("/{document_id}")

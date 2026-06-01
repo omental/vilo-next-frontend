@@ -53,6 +53,10 @@ export default function DashboardPage() {
   const calendar = widgets?.calendar_overview;
   const financial = widgets?.financial_overview;
   const billing = widgets?.billing_overview;
+  const calendarEvents = (calendar?.upcoming_events || []).map((item) => ({
+    ...item,
+    href: item.case_id ? `/dashboard/cases/${item.case_id}` : item.client_id ? `/dashboard/clients/${item.client_id}` : "",
+  }));
 
   const todaysStats = [
     { label: "Due Today", value: Math.max(0, Number(today?.due_today_count ?? 12)) },
@@ -61,9 +65,11 @@ export default function DashboardPage() {
   ];
 
   const timelineRows = (today?.priority_timeline || []).slice(0, 3).map((task) => ({
+    id: task.id,
     label: task.title || `Task #${task.id}`,
     priority: task.priority || "medium",
     tone: task.priority === "high" ? "is-high" : task.priority === "low" ? "is-low" : "is-normal",
+    href: task.case_id ? `/dashboard/cases/${task.case_id}` : task.id ? `/dashboard/tasks/${task.id}` : "",
   }));
 
   const snapshotStats = [
@@ -80,12 +86,16 @@ export default function DashboardPage() {
   ];
 
   const activeCaseRows = (widgets?.active_cases || []).slice(0, 4).map((item) => ({
+    id: item.case_id,
     caseId: item.display_number || `C-${item.case_id}`,
     client: item.client_name || "-",
+    clientId: item.client_id || null,
     matter: item.matter || "Case matter",
     lead: item.lead || "Team",
     status: item.status || "active",
     due: fmtShortDate(item.due_date),
+    href: item.case_id ? `/dashboard/cases/${item.case_id}` : "",
+    clientHref: item.client_id ? `/dashboard/clients/${item.client_id}` : "",
   }));
 
   return (
@@ -106,7 +116,7 @@ export default function DashboardPage() {
           </div>
 
           <div className="dashboard-row-grid dashboard-row-grid--tertiary">
-            <CalendarOverview events={calendar?.upcoming_events || []} />
+            <CalendarOverview events={calendarEvents} />
             <FinancialOverview
               revenueText={fmtCurrency(financial?.monthly_revenue)}
               summaryItems={financialSummaryItems}

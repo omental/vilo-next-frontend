@@ -1,6 +1,6 @@
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -9,9 +9,12 @@ from app.db.session import get_db
 from app.models.case import Case
 from app.models.client import Client
 from app.models.conversation import Conversation, ConversationParticipant, Message
+from app.models.message_case_reference import MessageCaseReference
 from app.models.enums import UserRole
 from app.models.user import User
 from app.schemas.conversation import (
+    CaseReferenceResponse,
+    CaseSearchResult,
     ConversationCreate,
     ConversationResponse,
     ConversationUpdate,
@@ -50,6 +53,58 @@ async def require_participant(db: AsyncSession, org_id: int, conversation_id: in
     return part
 
 
+def case_number(case: Case) -> str:
+    return getattr(case, "display_number", None) or f"CASE{str(case.id).zfill(6)}"
+
+
+async def accessible_case_for_user(db: AsyncSession, org_id: int, case_id: int, user: User) -> Case | None:
+    case = await db.scalar(select(Case).where(Case.id == case_id, Case.organization_id == org_id))
+    if not case:
+        return None
+    if user.role == UserRole.client:
+        client = await db.scalar(select(Client).where(Client.organization_id == org_id, Client.user_id == user.id))
+        if not client or client.id != case.client_id:
+            return None
+    return case
+
+
+async def build_case_references(db: AsyncSession, org_id: int, message_id: int) -> list[CaseReferenceResponse]:
+    refs = (
+        await db.scalars(
+            select(MessageCaseReference).where(
+                MessageCaseReference.organization_id == org_id,
+                MessageCaseReference.message_id == message_id,
+            )
+        )
+    ).all()
+    output: list[CaseReferenceResponse] = []
+    for ref in refs:
+        case = await db.scalar(select(Case).where(Case.id == ref.case_id, Case.organization_id == org_id))
+        if case:
+            output.append(CaseReferenceResponse(case_id=case.id, case_title=case.title, case_display_number=case_number(case)))
+    return output
+
+
+async def build_message_response(db: AsyncSession, message: Message) -> MessageResponse:
+    sender = await db.scalar(select(User).where(User.id == message.sender_id, User.organization_id == message.organization_id))
+    sender_role = None
+    if sender and getattr(sender, "role", None) is not None:
+        sender_role = sender.role.value if hasattr(sender.role, "value") else str(sender.role)
+    return MessageResponse(
+        id=message.id,
+        conversation_id=message.conversation_id,
+        sender_id=message.sender_id,
+        parent_message_id=message.parent_message_id,
+        body=message.body,
+        sender_name=getattr(sender, "name", None) if sender else None,
+        sender_role=sender_role,
+        case_references=await build_case_references(db, message.organization_id, message.id),
+        created_at=message.created_at,
+        updated_at=message.updated_at,
+        deleted_at=message.deleted_at,
+    )
+
+
 async def conversation_summary(db: AsyncSession, conv: Conversation, current_user_id: int) -> ConversationResponse:
     participant_count = int(
         (await db.scalar(select(func.count(ConversationParticipant.id)).where(ConversationParticipant.conversation_id == conv.id, ConversationParticipant.organization_id == conv.organization_id)))
@@ -81,20 +136,14 @@ async def conversation_summary(db: AsyncSession, conv: Conversation, current_use
     )
     latest_message = None
     if latest:
-        latest_message = MessageResponse(
-            id=latest.id,
-            conversation_id=latest.conversation_id,
-            sender_id=latest.sender_id,
-            parent_message_id=latest.parent_message_id,
-            body=latest.body,
-            created_at=latest.created_at,
-            updated_at=latest.updated_at,
-            deleted_at=latest.deleted_at,
-        )
+        latest_message = await build_message_response(db, latest)
+    linked_case = await db.scalar(select(Case).where(Case.id == conv.case_id, Case.organization_id == conv.organization_id)) if conv.case_id else None
     return ConversationResponse(
         id=conv.id,
         organization_id=conv.organization_id,
         case_id=conv.case_id,
+        case_title=linked_case.title if linked_case else None,
+        case_display_number=case_number(linked_case) if linked_case else None,
         conversation_type=conv.conversation_type,
         title=conv.title,
         created_by=conv.created_by,
@@ -220,6 +269,26 @@ async def update_conversation(conversation_id: int, payload: ConversationUpdate,
     conv = await get_conversation_or_404(db, current_user.organization_id, conversation_id)
     if payload.title is not None:
         conv.title = payload.title
+    if payload.case_id is not None:
+        linked_case = await accessible_case_for_user(db, current_user.organization_id, payload.case_id, current_user)
+        if not linked_case:
+            raise HTTPException(status_code=400, detail="Case must belong to your organization")
+        if conv.conversation_type == "client":
+            client_parts = (
+                await db.scalars(
+                    select(ConversationParticipant).where(
+                        ConversationParticipant.organization_id == current_user.organization_id,
+                        ConversationParticipant.conversation_id == conv.id,
+                        ConversationParticipant.role == "client",
+                    )
+                )
+            ).all()
+            if client_parts:
+                client_users = [p.user_id for p in client_parts]
+                clients = (await db.scalars(select(Client).where(Client.organization_id == current_user.organization_id, Client.user_id.in_(client_users)))).all()
+                if any(c.id != linked_case.client_id for c in clients):
+                    raise HTTPException(status_code=400, detail="Client participant does not match linked case client")
+        conv.case_id = payload.case_id
     conv.updated_at = datetime.now(timezone.utc)
     await db.commit()
     return await conversation_summary(db, conv, current_user.id)
@@ -327,6 +396,20 @@ async def create_message(conversation_id: int, payload: MessageCreate, db: Async
     )
     db.add(msg)
     await db.flush()
+    if payload.case_reference_ids:
+        unique_ids = list({int(cid) for cid in payload.case_reference_ids})
+        for case_id in unique_ids:
+            linked_case = await accessible_case_for_user(db, current_user.organization_id, case_id, current_user)
+            if not linked_case:
+                raise HTTPException(status_code=400, detail="One or more case references are invalid")
+            db.add(
+                MessageCaseReference(
+                    organization_id=current_user.organization_id,
+                    message_id=msg.id,
+                    case_id=linked_case.id,
+                    created_at=now,
+                )
+            )
     conv = await get_conversation_or_404(db, current_user.organization_id, conversation_id)
     conv.updated_at = now
     participant_ids = (
@@ -349,16 +432,7 @@ async def create_message(conversation_id: int, payload: MessageCreate, db: Async
     )
     await db.commit()
     await db.refresh(msg)
-    return MessageResponse(
-        id=msg.id,
-        conversation_id=msg.conversation_id,
-        sender_id=msg.sender_id,
-        parent_message_id=msg.parent_message_id,
-        body=msg.body,
-        created_at=msg.created_at,
-        updated_at=msg.updated_at,
-        deleted_at=msg.deleted_at,
-    )
+    return await build_message_response(db, msg)
 
 
 @router.get("/{conversation_id}/messages", response_model=list[MessageResponse])
@@ -375,19 +449,7 @@ async def list_messages(conversation_id: int, db: AsyncSession = Depends(get_db)
             .order_by(Message.created_at.asc())
         )
     ).all()
-    return [
-        MessageResponse(
-            id=m.id,
-            conversation_id=m.conversation_id,
-            sender_id=m.sender_id,
-            parent_message_id=m.parent_message_id,
-            body=m.body,
-            created_at=m.created_at,
-            updated_at=m.updated_at,
-            deleted_at=m.deleted_at,
-        )
-        for m in rows
-    ]
+    return [await build_message_response(db, m) for m in rows]
 
 
 @router.patch("/messages/{message_id}", response_model=MessageResponse)
@@ -401,7 +463,7 @@ async def update_message(message_id: int, payload: MessageUpdate, db: AsyncSessi
     msg.body = payload.body
     msg.updated_at = datetime.now(timezone.utc)
     await db.commit()
-    return MessageResponse(id=msg.id, conversation_id=msg.conversation_id, sender_id=msg.sender_id, parent_message_id=msg.parent_message_id, body=msg.body, created_at=msg.created_at, updated_at=msg.updated_at, deleted_at=msg.deleted_at)
+    return await build_message_response(db, msg)
 
 
 @router.delete("/messages/{message_id}")
@@ -424,3 +486,20 @@ async def mark_conversation_read(conversation_id: int, db: AsyncSession = Depend
     part.last_read_at = datetime.now(timezone.utc)
     await db.commit()
     return {"ok": True}
+
+
+@router.get("/cases/search", response_model=list[CaseSearchResult])
+async def case_search(
+    q: str = Query(default=""),
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(role_guard(ALLOWED_STAFF)),
+):
+    rows = (
+        await db.scalars(
+            select(Case).where(Case.organization_id == current_user.organization_id).order_by(Case.updated_at.desc())
+        )
+    ).all()
+    text = q.strip().lower()
+    if text:
+        rows = [row for row in rows if text in f"{row.title} {case_number(row)}".lower()]
+    return [CaseSearchResult(id=row.id, title=row.title, display_number=case_number(row)) for row in rows[:30]]

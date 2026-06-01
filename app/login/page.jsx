@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import Image from "next/image";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { apiRequest } from "../../lib/api";
@@ -32,7 +33,9 @@ export default function LoginPage() {
   return (
     <main className="auth-page">
       <form className="auth-card" onSubmit={onSubmit}>
-        <p className="auth-brand">VILO</p>
+        <div className="auth-brand">
+          <Image src="/assets/vilo-logo.png" alt="VILO" width={132} height={40} className="auth-brand__logo" priority />
+        </div>
         <h1>Welcome back</h1>
         <p className="auth-subtitle">Sign in to your legal workspace.</p>
         <input placeholder="Email" type="email" value={email} onChange={(e) => setEmail(e.target.value)} required />

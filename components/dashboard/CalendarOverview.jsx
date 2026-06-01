@@ -1,6 +1,7 @@
 "use client";
 
 import { motion, useReducedMotion } from "framer-motion";
+import Link from "next/link";
 import { createCardVariants, createHoverLift, createItemVariants } from "../motion";
 
 const dayLabels = ["SUN", "MON", "TUE", "WED", "THU", "FRI", "SAT"];
@@ -70,6 +71,7 @@ export function CalendarOverview({ events = [] }) {
         color: colorByType(item.type),
         title: item.title,
         time: item.time,
+        href: item.href || "",
       }))
     : fallbackEventItems.map((item) => ({ ...item, title: "Miller hearing (Court room)", time: "12:00 PM" }));
 
@@ -121,7 +123,7 @@ export function CalendarOverview({ events = [] }) {
               animate="show"
               transition={{ delay: shouldReduceMotion ? 0 : 0.08 * index }}
             >
-              <p>{item.title}</p>
+              {item.href ? <Link href={item.href} className="calendar-event__link">{item.title}</Link> : <p>{item.title}</p>}
               <span>{item.time}</span>
             </motion.article>
           ))}

@@ -45,14 +45,7 @@ export default function DashboardShell({ children }) {
       <Sidebar isMobileOpen={isMobileSidebarOpen} onClose={() => setIsMobileSidebarOpen(false)} />
       <main className="dashboard-main">
         <div className="dashboard-content-container">
-          <Navbar onMenuClick={() => setIsMobileSidebarOpen(true)} />
-          <div className="dashboard-userbar">
-            <div className="dashboard-userbar__identity">
-              <strong>{user?.name || "Loading..."}</strong>
-              <span>{user?.role || ""}</span>
-            </div>
-            <button className="dashboard-userbar__logout vilo-btn vilo-btn--secondary vilo-btn--xs" onClick={logout}>Logout</button>
-          </div>
+          <Navbar onMenuClick={() => setIsMobileSidebarOpen(true)} user={user} onLogout={logout} />
           {children}
         </div>
       </main>

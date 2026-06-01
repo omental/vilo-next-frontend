@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { apiRequest } from "../../lib/api";
 
-export function Navbar({ onMenuClick }) {
+export function Navbar({ onMenuClick, user, onLogout }) {
   const [open, setOpen] = useState(false);
   const [items, setItems] = useState([]);
   const [unreadCount, setUnreadCount] = useState(0);
@@ -96,6 +96,11 @@ export function Navbar({ onMenuClick }) {
           </span>
           <span className="dashboard-navbar__online-dot" />
         </button>
+        <div className="dashboard-navbar__identity">
+          <strong>{user?.name || "Loading..."}</strong>
+          <span>{user?.role || ""}</span>
+        </div>
+        <button type="button" className="vilo-btn vilo-btn--secondary vilo-btn--xs" onClick={onLogout}>Logout</button>
       </div>
     </header>
   );

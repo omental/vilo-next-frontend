@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import { apiRequest } from "../../../lib/api";
 
@@ -14,12 +15,16 @@ const initialForm = {
 };
 
 export default function CasesPage() {
+  const router = useRouter();
   const [cases, setCases] = useState([]);
   const [clients, setClients] = useState([]);
   const [team, setTeam] = useState([]);
   const [form, setForm] = useState(initialForm);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [menuOpenId, setMenuOpenId] = useState(null);
+  const [editCase, setEditCase] = useState(null);
+  const [archiveCase, setArchiveCase] = useState(null);
   const [error, setError] = useState("");
 
   async function load() {
@@ -76,6 +81,49 @@ export default function CasesPage() {
     });
   }
 
+  async function updateCase(e) {
+    e.preventDefault();
+    if (!editCase) return;
+    setSaving(true);
+    setError("");
+    try {
+      await apiRequest(`/api/v1/cases/${editCase.id}`, {
+        method: "PATCH",
+        body: JSON.stringify({
+          title: editCase.title,
+          description: editCase.description || "",
+          status: editCase.status,
+          priority: editCase.priority,
+        }),
+      });
+      setEditCase(null);
+      await load();
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function doArchiveCase() {
+    if (!archiveCase) return;
+    setSaving(true);
+    setError("");
+    try {
+      await apiRequest(`/api/v1/cases/${archiveCase.id}`, {
+        method: "PATCH",
+        body: JSON.stringify({ status: "archived" }),
+      });
+      setArchiveCase(null);
+      setMenuOpenId(null);
+      await load();
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setSaving(false);
+    }
+  }
+
   return (
     <section className="dashboard-page-stack">
       <div className="dashboard-page-heading"><h1>Cases</h1></div>
@@ -107,17 +155,25 @@ export default function CasesPage() {
           </div>
 
           <div className="vilo-checkbox-grid">
-            <p>Assign users</p>
-            {team.map((user) => (
-              <label key={user.id}>
-                <input
-                  type="checkbox"
-                  checked={form.assigned_user_ids.includes(user.id)}
-                  onChange={() => toggleUser(user.id)}
-                />
-                {user.name} ({user.role})
-              </label>
-            ))}
+            <div className="case-assign-heading"><p>Assign Users</p></div>
+            <select value="" onChange={(e) => { if (!e.target.value) return; toggleUser(Number(e.target.value)); }}>
+              <option value="">Select team member</option>
+              {team.filter((user) => !form.assigned_user_ids.includes(user.id)).map((user) => (
+                <option key={user.id} value={user.id}>{user.name} ({user.role})</option>
+              ))}
+            </select>
+            <div className="case-assigned-list">
+              {form.assigned_user_ids.length ? form.assigned_user_ids.map((userId) => {
+                const member = team.find((u) => u.id === userId);
+                if (!member) return null;
+                return (
+                  <span key={userId} className="case-assigned-pill">
+                    {member.name} ({member.role})
+                    <button type="button" onClick={() => toggleUser(userId)} aria-label={`Remove ${member.name}`}>×</button>
+                  </span>
+                );
+              }) : <span className="case-assigned-empty">No team members selected.</span>}
+            </div>
           </div>
 
           <button type="submit" disabled={saving}>{saving ? "Creating..." : "Create Case"}</button>
@@ -138,12 +194,23 @@ export default function CasesPage() {
               </thead>
               <tbody>
                 {cases.map((c) => (
-                  <tr key={c.id}>
-                    <td>{c.title}</td>
+                  <tr key={c.id} className="cases-row-link" onClick={() => { if (menuOpenId !== c.id) router.push(`/dashboard/cases/${c.id}`); }}>
+                    <td><Link href={`/dashboard/cases/${c.id}`} className="cases-title-link">{c.title}</Link></td>
                     <td><span className={`vilo-badge vilo-badge--${c.status}`}>{c.status}</span></td>
                     <td><span className={`vilo-badge vilo-badge--priority-${c.priority}`}>{c.priority}</span></td>
                     <td>#{c.client_id}</td>
-                    <td><Link href={`/dashboard/cases/${c.id}`}>View case</Link></td>
+                    <td onClick={(e) => e.stopPropagation()}>
+                      <div className="vilo-table-actions case-row-actions">
+                        <button type="button" className="vilo-btn vilo-btn--ghost vilo-btn--xs" onClick={() => setMenuOpenId(menuOpenId === c.id ? null : c.id)}>•••</button>
+                        {menuOpenId === c.id ? (
+                          <div className="case-actions-menu">
+                            <Link href={`/dashboard/cases/${c.id}`}>View</Link>
+                            <button type="button" onClick={() => { setEditCase(c); setMenuOpenId(null); }}>Edit</button>
+                            <button type="button" className="is-danger" onClick={() => setArchiveCase(c)}>Archive</button>
+                          </div>
+                        ) : null}
+                      </div>
+                    </td>
                   </tr>
                 ))}
               </tbody>
@@ -151,6 +218,55 @@ export default function CasesPage() {
           </div>
         ) : null}
       </article>
+
+      {editCase ? (
+        <div className="vilo-modal-overlay" onClick={() => setEditCase(null)}>
+          <div className="vilo-modal" onClick={(e) => e.stopPropagation()}>
+            <div className="vilo-modal__header">
+              <h3>Edit Case</h3>
+              <button type="button" className="vilo-btn vilo-btn--ghost vilo-btn--xs" onClick={() => setEditCase(null)}>Close</button>
+            </div>
+            <div className="vilo-modal__body">
+              <form className="vilo-form-grid" onSubmit={updateCase}>
+                <input value={editCase.title || ""} onChange={(e) => setEditCase((p) => ({ ...p, title: e.target.value }))} required />
+                <textarea value={editCase.description || ""} onChange={(e) => setEditCase((p) => ({ ...p, description: e.target.value }))} />
+                <div className="vilo-form-row-two">
+                  <select value={editCase.status} onChange={(e) => setEditCase((p) => ({ ...p, status: e.target.value }))}>
+                    <option value="draft">draft</option>
+                    <option value="active">active</option>
+                    <option value="closed">closed</option>
+                    <option value="archived">archived</option>
+                  </select>
+                  <select value={editCase.priority} onChange={(e) => setEditCase((p) => ({ ...p, priority: e.target.value }))}>
+                    <option value="low">low</option>
+                    <option value="medium">medium</option>
+                    <option value="high">high</option>
+                  </select>
+                </div>
+                <button type="submit" className="vilo-btn vilo-btn--primary" disabled={saving}>{saving ? "Saving..." : "Save Changes"}</button>
+              </form>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {archiveCase ? (
+        <div className="vilo-modal-overlay" onClick={() => setArchiveCase(null)}>
+          <div className="vilo-modal" onClick={(e) => e.stopPropagation()}>
+            <div className="vilo-modal__header">
+              <h3>Archive Case</h3>
+              <button type="button" className="vilo-btn vilo-btn--ghost vilo-btn--xs" onClick={() => setArchiveCase(null)}>Close</button>
+            </div>
+            <div className="vilo-modal__body">
+              <p>Archive <strong>{archiveCase.title}</strong>? You can still view it in archived status.</p>
+              <div className="vilo-table-actions">
+                <button type="button" className="vilo-btn vilo-btn--danger" onClick={doArchiveCase} disabled={saving}>{saving ? "Archiving..." : "Archive"}</button>
+                <button type="button" className="vilo-btn vilo-btn--secondary" onClick={() => setArchiveCase(null)}>Cancel</button>
+              </div>
+            </div>
+          </div>
+        </div>
+      ) : null}
     </section>
   );
 }

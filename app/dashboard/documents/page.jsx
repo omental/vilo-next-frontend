@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { apiRequest } from "../../../lib/api";
+import { apiDownload, apiRequest, apiUpload } from "../../../lib/api";
 import { getToken } from "../../../lib/auth";
 
 const initialForm = {
@@ -18,6 +18,12 @@ export default function DocumentsPage() {
   const [form, setForm] = useState(initialForm);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [replaceTarget, setReplaceTarget] = useState(null);
+  const [replaceFile, setReplaceFile] = useState(null);
+  const [replaceNotes, setReplaceNotes] = useState("");
+  const [versionTarget, setVersionTarget] = useState(null);
+  const [versions, setVersions] = useState([]);
 
   async function load() {
     setLoading(true);
@@ -68,6 +74,42 @@ export default function DocumentsPage() {
 
     setForm(initialForm);
     await load();
+  }
+
+  async function replaceDocument(e) {
+    e.preventDefault();
+    if (!replaceTarget || !replaceFile) {
+      setError("Select a replacement file.");
+      return;
+    }
+    setSaving(true);
+    setError("");
+    try {
+      const fd = new FormData();
+      fd.append("file", replaceFile);
+      if (replaceNotes.trim()) fd.append("notes", replaceNotes.trim());
+      await apiUpload(`/api/v1/documents/${replaceTarget.id}/replace`, fd);
+      setReplaceTarget(null);
+      setReplaceFile(null);
+      setReplaceNotes("");
+      await load();
+    } catch (err) {
+      setError(err.message || "Replace failed");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function openVersions(document) {
+    setVersionTarget(document);
+    setVersions([]);
+    setError("");
+    try {
+      const rows = await apiRequest(`/api/v1/documents/${document.id}/versions`);
+      setVersions(rows || []);
+    } catch (err) {
+      setError(err.message || "Failed to load versions");
+    }
   }
 
   async function deleteDocument(id) {
@@ -134,8 +176,12 @@ export default function DocumentsPage() {
                     <td>{d.case_id ? `#${d.case_id}` : "-"}</td>
                     <td>{d.category || "-"}</td>
                     <td>
-                      <button onClick={() => downloadDocument(d.id)}>Download</button>
-                      <button onClick={() => deleteDocument(d.id)} style={{ marginLeft: 8 }}>Delete</button>
+                      <div className="vilo-table-actions">
+                        <button type="button" className="vilo-btn vilo-btn--ghost vilo-btn--xs" onClick={() => downloadDocument(d.id)}>Download</button>
+                        <button type="button" className="vilo-btn vilo-btn--secondary vilo-btn--xs" onClick={() => setReplaceTarget(d)}>Edit / Replace</button>
+                        <button type="button" className="vilo-btn vilo-btn--ghost vilo-btn--xs" onClick={() => openVersions(d)}>Versions</button>
+                        <button type="button" className="vilo-btn vilo-btn--danger vilo-btn--xs" onClick={() => deleteDocument(d.id)}>Delete</button>
+                      </div>
                     </td>
                   </tr>
                 ))}
@@ -144,6 +190,60 @@ export default function DocumentsPage() {
           </div>
         ) : null}
       </article>
+
+      {replaceTarget ? (
+        <div className="vilo-modal-overlay" onClick={() => { setReplaceTarget(null); setReplaceFile(null); setReplaceNotes(""); }}>
+          <div className="vilo-modal" onClick={(e) => e.stopPropagation()}>
+            <div className="vilo-modal__header">
+              <h3>Replace Document</h3>
+              <button type="button" className="vilo-btn vilo-btn--ghost vilo-btn--xs" onClick={() => { setReplaceTarget(null); setReplaceFile(null); setReplaceNotes(""); }}>Close</button>
+            </div>
+            <div className="vilo-modal__body">
+              <form className="vilo-form-grid" onSubmit={replaceDocument}>
+                <p className="vilo-card-copy">Current file: <strong>{replaceTarget.file_name}</strong></p>
+                <input type="file" accept=".pdf,.doc,.docx,.jpg,.jpeg,.png" onChange={(e) => setReplaceFile(e.target.files?.[0] || null)} required />
+                <textarea placeholder="Version notes (optional)" value={replaceNotes} onChange={(e) => setReplaceNotes(e.target.value)} />
+                <div className="vilo-table-actions">
+                  <button type="button" className="vilo-btn vilo-btn--secondary" onClick={() => { setReplaceTarget(null); setReplaceFile(null); setReplaceNotes(""); }}>Cancel</button>
+                  <button type="submit" className="vilo-btn vilo-btn--primary" disabled={saving}>{saving ? "Replacing..." : "Replace Document"}</button>
+                </div>
+              </form>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {versionTarget ? (
+        <div className="vilo-modal-overlay" onClick={() => setVersionTarget(null)}>
+          <div className="vilo-modal" onClick={(e) => e.stopPropagation()}>
+            <div className="vilo-modal__header">
+              <h3>Version History</h3>
+              <button type="button" className="vilo-btn vilo-btn--ghost vilo-btn--xs" onClick={() => setVersionTarget(null)}>Close</button>
+            </div>
+            <div className="vilo-modal__body">
+              {!versions.length ? <p className="vilo-state">No previous versions.</p> : null}
+              {versions.length ? (
+                <div className="vilo-table-wrap">
+                  <table className="team-table">
+                    <thead><tr><th>Version</th><th>File</th><th>Uploaded</th><th>Notes</th><th>Action</th></tr></thead>
+                    <tbody>
+                      {versions.map((v) => (
+                        <tr key={v.id}>
+                          <td>v{v.version_number}</td>
+                          <td>{v.file_name}</td>
+                          <td>{new Date(v.created_at).toLocaleString()}</td>
+                          <td>{v.notes || "-"}</td>
+                          <td><button type="button" className="vilo-btn vilo-btn--ghost vilo-btn--xs" onClick={() => apiDownload(`/api/v1/documents/${versionTarget.id}/versions/${v.id}/download`)}>Download</button></td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              ) : null}
+            </div>
+          </div>
+        </div>
+      ) : null}
     </section>
   );
 }

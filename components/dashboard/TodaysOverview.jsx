@@ -1,6 +1,7 @@
 "use client";
 
 import { motion, useReducedMotion } from "framer-motion";
+import Link from "next/link";
 import { createCardVariants, createHoverLift, createItemVariants } from "../motion";
 
 const fallbackStatItems = [
@@ -56,7 +57,13 @@ export function TodaysOverview({ stats = fallbackStatItems, timelineRows = fallb
             <tbody>
               {timelineRows.map((row, index) => (
                 <motion.tr key={`${row.priority}-${index}`} variants={itemVariants}>
-                  <td>{row.label}</td>
+                  <td>
+                    {row.href ? (
+                      <Link className="overview-table__link" href={row.href}>{row.label}</Link>
+                    ) : (
+                      row.label
+                    )}
+                  </td>
                   <td>
                     <motion.span
                       className={`priority-badge ${row.tone}`}

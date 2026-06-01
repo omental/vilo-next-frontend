@@ -3,10 +3,10 @@
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { useParams } from "next/navigation";
-import { apiRequest } from "../../../../lib/api";
+import { apiDownload, apiRequest, apiUpload } from "../../../../lib/api";
 import { getToken } from "../../../../lib/auth";
 
-const TABS = ["timeline", "team", "documents", "tasks", "notes"];
+const TABS = ["timeline", "notes", "tasks", "documents", "team"];
 const EVENT_TYPES = ["milestone", "hearing", "filing", "call", "meeting", "note"];
 const STATUS_TYPES = ["active", "inactive", "pending"];
 const PER_PAGE_OPTIONS = [5, 10, 20];
@@ -52,6 +52,7 @@ export default function CaseDetailPage() {
   const [search, setSearch] = useState("");
   const [item, setItem] = useState(null);
   const [clients, setClients] = useState([]);
+  const [team, setTeam] = useState([]);
   const [tasks, setTasks] = useState([]);
   const [documents, setDocuments] = useState([]);
   const [notes, setNotes] = useState([]);
@@ -66,25 +67,35 @@ export default function CaseDetailPage() {
 
   const [modalType, setModalType] = useState("");
   const [selectedRow, setSelectedRow] = useState(null);
+  const [selectedDocument, setSelectedDocument] = useState(null);
   const [eventForm, setEventForm] = useState(EMPTY_EVENT);
   const [submitting, setSubmitting] = useState(false);
+  const [replaceFile, setReplaceFile] = useState(null);
+  const [replaceNotes, setReplaceNotes] = useState("");
+  const [versionRows, setVersionRows] = useState([]);
+  const [noteForm, setNoteForm] = useState({ note: "", visibility: "internal" });
+  const [taskForm, setTaskForm] = useState({ title: "", description: "", status: "pending", priority: "medium", due_date: "", assigned_to: "" });
+  const [docForm, setDocForm] = useState({ title: "", description: "", category: "", visibility: "internal", file: null });
+  const [selectedAssigneeId, setSelectedAssigneeId] = useState("");
 
   async function load() {
     setLoading(true);
     setError("");
     try {
-      const [caseData, clientData, taskData, docData, noteData] = await Promise.all([
+      const [caseData, clientData, taskData, docData, noteData, teamData] = await Promise.all([
         apiRequest(`/api/v1/cases/${id}`),
         apiRequest(`/api/v1/clients`),
         apiRequest(`/api/v1/tasks?case_id=${id}`),
         apiRequest(`/api/v1/documents?case_id=${id}`),
         apiRequest(`/api/v1/cases/${id}/notes`),
+        apiRequest("/api/v1/team"),
       ]);
       setItem(caseData);
       setClients(clientData || []);
       setTasks(taskData || []);
       setDocuments(docData || []);
       setNotes(noteData || []);
+      setTeam((teamData || []).filter((u) => u.role !== "client"));
       await loadTimeline(search, filters);
     } catch (err) {
       setError(err.message || "Failed to load case details");
@@ -194,6 +205,150 @@ export default function CaseDetailPage() {
       await loadTimeline();
     } catch (err) {
       setError(err.message || "Failed to lock timeline event");
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  async function addCaseNote(e) {
+    e.preventDefault();
+    setSubmitting(true);
+    setError("");
+    try {
+      await apiRequest(`/api/v1/cases/${id}/notes`, {
+        method: "POST",
+        body: JSON.stringify(noteForm),
+      });
+      setNoteForm({ note: "", visibility: "internal" });
+      setModalType("");
+      await load();
+    } catch (err) {
+      setError(err.message || "Failed to create note");
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  async function addTask(e) {
+    e.preventDefault();
+    setSubmitting(true);
+    setError("");
+    try {
+      await apiRequest("/api/v1/tasks", {
+        method: "POST",
+        body: JSON.stringify({
+          ...taskForm,
+          case_id: Number(id),
+          assigned_to: taskForm.assigned_to ? Number(taskForm.assigned_to) : null,
+          due_date: taskForm.due_date || null,
+        }),
+      });
+      setTaskForm({ title: "", description: "", status: "pending", priority: "medium", due_date: "", assigned_to: "" });
+      setModalType("");
+      await load();
+    } catch (err) {
+      setError(err.message || "Failed to create task");
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  async function uploadDocument(e) {
+    e.preventDefault();
+    if (!docForm.file) {
+      setError("Select a file to upload.");
+      return;
+    }
+    setSubmitting(true);
+    setError("");
+    try {
+      const formData = new FormData();
+      formData.set("title", docForm.title);
+      formData.set("description", docForm.description || "");
+      formData.set("category", docForm.category || "");
+      formData.set("visibility", docForm.visibility);
+      formData.set("case_id", String(id));
+      formData.set("file", docForm.file);
+      await apiUpload("/api/v1/documents/upload", formData);
+      setDocForm({ title: "", description: "", category: "", visibility: "internal", file: null });
+      setModalType("");
+      await load();
+    } catch (err) {
+      setError(err.message || "Failed to upload document");
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  async function replaceDocument(e) {
+    e.preventDefault();
+    if (!selectedDocument || !replaceFile) {
+      setError("Select a replacement file.");
+      return;
+    }
+    setSubmitting(true);
+    setError("");
+    try {
+      const formData = new FormData();
+      formData.set("file", replaceFile);
+      if (replaceNotes.trim()) formData.set("notes", replaceNotes.trim());
+      await apiUpload(`/api/v1/documents/${selectedDocument.id}/replace`, formData);
+      setModalType("");
+      setSelectedDocument(null);
+      setReplaceFile(null);
+      setReplaceNotes("");
+      await load();
+    } catch (err) {
+      setError(err.message || "Failed to replace document");
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  async function openVersionHistory(doc) {
+    setSelectedDocument(doc);
+    setVersionRows([]);
+    setModalType("document-versions");
+    try {
+      const rows = await apiRequest(`/api/v1/documents/${doc.id}/versions`);
+      setVersionRows(rows || []);
+    } catch (err) {
+      setError(err.message || "Failed to load versions");
+    }
+  }
+
+  async function assignTeamMember() {
+    if (!selectedAssigneeId) return;
+    setSubmitting(true);
+    setError("");
+    try {
+      await apiRequest(`/api/v1/cases/${id}/assign`, {
+        method: "POST",
+        body: JSON.stringify({ user_ids: [Number(selectedAssigneeId)] }),
+      });
+      setSelectedAssigneeId("");
+      await load();
+    } catch (err) {
+      setError(err.message || "Failed to assign user");
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  async function unassignTeamMember(userId) {
+    if (!item) return;
+    setSubmitting(true);
+    setError("");
+    try {
+      const remaining = (item.assigned_users || []).filter((u) => u.id !== userId).map((u) => u.id);
+      const updated = await apiRequest(`/api/v1/cases/${id}`, {
+        method: "PATCH",
+        body: JSON.stringify({ assigned_user_ids: remaining }),
+      });
+      setItem(updated);
+      await load();
+    } catch (err) {
+      setError(err.message || "Failed to remove user");
     } finally {
       setSubmitting(false);
     }
@@ -309,7 +464,7 @@ export default function CaseDetailPage() {
                   </div>
                 </div>
 
-                <div className="vilo-table-wrap case-table-wrap">
+                <div className="vilo-table-wrap case-table-wrap case-table-wrap--menu-visible">
                   <table className="team-table">
                     <thead>
                       <tr><th>#</th><th>Title</th><th>Event Type</th><th>Event Date</th><th>Completed</th><th>Status</th><th>Actions</th></tr>
@@ -324,7 +479,7 @@ export default function CaseDetailPage() {
                           <td><span className={`vilo-badge ${row.completed === "Yes" ? "vilo-badge--active" : "vilo-badge--priority-medium"}`}>{row.completed}</span></td>
                           <td><span className={`vilo-badge ${row.status === "active" ? "vilo-badge--active" : "vilo-badge--cancelled"}`}>{row.status}</span></td>
                           <td>
-                            <div className="vilo-table-actions" style={{ position: "relative" }}>
+                            <div className="vilo-table-actions case-row-actions" style={{ position: "relative" }}>
                               <button className="vilo-btn vilo-btn--ghost vilo-btn--xs" onClick={() => setMenuOpenId(menuOpenId === row.id ? null : row.id)}>•••</button>
                               {menuOpenId === row.id ? (
                                 <div className="case-actions-menu">
@@ -356,14 +511,23 @@ export default function CaseDetailPage() {
 
             {activeTab === "team" ? (
               <div className="case-tab-panel">
-                <h2>Team Members</h2>
+                <div className="case-tab-headline-row">
+                  <h2>Team Members</h2>
+                  <button type="button" className="vilo-btn vilo-btn--secondary" onClick={() => setModalType("add-team")}>Assign Team Member</button>
+                </div>
                 {item.assigned_users?.length ? (
                   <div className="vilo-table-wrap case-table-wrap">
                     <table className="team-table">
-                      <thead><tr><th>Name</th><th>Email</th><th>Role</th><th>Status</th></tr></thead>
+                      <thead><tr><th>Name</th><th>Email</th><th>Role</th><th>Status</th><th>Action</th></tr></thead>
                       <tbody>
                         {item.assigned_users.map((u) => (
-                          <tr key={u.id}><td>{u.name}</td><td>{u.email}</td><td><span className={`vilo-badge vilo-badge--${u.role}`}>{u.role}</span></td><td><span className={`vilo-badge ${u.status === "active" ? "vilo-badge--active" : "vilo-badge--cancelled"}`}>{u.status}</span></td></tr>
+                          <tr key={u.id}>
+                            <td>{u.name}</td>
+                            <td>{u.email}</td>
+                            <td><span className={`vilo-badge vilo-badge--${u.role}`}>{u.role}</span></td>
+                            <td><span className={`vilo-badge ${u.status === "active" ? "vilo-badge--active" : "vilo-badge--cancelled"}`}>{u.status}</span></td>
+                            <td><button type="button" className="vilo-btn vilo-btn--ghost vilo-btn--xs" onClick={() => unassignTeamMember(u.id)} disabled={submitting}>Remove</button></td>
+                          </tr>
                         ))}
                       </tbody>
                     </table>
@@ -374,7 +538,10 @@ export default function CaseDetailPage() {
 
             {activeTab === "documents" ? (
               <div className="case-tab-panel">
-                <h2>Documents</h2>
+                <div className="case-tab-headline-row">
+                  <h2>Documents</h2>
+                  <button type="button" className="vilo-btn vilo-btn--secondary" onClick={() => setModalType("add-document")}>Upload Document</button>
+                </div>
                 {documents.length ? (
                   <div className="vilo-table-wrap case-table-wrap">
                     <table className="team-table">
@@ -384,7 +551,13 @@ export default function CaseDetailPage() {
                           <tr key={doc.id}>
                             <td>{doc.title}</td><td>{doc.file_name}</td><td>{doc.category || "-"}</td>
                             <td><span className={`vilo-badge ${doc.visibility === "client_visible" ? "vilo-badge--active" : "vilo-badge--draft"}`}>{doc.visibility}</span></td>
-                            <td><button type="button" className="vilo-btn vilo-btn--secondary vilo-btn--xs" onClick={() => downloadDocument(doc.id)}>Download</button></td>
+                            <td>
+                              <div className="vilo-table-actions">
+                                <button type="button" className="vilo-btn vilo-btn--secondary vilo-btn--xs" onClick={() => downloadDocument(doc.id)}>Download</button>
+                                <button type="button" className="vilo-btn vilo-btn--ghost vilo-btn--xs" onClick={() => { setSelectedDocument(doc); setModalType("replace-document"); }}>Edit / Replace</button>
+                                <button type="button" className="vilo-btn vilo-btn--ghost vilo-btn--xs" onClick={() => openVersionHistory(doc)}>Versions</button>
+                              </div>
+                            </td>
                           </tr>
                         ))}
                       </tbody>
@@ -396,7 +569,10 @@ export default function CaseDetailPage() {
 
             {activeTab === "tasks" ? (
               <div className="case-tab-panel">
-                <h2>Tasks</h2>
+                <div className="case-tab-headline-row">
+                  <h2>Tasks</h2>
+                  <button type="button" className="vilo-btn vilo-btn--secondary" onClick={() => setModalType("add-task")}>Add Task</button>
+                </div>
                 {tasks.length ? (
                   <div className="vilo-table-wrap case-table-wrap">
                     <table className="team-table">
@@ -414,7 +590,10 @@ export default function CaseDetailPage() {
 
             {activeTab === "notes" ? (
               <div className="case-tab-panel">
-                <h2>Notes</h2>
+                <div className="case-tab-headline-row">
+                  <h2>Notes</h2>
+                  <button type="button" className="vilo-btn vilo-btn--secondary" onClick={() => setModalType("add-note")}>Add Note</button>
+                </div>
                 {notes.length ? (
                   <div className="vilo-table-wrap case-table-wrap">
                     <table className="team-table">
@@ -527,6 +706,117 @@ export default function CaseDetailPage() {
             <button className="vilo-btn vilo-btn--primary" type="button" onClick={lockEvent} disabled={submitting}>{submitting ? "Locking..." : "Lock"}</button>
             <button className="vilo-btn vilo-btn--secondary" type="button" onClick={() => setModalType("")}>Cancel</button>
           </div>
+        </Modal>
+      ) : null}
+
+      {modalType === "add-note" ? (
+        <Modal title="Add Note" onClose={() => setModalType("")}>
+          <form className="vilo-form-grid" onSubmit={addCaseNote}>
+            <textarea placeholder="Note" value={noteForm.note} onChange={(e) => setNoteForm((p) => ({ ...p, note: e.target.value }))} required />
+            <select value={noteForm.visibility} onChange={(e) => setNoteForm((p) => ({ ...p, visibility: e.target.value }))}>
+              <option value="internal">internal</option>
+              <option value="client_visible">client_visible</option>
+            </select>
+            <button className="vilo-btn vilo-btn--primary" type="submit" disabled={submitting}>{submitting ? "Saving..." : "Create Note"}</button>
+          </form>
+        </Modal>
+      ) : null}
+
+      {modalType === "add-task" ? (
+        <Modal title="Add Task" onClose={() => setModalType("")}>
+          <form className="vilo-form-grid" onSubmit={addTask}>
+            <input placeholder="Task title" value={taskForm.title} onChange={(e) => setTaskForm((p) => ({ ...p, title: e.target.value }))} required />
+            <textarea placeholder="Description" value={taskForm.description} onChange={(e) => setTaskForm((p) => ({ ...p, description: e.target.value }))} />
+            <div className="vilo-form-row-two">
+              <select value={taskForm.status} onChange={(e) => setTaskForm((p) => ({ ...p, status: e.target.value }))}>
+                <option value="pending">pending</option>
+                <option value="in_progress">in_progress</option>
+                <option value="completed">completed</option>
+                <option value="cancelled">cancelled</option>
+              </select>
+              <select value={taskForm.priority} onChange={(e) => setTaskForm((p) => ({ ...p, priority: e.target.value }))}>
+                <option value="low">low</option>
+                <option value="medium">medium</option>
+                <option value="high">high</option>
+                <option value="urgent">urgent</option>
+              </select>
+            </div>
+            <div className="vilo-form-row-two">
+              <input type="date" value={taskForm.due_date} onChange={(e) => setTaskForm((p) => ({ ...p, due_date: e.target.value }))} />
+              <select value={taskForm.assigned_to} onChange={(e) => setTaskForm((p) => ({ ...p, assigned_to: e.target.value }))}>
+                <option value="">Unassigned</option>
+                {team.map((u) => <option key={u.id} value={u.id}>{u.name}</option>)}
+              </select>
+            </div>
+            <button className="vilo-btn vilo-btn--primary" type="submit" disabled={submitting}>{submitting ? "Saving..." : "Create Task"}</button>
+          </form>
+        </Modal>
+      ) : null}
+
+      {modalType === "add-document" ? (
+        <Modal title="Upload Document" onClose={() => setModalType("")}>
+          <form className="vilo-form-grid" onSubmit={uploadDocument}>
+            <input placeholder="Title" value={docForm.title} onChange={(e) => setDocForm((p) => ({ ...p, title: e.target.value }))} required />
+            <input placeholder="Category" value={docForm.category} onChange={(e) => setDocForm((p) => ({ ...p, category: e.target.value }))} />
+            <textarea placeholder="Description" value={docForm.description} onChange={(e) => setDocForm((p) => ({ ...p, description: e.target.value }))} />
+            <select value={docForm.visibility} onChange={(e) => setDocForm((p) => ({ ...p, visibility: e.target.value }))}>
+              <option value="internal">internal</option>
+              <option value="client_visible">client_visible</option>
+            </select>
+            <input type="file" onChange={(e) => setDocForm((p) => ({ ...p, file: e.target.files?.[0] || null }))} required />
+            <button className="vilo-btn vilo-btn--primary" type="submit" disabled={submitting}>{submitting ? "Uploading..." : "Upload Document"}</button>
+          </form>
+        </Modal>
+      ) : null}
+
+      {modalType === "add-team" ? (
+        <Modal title="Assign Team Member" onClose={() => setModalType("")}>
+          <div className="vilo-form-grid">
+            <select value={selectedAssigneeId} onChange={(e) => setSelectedAssigneeId(e.target.value)}>
+              <option value="">Select team member</option>
+              {team.filter((u) => !(item?.assigned_users || []).some((a) => a.id === u.id)).map((u) => (
+                <option key={u.id} value={u.id}>{u.name} ({u.role})</option>
+              ))}
+            </select>
+            <button className="vilo-btn vilo-btn--primary" type="button" onClick={assignTeamMember} disabled={!selectedAssigneeId || submitting}>
+              {submitting ? "Assigning..." : "Assign Team Member"}
+            </button>
+          </div>
+        </Modal>
+      ) : null}
+
+      {modalType === "replace-document" && selectedDocument ? (
+        <Modal title="Replace Document" onClose={() => { setModalType(""); setSelectedDocument(null); setReplaceFile(null); setReplaceNotes(""); }}>
+          <form className="vilo-form-grid" onSubmit={replaceDocument}>
+            <p><strong>Current file:</strong> {selectedDocument.file_name}</p>
+            <input type="file" accept=".pdf,.doc,.docx,.jpg,.jpeg,.png" onChange={(e) => setReplaceFile(e.target.files?.[0] || null)} required />
+            <textarea placeholder="Version notes (optional)" value={replaceNotes} onChange={(e) => setReplaceNotes(e.target.value)} />
+            <button className="vilo-btn vilo-btn--primary" type="submit" disabled={submitting}>{submitting ? "Replacing..." : "Replace Document"}</button>
+          </form>
+        </Modal>
+      ) : null}
+
+      {modalType === "document-versions" && selectedDocument ? (
+        <Modal title="Version History" onClose={() => { setModalType(""); setSelectedDocument(null); }}>
+          {!versionRows.length ? <p>No previous versions.</p> : null}
+          {versionRows.length ? (
+            <div className="vilo-table-wrap">
+              <table className="team-table">
+                <thead><tr><th>Version</th><th>File</th><th>Uploaded</th><th>Notes</th><th>Action</th></tr></thead>
+                <tbody>
+                  {versionRows.map((row) => (
+                    <tr key={row.id}>
+                      <td>v{row.version_number}</td>
+                      <td>{row.file_name}</td>
+                      <td>{new Date(row.created_at).toLocaleString()}</td>
+                      <td>{row.notes || "-"}</td>
+                      <td><button type="button" className="vilo-btn vilo-btn--ghost vilo-btn--xs" onClick={() => apiDownload(`/api/v1/documents/${selectedDocument.id}/versions/${row.id}/download`)}>Download</button></td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          ) : null}
         </Modal>
       ) : null}
     </section>

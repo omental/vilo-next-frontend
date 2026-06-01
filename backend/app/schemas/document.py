@@ -11,7 +11,6 @@ class DocumentResponse(BaseModel):
     title: str
     description: str | None
     file_name: str
-    file_path: str
     file_type: str | None
     file_size: int | None
     category: str | None
@@ -26,3 +25,16 @@ class DocumentUpdate(BaseModel):
     description: str | None = None
     category: str | None = None
     visibility: str | None = None
+
+
+class DocumentVersionResponse(BaseModel):
+    id: int
+    document_id: int
+    organization_id: int
+    file_name: str
+    file_type: str | None
+    file_size: int | None
+    version_number: int
+    uploaded_by: int
+    notes: str | None
+    created_at: datetime

@@ -1,6 +1,6 @@
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -9,9 +9,10 @@ from app.db.session import get_db
 from app.models.case import Case
 from app.models.client import Client
 from app.models.conversation import Conversation, ConversationParticipant, Message
+from app.models.message_case_reference import MessageCaseReference
 from app.models.enums import UserRole
 from app.models.user import User
-from app.schemas.conversation import ConversationResponse, MessageCreate, MessageResponse
+from app.schemas.conversation import CaseReferenceResponse, CaseSearchResult, ConversationResponse, MessageCreate, MessageResponse
 from app.services.notifications import bulk_create_notifications
 
 router = APIRouter(prefix="/portal/messages", tags=["portal-messages"])
@@ -57,7 +58,46 @@ async def get_allowed_conversation(db: AsyncSession, client: Client, conversatio
     return conv
 
 
+def case_number(case: Case) -> str:
+    return getattr(case, "display_number", None) or f"CASE{str(case.id).zfill(6)}"
+
+
+async def build_case_references(db: AsyncSession, org_id: int, message_id: int, client_id: int) -> list[CaseReferenceResponse]:
+    refs = (
+        await db.scalars(
+            select(MessageCaseReference).where(
+                MessageCaseReference.organization_id == org_id,
+                MessageCaseReference.message_id == message_id,
+            )
+        )
+    ).all()
+    output: list[CaseReferenceResponse] = []
+    for ref in refs:
+        case = await db.scalar(select(Case).where(Case.id == ref.case_id, Case.organization_id == org_id, Case.client_id == client_id))
+        if case:
+            output.append(CaseReferenceResponse(case_id=case.id, case_title=case.title, case_display_number=case_number(case)))
+    return output
+
+
+async def build_message_response(db: AsyncSession, message: Message, client_id: int) -> MessageResponse:
+    sender = await db.scalar(select(User).where(User.id == message.sender_id, User.organization_id == message.organization_id))
+    return MessageResponse(
+        id=message.id,
+        conversation_id=message.conversation_id,
+        sender_id=message.sender_id,
+        parent_message_id=message.parent_message_id,
+        body=message.body,
+        sender_name=sender.name if sender else None,
+        sender_role=sender.role.value if sender else None,
+        case_references=await build_case_references(db, message.organization_id, message.id, client_id),
+        created_at=message.created_at,
+        updated_at=message.updated_at,
+        deleted_at=message.deleted_at,
+    )
+
+
 async def conversation_summary(db: AsyncSession, conv: Conversation, current_user_id: int) -> ConversationResponse:
+    portal_client = await db.scalar(select(Client).where(Client.organization_id == conv.organization_id, Client.user_id == current_user_id))
     participant_count = len(
         (
             await db.scalars(
@@ -92,8 +132,23 @@ async def conversation_summary(db: AsyncSession, conv: Conversation, current_use
             unread += 1
     latest_message = None
     if latest:
-        latest_message = MessageResponse(id=latest.id, conversation_id=latest.conversation_id, sender_id=latest.sender_id, parent_message_id=latest.parent_message_id, body=latest.body, created_at=latest.created_at, updated_at=latest.updated_at, deleted_at=latest.deleted_at)
-    return ConversationResponse(id=conv.id, organization_id=conv.organization_id, case_id=conv.case_id, conversation_type=conv.conversation_type, title=conv.title, created_by=conv.created_by, created_at=conv.created_at, updated_at=conv.updated_at, participant_count=participant_count, unread_count=unread, latest_message=latest_message)
+        latest_message = await build_message_response(db, latest, portal_client.id if portal_client else 0)
+    linked_case = await db.scalar(select(Case).where(Case.id == conv.case_id, Case.organization_id == conv.organization_id, Case.client_id == portal_client.id)) if conv.case_id and portal_client else None
+    return ConversationResponse(
+        id=conv.id,
+        organization_id=conv.organization_id,
+        case_id=conv.case_id,
+        case_title=linked_case.title if linked_case else None,
+        case_display_number=case_number(linked_case) if linked_case else None,
+        conversation_type=conv.conversation_type,
+        title=conv.title,
+        created_by=conv.created_by,
+        created_at=conv.created_at,
+        updated_at=conv.updated_at,
+        participant_count=participant_count,
+        unread_count=unread,
+        latest_message=latest_message,
+    )
 
 
 @router.get("/conversations", response_model=list[ConversationResponse])
@@ -144,7 +199,7 @@ async def list_portal_messages(conversation_id: int, db: AsyncSession = Depends(
             .order_by(Message.created_at.asc())
         )
     ).all()
-    return [MessageResponse(id=m.id, conversation_id=m.conversation_id, sender_id=m.sender_id, parent_message_id=m.parent_message_id, body=m.body, created_at=m.created_at, updated_at=m.updated_at, deleted_at=m.deleted_at) for m in rows]
+    return [await build_message_response(db, m, client.id) for m in rows]
 
 
 @router.post("/conversations/{conversation_id}/messages", response_model=MessageResponse)
@@ -168,6 +223,22 @@ async def create_portal_message(conversation_id: int, payload: MessageCreate, db
     )
     db.add(msg)
     await db.flush()
+    if payload.case_reference_ids:
+        unique_ids = list({int(cid) for cid in payload.case_reference_ids})
+        for case_id in unique_ids:
+            linked_case = await db.scalar(
+                select(Case).where(Case.id == case_id, Case.organization_id == client.organization_id, Case.client_id == client.id)
+            )
+            if not linked_case:
+                raise HTTPException(status_code=400, detail="One or more case references are invalid")
+            db.add(
+                MessageCaseReference(
+                    organization_id=client.organization_id,
+                    message_id=msg.id,
+                    case_id=linked_case.id,
+                    created_at=now,
+                )
+            )
     conv.updated_at = now
     participant_ids = (
         await db.scalars(
@@ -189,7 +260,7 @@ async def create_portal_message(conversation_id: int, payload: MessageCreate, db
     )
     await db.commit()
     await db.refresh(msg)
-    return MessageResponse(id=msg.id, conversation_id=msg.conversation_id, sender_id=msg.sender_id, parent_message_id=msg.parent_message_id, body=msg.body, created_at=msg.created_at, updated_at=msg.updated_at, deleted_at=msg.deleted_at)
+    return await build_message_response(db, msg, client.id)
 
 
 @router.post("/conversations/{conversation_id}/mark-read")
@@ -206,3 +277,23 @@ async def mark_portal_conversation_read(conversation_id: int, db: AsyncSession =
     part.last_read_at = datetime.now(timezone.utc)
     await db.commit()
     return {"ok": True}
+
+
+@router.get("/case-search", response_model=list[CaseSearchResult])
+async def portal_case_search(
+    q: str = Query(default=""),
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    client = await get_portal_client(db, current_user)
+    rows = (
+        await db.scalars(
+            select(Case)
+            .where(Case.organization_id == client.organization_id, Case.client_id == client.id)
+            .order_by(Case.updated_at.desc())
+        )
+    ).all()
+    text = q.strip().lower()
+    if text:
+        rows = [row for row in rows if text in f"{row.title} {case_number(row)}".lower()]
+    return [CaseSearchResult(id=row.id, title=row.title, display_number=case_number(row)) for row in rows[:30]]

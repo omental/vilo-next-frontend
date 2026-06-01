@@ -27,6 +27,7 @@ Thumbs.db
 coverage/
 .vercel/
 backend/storage/generated/*.pdf
+backend/storage/
 backend/.venv/
 __pycache__/
 *.pyc

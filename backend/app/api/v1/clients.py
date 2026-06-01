@@ -76,7 +76,6 @@ def to_document_response(document: Document) -> DocumentResponse:
         title=document.title,
         description=document.description,
         file_name=document.file_name,
-        file_path=document.file_path,
         file_type=document.file_type,
         file_size=document.file_size,
         category=document.category,
