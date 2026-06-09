@@ -4,11 +4,111 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { apiRequest } from "../../../lib/api";
 
-function fmtTime(value) {
+function formatConversationTime(value) {
   if (!value) return "";
-  const d = new Date(value);
-  if (Number.isNaN(d.getTime())) return "";
-  return d.toLocaleString();
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "";
+  const now = new Date();
+  const sameDay = date.toDateString() === now.toDateString();
+  return sameDay
+    ? date.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })
+    : date.toLocaleDateString([], { month: "short", day: "numeric" });
+}
+
+function formatBubbleTime(value) {
+  if (!value) return "";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "";
+  return date.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+}
+
+function formatDayLabel(value) {
+  if (!value) return "";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "";
+  const now = new Date();
+  if (date.toDateString() === now.toDateString()) return "Today";
+  return date.toLocaleDateString([], { month: "short", day: "numeric", year: "numeric" });
+}
+
+function sameDay(left, right) {
+  return new Date(left).toDateString() === new Date(right).toDateString();
+}
+
+function getInitials(value) {
+  const source = String(value || "Message").trim();
+  const parts = source.split(/\s+/).filter(Boolean);
+  if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
+  return `${parts[0][0] || ""}${parts[1][0] || ""}`.toUpperCase();
+}
+
+function IconBase({ children }) {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.9"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      {children}
+    </svg>
+  );
+}
+
+function SearchIcon() {
+  return (
+    <IconBase>
+      <circle cx="11" cy="11" r="7" />
+      <path d="m20 20-3.5-3.5" />
+    </IconBase>
+  );
+}
+
+function VideoIcon() {
+  return (
+    <IconBase>
+      <rect x="3" y="6" width="12" height="12" rx="3" />
+      <path d="m15 10 5-3v10l-5-3" />
+    </IconBase>
+  );
+}
+
+function PhoneIcon() {
+  return (
+    <IconBase>
+      <path d="M6.6 4.8h2.6l1.2 3.4-1.6 1.5a14.5 14.5 0 0 0 5.5 5.5l1.5-1.6 3.4 1.2v2.6a1.5 1.5 0 0 1-1.7 1.5C10.4 18 6 13.6 5.1 6.5A1.5 1.5 0 0 1 6.6 4.8Z" />
+    </IconBase>
+  );
+}
+
+function DotsIcon() {
+  return (
+    <IconBase>
+      <path d="M5 12h.01" />
+      <path d="M12 12h.01" />
+      <path d="M19 12h.01" />
+    </IconBase>
+  );
+}
+
+function PaperclipIcon() {
+  return (
+    <IconBase>
+      <path d="m21.4 11.1-8.8 8.8a5 5 0 1 1-7.1-7.1l9.1-9.1a3.5 3.5 0 1 1 5 5l-9.4 9.4a2 2 0 1 1-2.8-2.8l8.4-8.4" />
+    </IconBase>
+  );
+}
+
+function SendIcon() {
+  return (
+    <IconBase>
+      <path d="M22 2 11 13" />
+      <path d="m22 2-7 20-4-9-9-4 20-7Z" />
+    </IconBase>
+  );
 }
 
 export default function PortalMessagesPage() {
@@ -22,8 +122,10 @@ export default function PortalMessagesPage() {
   const [caseRows, setCaseRows] = useState([]);
   const [query, setQuery] = useState("");
   const [loading, setLoading] = useState(true);
+  const [messagesLoading, setMessagesLoading] = useState(false);
   const [sending, setSending] = useState(false);
   const [error, setError] = useState("");
+  const [sendError, setSendError] = useState("");
   const [meId, setMeId] = useState(null);
   const threadEndRef = useRef(null);
 
@@ -37,9 +139,14 @@ export default function PortalMessagesPage() {
   }
 
   async function loadMessages(conversationId) {
-    const rows = await apiRequest(`/api/v1/portal/messages/conversations/${conversationId}/messages`);
-    setMessages(rows || []);
-    await apiRequest(`/api/v1/portal/messages/conversations/${conversationId}/mark-read`, { method: "POST" });
+    setMessagesLoading(true);
+    try {
+      const rows = await apiRequest(`/api/v1/portal/messages/conversations/${conversationId}/messages`);
+      setMessages(rows || []);
+      await apiRequest(`/api/v1/portal/messages/conversations/${conversationId}/mark-read`, { method: "POST" });
+    } finally {
+      setMessagesLoading(false);
+    }
   }
 
   useEffect(() => {
@@ -63,6 +170,7 @@ export default function PortalMessagesPage() {
     if (!selected?.id || !body.trim() || sending) return;
     setSending(true);
     setError("");
+    setSendError("");
     try {
       await apiRequest(`/api/v1/portal/messages/conversations/${selected.id}/messages`, {
         method: "POST",
@@ -73,7 +181,7 @@ export default function PortalMessagesPage() {
       await loadConversations();
       await loadMessages(selected.id);
     } catch (err) {
-      setError(err.message || "Failed to send message");
+      setSendError(err.message || "Failed to send message");
     } finally {
       setSending(false);
     }
@@ -98,108 +206,171 @@ export default function PortalMessagesPage() {
   const filteredConversations = useMemo(() => {
     const q = query.trim().toLowerCase();
     if (!q) return conversations;
-    return conversations.filter((conv) => `${conv.title || ""} ${conv.latest_message?.body || ""}`.toLowerCase().includes(q));
+    return conversations.filter((conv) => `${conv.title || ""} ${conv.latest_message?.body || ""} ${conv.case_title || ""}`.toLowerCase().includes(q));
   }, [conversations, query]);
+
+  const selectedTitle = selected?.title || `Conversation #${selected?.id}`;
+  const selectedSubtitle = selected?.case_title || `${selected?.participant_count || 0} participants`;
 
   return (
     <section className="dashboard-page-stack">
       {loading ? <div className="vilo-state-block"><p className="vilo-state vilo-state--loading">Loading conversations...</p></div> : null}
       {error ? <div className="vilo-state-block"><p className="vilo-state vilo-state--error">{error}</p></div> : null}
 
-      <div className="messages-layout messages-layout--portal">
-        <aside className="messages-sidebar dashboard-card">
-          <div className="messages-sidebar__head"><h2>Messages</h2></div>
-          <div className="messages-sidebar__search">
-            <input className="case-search-input" placeholder="Search conversations" value={query} onChange={(e) => setQuery(e.target.value)} />
-          </div>
-          <div className="messages-sidebar__list">
-            {!filteredConversations.length ? <p className="vilo-state">No conversations available.</p> : null}
-            {filteredConversations.map((conv) => (
-              <button key={conv.id} type="button" className={`messages-conversation-item${selected?.id === conv.id ? " is-active" : ""}`} onClick={() => setSelected(conv)}>
-                <span className="messages-conversation-item__avatar">{(conv.title || "C").slice(0, 1).toUpperCase()}</span>
-                <span className="messages-conversation-item__main">
-                  <span className="messages-conversation-item__top">
-                    <strong>{conv.title || `Conversation #${conv.id}`}</strong>
-                    <small>{fmtTime(conv.latest_message?.created_at || conv.updated_at)}</small>
+      <div className="messages-shell dashboard-card">
+        <div className="messages-layout messages-layout--portal">
+          <aside className="messages-sidebar">
+            <div className="messages-sidebar__head">
+              <h2>Messages</h2>
+            </div>
+            <div className="messages-sidebar__search">
+              <label className="messages-search-field">
+                <SearchIcon />
+                <input placeholder="Search conversations" value={query} onChange={(e) => setQuery(e.target.value)} />
+              </label>
+            </div>
+            <div className="messages-sidebar__list">
+              {!filteredConversations.length ? (
+                <div className="messages-empty-state">
+                  <strong>No conversations</strong>
+                  <span>No portal conversations are available yet.</span>
+                </div>
+              ) : null}
+              {filteredConversations.map((conv) => (
+                <button key={conv.id} type="button" className={`messages-conversation-item${selected?.id === conv.id ? " is-active" : ""}`} onClick={() => setSelected(conv)}>
+                  <span className="messages-conversation-item__avatar">{getInitials(conv.title || "Conversation")}</span>
+                  <span className="messages-conversation-item__main">
+                    <span className="messages-conversation-item__top">
+                      <strong>{conv.title || `Conversation #${conv.id}`}</strong>
+                      <small>{formatConversationTime(conv.latest_message?.created_at || conv.updated_at)}</small>
+                    </span>
+                    <span className="messages-conversation-item__meta">{conv.case_title || "Portal conversation"}</span>
+                    <span className="messages-conversation-item__bottom">
+                      <span className="messages-conversation-item__preview">{conv.latest_message?.body || "No messages yet"}</span>
+                      {conv.unread_count > 0 ? <em>{conv.unread_count}</em> : null}
+                    </span>
                   </span>
-                  <span className="messages-conversation-item__bottom">
-                    <span className="messages-conversation-item__preview">{conv.latest_message?.body || "No messages yet"}</span>
-                    {conv.unread_count > 0 ? <em>{conv.unread_count}</em> : null}
-                  </span>
-                </span>
-              </button>
-            ))}
-          </div>
-        </aside>
+                </button>
+              ))}
+            </div>
+          </aside>
 
-        <article className="messages-thread dashboard-card">
-          {!selected ? <div className="messages-empty"><p className="vilo-state">Select a conversation.</p></div> : (
-            <>
-              <div className="messages-thread__head">
-                <div>
-                  <h3>{selected.title || `Conversation #${selected.id}`}</h3>
-                  <p>{selected.unread_count || 0} unread</p>
-                  {selected.case_id ? (
-                    <Link href={`/portal/cases/${selected.case_id}`} className="message-case-chip">
-                      Case: {selected.case_title || `#${selected.case_id}`} ({selected.case_display_number || `CASE${String(selected.case_id).padStart(6, "0")}`})
-                    </Link>
-                  ) : null}
+          <article className="messages-thread">
+            {!selected ? (
+              <div className="messages-empty">
+                <div className="messages-empty-state messages-empty-state--thread">
+                  <strong>No conversation selected</strong>
+                  <span>Select a conversation from the list to view your messages.</span>
                 </div>
               </div>
-              <div className="messages-thread__body">
-                {!messages.length ? <p className="vilo-state">No messages yet.</p> : null}
-                {messages.map((msg) => {
-                  const mine = meId && Number(msg.sender_id) === Number(meId);
-                  return (
-                    <div key={msg.id} className={`message-bubble-row${mine ? " is-mine" : ""}`}>
-                      <div className={`message-bubble${mine ? " is-mine" : ""}`}>
-                        {!mine ? <small className="message-bubble__sender">{msg.sender_name || `User #${msg.sender_id}`}</small> : null}
-                        <p>{msg.body}</p>
-                        {msg.case_references?.length ? (
-                          <div className="message-bubble__refs">
-                            {msg.case_references.map((ref) => (
-                              <Link key={`${msg.id}-${ref.case_id}`} href={`/portal/cases/${ref.case_id}`} className="message-case-chip">
-                                Case: {ref.case_title} ({ref.case_display_number || `#${ref.case_id}`})
-                              </Link>
-                            ))}
+            ) : (
+              <>
+                <div className="messages-thread__head">
+                  <div className="messages-thread__identity">
+                    <span className="messages-thread__avatar">{getInitials(selectedTitle)}</span>
+                    <div>
+                      <h3>{selectedTitle}</h3>
+                      <p>{selectedSubtitle}</p>
+                      {selected.case_id ? (
+                        <Link href={`/portal/cases/${selected.case_id}`} className="message-case-chip">
+                          Case: {selected.case_title || `#${selected.case_id}`} ({selected.case_display_number || `CASE${String(selected.case_id).padStart(6, "0")}`})
+                        </Link>
+                      ) : null}
+                    </div>
+                  </div>
+                  <div className="messages-thread__actions" aria-label="Conversation actions">
+                    <button type="button" className="messages-icon-button" aria-label="Call feature unavailable" title="Call feature unavailable">
+                      <VideoIcon />
+                    </button>
+                    <button type="button" className="messages-icon-button" aria-label="Phone feature unavailable" title="Phone feature unavailable">
+                      <PhoneIcon />
+                    </button>
+                    <button type="button" className="messages-icon-button" aria-label="More actions unavailable" title="More actions unavailable">
+                      <DotsIcon />
+                    </button>
+                  </div>
+                </div>
+
+                <div className="messages-thread__body">
+                  {messagesLoading ? (
+                    <div className="messages-empty-state messages-empty-state--thread">
+                      <strong>Loading messages</strong>
+                      <span>Fetching your conversation history.</span>
+                    </div>
+                  ) : null}
+                  {!messagesLoading && !messages.length ? (
+                    <div className="messages-empty-state messages-empty-state--thread">
+                      <strong>No messages yet</strong>
+                      <span>Send the first portal message to start this thread.</span>
+                    </div>
+                  ) : null}
+                  {!messagesLoading ? messages.map((msg, index) => {
+                    const mine = meId && Number(msg.sender_id) === Number(meId);
+                    const showDay = index === 0 || !sameDay(messages[index - 1]?.created_at, msg.created_at);
+                    return (
+                      <div key={msg.id}>
+                        {showDay ? <div className="messages-day-separator"><span>{formatDayLabel(msg.created_at)}</span></div> : null}
+                        <div className={`message-bubble-row${mine ? " is-mine" : ""}`}>
+                          <div className={`message-bubble${mine ? " is-mine" : ""}`}>
+                            {!mine ? <small className="message-bubble__sender">{msg.sender_name || `User #${msg.sender_id}`}</small> : null}
+                            <p>{msg.body}</p>
+                            {msg.case_references?.length ? (
+                              <div className="message-bubble__refs">
+                                {msg.case_references.map((ref) => (
+                                  <Link key={`${msg.id}-${ref.case_id}`} href={`/portal/cases/${ref.case_id}`} className="message-case-chip">
+                                    Case: {ref.case_title} ({ref.case_display_number || `#${ref.case_id}`})
+                                  </Link>
+                                ))}
+                              </div>
+                            ) : null}
+                            <span className="message-bubble__time">{formatBubbleTime(msg.created_at)}</span>
                           </div>
-                        ) : null}
-                        <span>{fmtTime(msg.created_at)}</span>
+                        </div>
+                      </div>
+                    );
+                  }) : null}
+                  <div ref={threadEndRef} />
+                </div>
+
+                <form className="messages-thread__composer" onSubmit={sendMessage}>
+                  {composerRefs.length ? (
+                    <div className="message-composer-refs">
+                      {composerRefs.map((row) => (
+                        <span key={row.id} className="message-case-chip">
+                          Case: {row.title} ({row.display_number || `#${row.id}`})
+                          <button type="button" onClick={() => setComposerRefs((prev) => prev.filter((item) => item.id !== row.id))}>×</button>
+                        </span>
+                      ))}
+                    </div>
+                  ) : null}
+                  <div className="messages-composer__main">
+                    <div className="messages-composer__input-wrap">
+                      <textarea placeholder="Write a message..." value={body} onChange={(e) => setBody(e.target.value)} onKeyDown={onComposerKeyDown} required />
+                      <div className="messages-composer__tools">
+                        <button
+                          type="button"
+                          className="messages-link-case-button"
+                          onClick={async () => {
+                            setShowCasePicker(true);
+                            if (!caseRows.length) await searchCases("");
+                          }}
+                        >
+                          <PaperclipIcon />
+                          <span>Link Case</span>
+                        </button>
                       </div>
                     </div>
-                  );
-                })}
-                <div ref={threadEndRef} />
-              </div>
-              <form className="messages-thread__composer" onSubmit={sendMessage}>
-                {composerRefs.length ? (
-                  <div className="message-composer-refs">
-                    {composerRefs.map((row) => (
-                      <span key={row.id} className="message-case-chip">
-                        Case: {row.title} ({row.display_number || `#${row.id}`})
-                        <button type="button" onClick={() => setComposerRefs((prev) => prev.filter((item) => item.id !== row.id))}>×</button>
-                      </span>
-                    ))}
+                    <button type="submit" className="vilo-btn vilo-btn--primary messages-send-button" disabled={sending || !body.trim()}>
+                      <SendIcon />
+                      <span>{sending ? "Sending..." : "Send"}</span>
+                    </button>
                   </div>
-                ) : null}
-                <textarea placeholder="Type message (Enter to send)" value={body} onChange={(e) => setBody(e.target.value)} onKeyDown={onComposerKeyDown} required />
-                <div className="vilo-table-actions">
-                  <button
-                    type="button"
-                    className="vilo-btn vilo-btn--secondary"
-                    onClick={async () => {
-                      setShowCasePicker(true);
-                      if (!caseRows.length) await searchCases("");
-                    }}
-                  >
-                    Link Case
-                  </button>
-                  <button type="submit" className="vilo-btn vilo-btn--primary" disabled={sending || !body.trim()}>{sending ? "Sending..." : "Send"}</button>
-                </div>
-              </form>
-            </>
-          )}
-        </article>
+                  {sendError ? <p className="vilo-state vilo-state--error">{sendError}</p> : null}
+                </form>
+              </>
+            )}
+          </article>
+        </div>
       </div>
 
       {showCasePicker ? (
@@ -211,17 +382,25 @@ export default function PortalMessagesPage() {
             </div>
             <div className="vilo-modal__body">
               <div className="vilo-form-grid">
-                <input
-                  placeholder="Search your cases"
-                  value={caseSearch}
-                  onChange={async (e) => {
-                    const next = e.target.value;
-                    setCaseSearch(next);
-                    await searchCases(next);
-                  }}
-                />
+                <label className="messages-search-field">
+                  <SearchIcon />
+                  <input
+                    placeholder="Search your cases"
+                    value={caseSearch}
+                    onChange={async (e) => {
+                      const next = e.target.value;
+                      setCaseSearch(next);
+                      await searchCases(next);
+                    }}
+                  />
+                </label>
                 <div className="messages-case-search-list">
-                  {!caseRows.length ? <p className="vilo-state">No accessible cases found.</p> : null}
+                  {!caseRows.length ? (
+                    <div className="messages-empty-state">
+                      <strong>No cases found</strong>
+                      <span>No accessible portal cases matched your search.</span>
+                    </div>
+                  ) : null}
                   {caseRows.map((row) => (
                     <button
                       key={row.id}
