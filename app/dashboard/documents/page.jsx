@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { Suspense, useEffect, useRef, useState } from "react";
+import { useSearchParams } from "next/navigation";
 import { apiDownload, apiRequest, apiUpload } from "../../../lib/api";
 import { getToken } from "../../../lib/auth";
 
@@ -13,6 +14,17 @@ const initialForm = {
 };
 
 export default function DocumentsPage() {
+  return (
+    <Suspense fallback={<section className="dashboard-page-stack"><div className="vilo-state-block"><p className="vilo-state vilo-state--loading">Loading documents...</p></div></section>}>
+      <DocumentsPageContent />
+    </Suspense>
+  );
+}
+
+function DocumentsPageContent() {
+  const searchParams = useSearchParams();
+  const titleInputRef = useRef(null);
+  const formCardRef = useRef(null);
   const [documents, setDocuments] = useState([]);
   const [cases, setCases] = useState([]);
   const [form, setForm] = useState(initialForm);
@@ -24,6 +36,8 @@ export default function DocumentsPage() {
   const [replaceNotes, setReplaceNotes] = useState("");
   const [versionTarget, setVersionTarget] = useState(null);
   const [versions, setVersions] = useState([]);
+  const [success, setSuccess] = useState("");
+  const [uploadOpen, setUploadOpen] = useState(searchParams.get("upload") === "1");
 
   async function load() {
     setLoading(true);
@@ -44,9 +58,18 @@ export default function DocumentsPage() {
 
   useEffect(() => { load(); }, []);
 
+  useEffect(() => {
+    const shouldOpen = searchParams.get("upload") === "1";
+    setUploadOpen(shouldOpen);
+    if (!shouldOpen) return;
+    formCardRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+    titleInputRef.current?.focus();
+  }, [searchParams]);
+
   async function uploadDocument(e) {
     e.preventDefault();
     setError("");
+    setSuccess("");
     if (!form.file) {
       setError("Please select a file to upload.");
       return;
@@ -73,6 +96,8 @@ export default function DocumentsPage() {
     }
 
     setForm(initialForm);
+    setUploadOpen(false);
+    setSuccess("Document uploaded successfully.");
     await load();
   }
 
@@ -138,25 +163,55 @@ export default function DocumentsPage() {
       .catch((err) => setError(err.message));
   }
 
+  function openReplaceModal(document) {
+    setReplaceTarget(document);
+    setReplaceFile(null);
+    setReplaceNotes("");
+    setSuccess("");
+  }
+
+  function closeReplaceModal() {
+    setReplaceTarget(null);
+    setReplaceFile(null);
+    setReplaceNotes("");
+  }
+
   return (
     <section className="dashboard-page-stack">
       <div className="dashboard-page-heading"><h1>Documents</h1></div>
 
-      <article className="dashboard-card vilo-form-card">
-        <div className="dashboard-card__header"><h2>Upload Document</h2></div>
-        <form className="vilo-form-grid" onSubmit={uploadDocument}>
-          <input placeholder="Title" value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} required />
-          <textarea placeholder="Description" value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} />
-          <div className="vilo-form-row-two">
-            <input placeholder="Category" value={form.category} onChange={(e) => setForm({ ...form, category: e.target.value })} />
-            <select value={form.case_id} onChange={(e) => setForm({ ...form, case_id: e.target.value })}>
-              <option value="">No linked case</option>
-              {cases.map((c) => <option key={c.id} value={c.id}>{c.title}</option>)}
-            </select>
-          </div>
-          <input type="file" onChange={(e) => setForm({ ...form, file: e.target.files?.[0] || null })} required />
-          <button type="submit">Upload</button>
-        </form>
+      {success ? <div className="vilo-state-block"><p className="vilo-state">{success}</p></div> : null}
+
+      <article ref={formCardRef} className="dashboard-card vilo-form-card vilo-collapsible-card">
+        <div className="dashboard-card__header dashboard-card__header--action">
+          <h2>Upload Document</h2>
+          <button
+            type="button"
+            className={uploadOpen ? "vilo-btn vilo-btn--secondary vilo-btn--xs" : "vilo-btn vilo-btn--primary vilo-btn--xs"}
+            aria-expanded={uploadOpen}
+            onClick={() => {
+              setUploadOpen((open) => !open);
+              setSuccess("");
+            }}
+          >
+            {uploadOpen ? "Hide Upload" : "Upload Document"}
+          </button>
+        </div>
+        {uploadOpen ? (
+          <form className="vilo-form-grid vilo-collapsible-card__body" onSubmit={uploadDocument}>
+            <input ref={titleInputRef} placeholder="Title" value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} required />
+            <textarea placeholder="Description" value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} />
+            <div className="vilo-form-row-two">
+              <input placeholder="Category" value={form.category} onChange={(e) => setForm({ ...form, category: e.target.value })} />
+              <select value={form.case_id} onChange={(e) => setForm({ ...form, case_id: e.target.value })}>
+                <option value="">No linked case</option>
+                {cases.map((c) => <option key={c.id} value={c.id}>{c.title}</option>)}
+              </select>
+            </div>
+            <input type="file" onChange={(e) => setForm({ ...form, file: e.target.files?.[0] || null })} required />
+            <button type="submit">Upload</button>
+          </form>
+        ) : null}
       </article>
 
       <article className="dashboard-card vilo-table-card">
@@ -178,7 +233,7 @@ export default function DocumentsPage() {
                     <td>
                       <div className="vilo-table-actions">
                         <button type="button" className="vilo-btn vilo-btn--ghost vilo-btn--xs" onClick={() => downloadDocument(d.id)}>Download</button>
-                        <button type="button" className="vilo-btn vilo-btn--secondary vilo-btn--xs" onClick={() => setReplaceTarget(d)}>Edit / Replace</button>
+                        <button type="button" className="vilo-btn vilo-btn--secondary vilo-btn--xs" onClick={() => openReplaceModal(d)}>Edit / Replace</button>
                         <button type="button" className="vilo-btn vilo-btn--ghost vilo-btn--xs" onClick={() => openVersions(d)}>Versions</button>
                         <button type="button" className="vilo-btn vilo-btn--danger vilo-btn--xs" onClick={() => deleteDocument(d.id)}>Delete</button>
                       </div>
@@ -192,11 +247,11 @@ export default function DocumentsPage() {
       </article>
 
       {replaceTarget ? (
-        <div className="vilo-modal-overlay" onClick={() => { setReplaceTarget(null); setReplaceFile(null); setReplaceNotes(""); }}>
+        <div className="vilo-modal-overlay" onClick={closeReplaceModal}>
           <div className="vilo-modal" onClick={(e) => e.stopPropagation()}>
             <div className="vilo-modal__header">
               <h3>Replace Document</h3>
-              <button type="button" className="vilo-btn vilo-btn--ghost vilo-btn--xs" onClick={() => { setReplaceTarget(null); setReplaceFile(null); setReplaceNotes(""); }}>Close</button>
+              <button type="button" className="vilo-btn vilo-btn--ghost vilo-btn--xs" onClick={closeReplaceModal}>Close</button>
             </div>
             <div className="vilo-modal__body">
               <form className="vilo-form-grid" onSubmit={replaceDocument}>
@@ -204,7 +259,7 @@ export default function DocumentsPage() {
                 <input type="file" accept=".pdf,.doc,.docx,.jpg,.jpeg,.png" onChange={(e) => setReplaceFile(e.target.files?.[0] || null)} required />
                 <textarea placeholder="Version notes (optional)" value={replaceNotes} onChange={(e) => setReplaceNotes(e.target.value)} />
                 <div className="vilo-table-actions">
-                  <button type="button" className="vilo-btn vilo-btn--secondary" onClick={() => { setReplaceTarget(null); setReplaceFile(null); setReplaceNotes(""); }}>Cancel</button>
+                  <button type="button" className="vilo-btn vilo-btn--secondary" onClick={closeReplaceModal}>Cancel</button>
                   <button type="submit" className="vilo-btn vilo-btn--primary" disabled={saving}>{saving ? "Replacing..." : "Replace Document"}</button>
                 </div>
               </form>

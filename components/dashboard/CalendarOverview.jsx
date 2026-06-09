@@ -83,7 +83,7 @@ export function CalendarOverview({ events = [] }) {
       whileHover={hoverLift}
     >
       <div className="dashboard-card__header">
-        <h2 id="calendar-overview-title">Today&apos;s Overview</h2>
+        <h2 id="calendar-overview-title">Calendar Overview</h2>
       </div>
 
       <div className="calendar-overview">
@@ -117,7 +117,7 @@ export function CalendarOverview({ events = [] }) {
           {eventItems.map((item, index) => (
             <motion.article
               key={`${item.color}-${index}`}
-              className={`calendar-event ${item.color}`}
+              className={`calendar-event ${item.color}${item.href ? " is-clickable" : ""}`}
               variants={eventVariants}
               initial={shouldReduceMotion ? false : "hidden"}
               animate="show"

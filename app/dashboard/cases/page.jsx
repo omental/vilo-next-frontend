@@ -1,8 +1,8 @@
 "use client";
 
 import Link from "next/link";
-import { useRouter } from "next/navigation";
-import { useEffect, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
+import { Suspense, useEffect, useRef, useState } from "react";
 import { apiRequest } from "../../../lib/api";
 
 const initialForm = {
@@ -15,7 +15,18 @@ const initialForm = {
 };
 
 export default function CasesPage() {
+  return (
+    <Suspense fallback={<section className="dashboard-page-stack"><div className="vilo-state-block"><p className="vilo-state vilo-state--loading">Loading cases...</p></div></section>}>
+      <CasesPageContent />
+    </Suspense>
+  );
+}
+
+function CasesPageContent() {
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const titleInputRef = useRef(null);
+  const formCardRef = useRef(null);
   const [cases, setCases] = useState([]);
   const [clients, setClients] = useState([]);
   const [team, setTeam] = useState([]);
@@ -26,6 +37,8 @@ export default function CasesPage() {
   const [editCase, setEditCase] = useState(null);
   const [archiveCase, setArchiveCase] = useState(null);
   const [error, setError] = useState("");
+  const [success, setSuccess] = useState("");
+  const [createOpen, setCreateOpen] = useState(searchParams.get("create") === "1");
 
   async function load() {
     setLoading(true);
@@ -50,10 +63,19 @@ export default function CasesPage() {
     load();
   }, []);
 
+  useEffect(() => {
+    const shouldOpen = searchParams.get("create") === "1";
+    setCreateOpen(shouldOpen);
+    if (!shouldOpen) return;
+    formCardRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+    titleInputRef.current?.focus();
+  }, [searchParams]);
+
   async function createCase(e) {
     e.preventDefault();
     setSaving(true);
     setError("");
+    setSuccess("");
     try {
       await apiRequest("/api/v1/cases", {
         method: "POST",
@@ -63,6 +85,8 @@ export default function CasesPage() {
         }),
       });
       setForm(initialForm);
+      setCreateOpen(false);
+      setSuccess("Case created successfully.");
       await load();
     } catch (err) {
       setError(err.message);
@@ -128,56 +152,73 @@ export default function CasesPage() {
     <section className="dashboard-page-stack">
       <div className="dashboard-page-heading"><h1>Cases</h1></div>
 
-      <article className="dashboard-card vilo-form-card">
-        <div className="dashboard-card__header"><h2>Create Case</h2></div>
-        <form className="vilo-form-grid" onSubmit={createCase}>
-          <input placeholder="Case title" value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} required />
-          <textarea placeholder="Description" value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} />
+      {success ? <div className="vilo-state-block"><p className="vilo-state">{success}</p></div> : null}
 
-          <select value={form.client_id} onChange={(e) => setForm({ ...form, client_id: e.target.value })} required>
-            <option value="">Select client</option>
-            {clients.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
-          </select>
+      <article ref={formCardRef} className="dashboard-card vilo-form-card vilo-collapsible-card">
+        <div className="dashboard-card__header dashboard-card__header--action">
+          <h2>Create Case</h2>
+          <button
+            type="button"
+            className={createOpen ? "vilo-btn vilo-btn--secondary vilo-btn--xs" : "vilo-btn vilo-btn--primary vilo-btn--xs"}
+            aria-expanded={createOpen}
+            onClick={() => {
+              setCreateOpen((open) => !open);
+              setSuccess("");
+            }}
+          >
+            {createOpen ? "Hide Form" : "Create Case"}
+          </button>
+        </div>
+        {createOpen ? (
+          <form className="vilo-form-grid vilo-collapsible-card__body" onSubmit={createCase}>
+            <input ref={titleInputRef} placeholder="Case title" value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} required />
+            <textarea placeholder="Description" value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} />
 
-          <div className="vilo-form-row-two">
-            <select value={form.status} onChange={(e) => setForm({ ...form, status: e.target.value })}>
-              <option value="draft">draft</option>
-              <option value="active">active</option>
-              <option value="closed">closed</option>
-              <option value="archived">archived</option>
+            <select value={form.client_id} onChange={(e) => setForm({ ...form, client_id: e.target.value })} required>
+              <option value="">Select client</option>
+              {clients.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
             </select>
 
-            <select value={form.priority} onChange={(e) => setForm({ ...form, priority: e.target.value })}>
-              <option value="low">low</option>
-              <option value="medium">medium</option>
-              <option value="high">high</option>
-            </select>
-          </div>
+            <div className="vilo-form-row-two">
+              <select value={form.status} onChange={(e) => setForm({ ...form, status: e.target.value })}>
+                <option value="draft">draft</option>
+                <option value="active">active</option>
+                <option value="closed">closed</option>
+                <option value="archived">archived</option>
+              </select>
 
-          <div className="vilo-checkbox-grid">
-            <div className="case-assign-heading"><p>Assign Users</p></div>
-            <select value="" onChange={(e) => { if (!e.target.value) return; toggleUser(Number(e.target.value)); }}>
-              <option value="">Select team member</option>
-              {team.filter((user) => !form.assigned_user_ids.includes(user.id)).map((user) => (
-                <option key={user.id} value={user.id}>{user.name} ({user.role})</option>
-              ))}
-            </select>
-            <div className="case-assigned-list">
-              {form.assigned_user_ids.length ? form.assigned_user_ids.map((userId) => {
-                const member = team.find((u) => u.id === userId);
-                if (!member) return null;
-                return (
-                  <span key={userId} className="case-assigned-pill">
-                    {member.name} ({member.role})
-                    <button type="button" onClick={() => toggleUser(userId)} aria-label={`Remove ${member.name}`}>×</button>
-                  </span>
-                );
-              }) : <span className="case-assigned-empty">No team members selected.</span>}
+              <select value={form.priority} onChange={(e) => setForm({ ...form, priority: e.target.value })}>
+                <option value="low">low</option>
+                <option value="medium">medium</option>
+                <option value="high">high</option>
+              </select>
             </div>
-          </div>
 
-          <button type="submit" disabled={saving}>{saving ? "Creating..." : "Create Case"}</button>
-        </form>
+            <div className="vilo-checkbox-grid">
+              <div className="case-assign-heading"><p>Assign Users</p></div>
+              <select value="" onChange={(e) => { if (!e.target.value) return; toggleUser(Number(e.target.value)); }}>
+                <option value="">Select team member</option>
+                {team.filter((user) => !form.assigned_user_ids.includes(user.id)).map((user) => (
+                  <option key={user.id} value={user.id}>{user.name} ({user.role})</option>
+                ))}
+              </select>
+              <div className="case-assigned-list">
+                {form.assigned_user_ids.length ? form.assigned_user_ids.map((userId) => {
+                  const member = team.find((u) => u.id === userId);
+                  if (!member) return null;
+                  return (
+                    <span key={userId} className="case-assigned-pill">
+                      {member.name} ({member.role})
+                      <button type="button" onClick={() => toggleUser(userId)} aria-label={`Remove ${member.name}`}>×</button>
+                    </span>
+                  );
+                }) : <span className="case-assigned-empty">No team members selected.</span>}
+              </div>
+            </div>
+
+            <button type="submit" disabled={saving}>{saving ? "Creating..." : "Create Case"}</button>
+          </form>
+        ) : null}
       </article>
 
       <article className="dashboard-card vilo-table-card">
@@ -187,7 +228,7 @@ export default function CasesPage() {
         {!loading && !error && cases.length === 0 ? <p className="vilo-state">No cases yet. Create one above.</p> : null}
 
         {!loading && !error && cases.length > 0 ? (
-          <div className="vilo-table-wrap">
+          <div className={`vilo-table-wrap case-table-wrap${menuOpenId ? " case-table-wrap--menu-visible" : ""}`}>
             <table className="team-table">
               <thead>
                 <tr><th>Title</th><th>Status</th><th>Priority</th><th>Client</th><th>Action</th></tr>

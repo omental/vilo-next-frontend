@@ -35,9 +35,18 @@ export function TodaysOverview({ stats = fallbackStatItems, timelineRows = fallb
 
       <div className="overview-stats">
         {stats.map((item) => (
-          <motion.article key={item.label} className="overview-stat" variants={itemVariants}>
-            <p>{item.label}:</p>
-            <strong>{item.value}</strong>
+          <motion.article key={item.label} variants={itemVariants}>
+            {item.href ? (
+              <Link href={item.href} className="overview-stat overview-stat--link">
+                <p>{item.label}</p>
+                <strong>{item.value}</strong>
+              </Link>
+            ) : (
+              <div className="overview-stat">
+                <p>{item.label}</p>
+                <strong>{item.value}</strong>
+              </div>
+            )}
           </motion.article>
         ))}
       </div>
@@ -51,7 +60,6 @@ export function TodaysOverview({ stats = fallbackStatItems, timelineRows = fallb
               <tr>
                 <th>Timeline</th>
                 <th>Priority</th>
-                <th>Actions</th>
               </tr>
             </thead>
             <tbody>
@@ -73,13 +81,6 @@ export function TodaysOverview({ stats = fallbackStatItems, timelineRows = fallb
                     >
                       {row.priority}
                     </motion.span>
-                  </td>
-                  <td>
-                    <button type="button" className="overview-table__action" aria-label={`More actions for ${row.label}`}>
-                      <span />
-                      <span />
-                      <span />
-                    </button>
                   </td>
                 </motion.tr>
               ))}

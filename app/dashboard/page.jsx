@@ -55,13 +55,14 @@ export default function DashboardPage() {
   const billing = widgets?.billing_overview;
   const calendarEvents = (calendar?.upcoming_events || []).map((item) => ({
     ...item,
-    href: item.case_id ? `/dashboard/cases/${item.case_id}` : item.client_id ? `/dashboard/clients/${item.client_id}` : "",
+    href: item.id ? `/dashboard/calendar?event_id=${item.id}` : "/dashboard/calendar",
   }));
 
   const todaysStats = [
-    { label: "Due Today", value: Math.max(0, Number(today?.due_today_count ?? 12)) },
-    { label: "Overdue", value: Math.max(0, Number(today?.overdue_count ?? 4)) },
-    { label: "Messages", value: Math.max(0, Number(today?.unread_messages_count ?? 9)) },
+    { label: "Due Today", value: Math.max(0, Number(today?.due_today_count ?? 12)), href: "/dashboard/tasks?filter=due_today" },
+    { label: "Overdue", value: Math.max(0, Number(today?.overdue_count ?? 4)), href: "/dashboard/tasks?filter=overdue" },
+    { label: "Messages", value: Math.max(0, Number(today?.unread_messages_count ?? 9)), href: "/dashboard/messages" },
+    { label: "Upcoming Events", value: Math.max(0, Number(calendar?.upcoming_events?.length ?? 0)), href: "/dashboard/calendar" },
   ];
 
   const timelineRows = (today?.priority_timeline || []).slice(0, 3).map((task) => ({
@@ -112,6 +113,12 @@ export default function DashboardPage() {
             <FirmSnapshot
               snapshotStats={snapshotStats}
               caseStatusPercent={Number(firm?.case_status_percentage ?? 72)}
+              caseStatusCounts={{
+                active: Number(firm?.active_cases ?? 0),
+                court: Number(firm?.court_cases ?? 0),
+                closed: Number(firm?.closed_cases ?? 0),
+                pending: Number(firm?.pending_cases ?? 0),
+              }}
             />
           </div>
 

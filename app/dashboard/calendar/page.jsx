@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { Suspense, useEffect, useMemo, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import { apiRequest } from "../../../lib/api";
 
 const VIEW_OPTIONS = ["month", "week", "day"];
@@ -59,6 +60,16 @@ function formatTime(dateStr) {
 }
 
 export default function CalendarPage() {
+  return (
+    <Suspense fallback={<section className="dashboard-page-stack"><div className="vilo-state-block"><p className="vilo-state vilo-state--loading">Loading calendar...</p></div></section>}>
+      <CalendarPageContent />
+    </Suspense>
+  );
+}
+
+function CalendarPageContent() {
+  const router = useRouter();
+  const searchParams = useSearchParams();
   const [events, setEvents] = useState([]);
   const [cases, setCases] = useState([]);
   const [view, setView] = useState("month");
@@ -93,6 +104,12 @@ export default function CalendarPage() {
   useEffect(() => {
     load();
   }, []);
+
+  useEffect(() => {
+    if (searchParams.get("create") !== "1") return;
+    const queryDate = parseDateValue(searchParams.get("date"));
+    openModalForDate(queryDate || selectedDate, false);
+  }, [searchParams]);
 
   function monthLabel(date) {
     return date.toLocaleDateString([], { month: "long", year: "numeric" });
@@ -170,12 +187,24 @@ export default function CalendarPage() {
     return eventsByDay.get(key) || [];
   }, [eventsByDay, selectedDate]);
 
+  const selectedEventId = Number(searchParams.get("event_id") || 0);
+
+  useEffect(() => {
+    if (!selectedEventId) return;
+    const matched = normalizedEvents.find((event) => event.id === selectedEventId);
+    if (!matched) return;
+    setSelectedDate(new Date(matched.start));
+    setSelectedMonth(startOfMonth(matched.start));
+  }, [normalizedEvents, selectedEventId]);
+
   function moveMonth(delta) {
     setSelectedMonth((prev) => new Date(prev.getFullYear(), prev.getMonth() + delta, 1));
   }
 
-  function openModal() {
-    const d = selectedDate;
+  function openModalForDate(date, syncQuery = true) {
+    const d = new Date(date);
+    setSelectedDate(d);
+    setSelectedMonth(startOfMonth(d));
     setForm({
       ...initialForm,
       date: ymd(d),
@@ -183,6 +212,21 @@ export default function CalendarPage() {
       end_time: "10:00",
     });
     setModalOpen(true);
+    if (syncQuery) {
+      const params = new URLSearchParams(searchParams.toString());
+      params.set("create", "1");
+      params.set("date", ymd(d));
+      router.replace(`/dashboard/calendar?${params.toString()}`);
+    }
+  }
+
+  function closeModal() {
+    setModalOpen(false);
+    const params = new URLSearchParams(searchParams.toString());
+    params.delete("create");
+    params.delete("date");
+    const next = params.toString();
+    router.replace(next ? `/dashboard/calendar?${next}` : "/dashboard/calendar");
   }
 
   async function createEvent(e) {
@@ -219,7 +263,7 @@ export default function CalendarPage() {
       } else {
         setSuccess("Event created successfully.");
       }
-      setModalOpen(false);
+      closeModal();
       await load();
     } catch (err) {
       setError(err.message || "Failed to create event");
@@ -232,7 +276,7 @@ export default function CalendarPage() {
     <section className="dashboard-page-stack calendar-page">
       <div className="clients-header-row">
         <div className="dashboard-page-heading"><h1>Calendar</h1></div>
-        <button type="button" className="vilo-btn vilo-btn--secondary" onClick={openModal}>+ Add Event</button>
+        <button type="button" className="vilo-btn vilo-btn--secondary" onClick={() => openModalForDate(selectedDate)}>+ Add Event</button>
       </div>
 
       {error ? <div className="vilo-state-block"><p className="vilo-state vilo-state--error">{error}</p></div> : null}
@@ -273,11 +317,20 @@ export default function CalendarPage() {
                   const inMonth = date.getMonth() === selectedMonth.getMonth();
                   const isToday = sameDay(date, new Date()) && inMonth;
                   return (
-                    <button type="button" key={key} className={`calendar-day-cell ${inMonth ? "" : "is-faded"} ${isToday ? "is-today" : ""}`} onClick={() => setSelectedDate(new Date(date))}>
+                    <button
+                      type="button"
+                      key={key}
+                      className={`calendar-day-cell ${inMonth ? "" : "is-faded"} ${isToday ? "is-today" : ""}`}
+                      onClick={() => openModalForDate(date)}
+                    >
                       <span className="calendar-day-number">{date.getDate()}</span>
                       <div className="calendar-day-events">
                         {dayEventsList.map((event) => (
-                          <span key={event.id} className={`calendar-event-pill ${TYPE_CLASS[event.eventType] || "is-note"}`} title={event.title}>
+                          <span
+                            key={event.id}
+                            className={`calendar-event-pill ${TYPE_CLASS[event.eventType] || "is-note"}${selectedEventId === event.id ? " is-selected" : ""}`}
+                            title={event.title}
+                          >
                             {formatTime(event.start_at)} {event.title}
                           </span>
                         ))}
@@ -303,7 +356,7 @@ export default function CalendarPage() {
                   <div key={key} className="calendar-list-day">
                     <h3>{day.toLocaleDateString([], { weekday: "short", month: "short", day: "numeric" })}</h3>
                     {list.length ? list.map((event) => (
-                      <div key={event.id} className={`calendar-list-item ${TYPE_CLASS[event.eventType] || "is-note"}`}>
+                      <div key={event.id} className={`calendar-list-item ${TYPE_CLASS[event.eventType] || "is-note"}${selectedEventId === event.id ? " is-selected" : ""}`}>
                         <strong>{event.title}</strong>
                         <span>{formatTime(event.start_at)}{event.case_id ? ` · Case #${event.case_id}` : ""}</span>
                       </div>
@@ -319,7 +372,7 @@ export default function CalendarPage() {
               <div className="calendar-list-day">
                 <h3>{selectedDate.toLocaleDateString([], { weekday: "long", month: "long", day: "numeric", year: "numeric" })}</h3>
                 {dayEvents.length ? dayEvents.map((event) => (
-                  <div key={event.id} className={`calendar-list-item ${TYPE_CLASS[event.eventType] || "is-note"}`}>
+                  <div key={event.id} className={`calendar-list-item ${TYPE_CLASS[event.eventType] || "is-note"}${selectedEventId === event.id ? " is-selected" : ""}`}>
                     <strong>{event.title}</strong>
                     <span>{formatTime(event.start_at)}{event.case_id ? ` · Case #${event.case_id}` : ""}</span>
                   </div>
@@ -335,11 +388,16 @@ export default function CalendarPage() {
             {upcomingEvents.length ? (
               <div className="calendar-upcoming-list">
                 {upcomingEvents.map((event) => (
-                  <div key={event.id} className={`calendar-upcoming-item ${TYPE_CLASS[event.eventType] || "is-note"}`}>
+                  <button
+                    key={event.id}
+                    type="button"
+                    className={`calendar-upcoming-item ${TYPE_CLASS[event.eventType] || "is-note"}${selectedEventId === event.id ? " is-selected" : ""}`}
+                    onClick={() => router.push(`/dashboard/calendar?event_id=${event.id}`)}
+                  >
                     <span>{event.start.toLocaleDateString([], { month: "short", day: "numeric" })} · {formatTime(event.start_at)}</span>
                     <strong>{event.title}</strong>
                     <small>{event.case_id ? `Case #${event.case_id}` : "No case linked"}</small>
-                  </div>
+                  </button>
                 ))}
               </div>
             ) : <div className="vilo-state-block"><p className="vilo-state">No upcoming events.</p></div>}
@@ -358,11 +416,11 @@ export default function CalendarPage() {
       </div>
 
       {modalOpen ? (
-        <div className="vilo-modal-overlay" onClick={() => setModalOpen(false)}>
+        <div className="vilo-modal-overlay" onClick={closeModal}>
           <div className="vilo-modal" onClick={(e) => e.stopPropagation()}>
             <div className="vilo-modal__header">
               <h3>Add Event</h3>
-              <button className="vilo-btn vilo-btn--ghost vilo-btn--xs" type="button" onClick={() => setModalOpen(false)}>Close</button>
+              <button className="vilo-btn vilo-btn--ghost vilo-btn--xs" type="button" onClick={closeModal}>Close</button>
             </div>
             <form className="vilo-modal__body vilo-form-grid" onSubmit={createEvent}>
               <input placeholder="Title *" value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} required />
@@ -383,7 +441,7 @@ export default function CalendarPage() {
               <input placeholder="Location" value={form.location} onChange={(e) => setForm({ ...form, location: e.target.value })} />
               <textarea placeholder="Description / Notes" value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} />
               <div className="vilo-table-actions">
-                <button type="button" className="vilo-btn vilo-btn--secondary" onClick={() => setModalOpen(false)}>Cancel</button>
+                <button type="button" className="vilo-btn vilo-btn--secondary" onClick={closeModal}>Cancel</button>
                 <button type="submit" className="vilo-btn vilo-btn--primary" disabled={saving}>{saving ? "Saving..." : "Create Event"}</button>
               </div>
             </form>
@@ -401,4 +459,10 @@ function OverviewRow({ label, count, pct }) {
       <div className="calendar-overview-bar"><i style={{ width: `${Math.max(0, Math.min(100, pct))}%` }} /></div>
     </div>
   );
+}
+
+function parseDateValue(value) {
+  if (!value) return null;
+  const parsed = new Date(`${value}T00:00:00`);
+  return Number.isNaN(parsed.getTime()) ? null : parsed;
 }

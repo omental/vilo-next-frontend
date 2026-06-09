@@ -37,7 +37,11 @@ const legendItems = [
   { label: "Pending", tone: "is-pending" }
 ];
 
-export function FirmSnapshot({ snapshotStats = fallbackSnapshotStats, caseStatusPercent = 72 }) {
+export function FirmSnapshot({
+  snapshotStats = fallbackSnapshotStats,
+  caseStatusPercent = 72,
+  caseStatusCounts = { active: 0, court: 0, closed: 0, pending: 0 },
+}) {
   const shouldReduceMotion = useReducedMotion();
   const cardVariants = createCardVariants(shouldReduceMotion);
   const itemVariants = createItemVariants(shouldReduceMotion, "y", 10);
@@ -57,7 +61,7 @@ export function FirmSnapshot({ snapshotStats = fallbackSnapshotStats, caseStatus
       <div className="snapshot-layout">
         <div className="snapshot-chart-block">
           <p className="snapshot-chart-block__label">Case Status</p>
-          <SnapshotDonut percent={caseStatusPercent} />
+          <SnapshotDonut percent={caseStatusPercent} counts={caseStatusCounts} />
 
           <ul className="snapshot-legend" aria-label="Firm snapshot legend">
             {legendItems.map((item) => (
@@ -91,46 +95,29 @@ export function FirmSnapshot({ snapshotStats = fallbackSnapshotStats, caseStatus
   );
 }
 
-function SnapshotDonut({ percent = 72 }) {
+function SnapshotDonut({ percent = 72, counts = { active: 0, court: 0, closed: 0, pending: 0 } }) {
   const shouldReduceMotion = useReducedMotion();
+  const segments = buildSegments(counts);
 
   return (
     <div className="snapshot-donut" aria-label={`Case Status ${percent} percent`}>
-      <svg viewBox="0 0 240 240" aria-hidden="true">
-        <circle className="snapshot-donut__track" cx="120" cy="120" r="78" />
-        <motion.circle
-          className="snapshot-donut__segment is-active"
-          cx="120"
-          cy="120"
-          r="78"
-          pathLength="100"
-          strokeDasharray="50 50"
-          initial={shouldReduceMotion ? false : { strokeDashoffset: 100 }}
-          animate={{ strokeDashoffset: 11 }}
-          transition={{ duration: 0.8, ease: "easeOut" }}
-        />
-        <motion.circle
-          className="snapshot-donut__segment is-court"
-          cx="120"
-          cy="120"
-          r="78"
-          pathLength="100"
-          strokeDasharray="8 92"
-          initial={shouldReduceMotion ? false : { strokeDashoffset: 100 }}
-          animate={{ strokeDashoffset: -39 }}
-          transition={{ duration: 0.8, delay: 0.08, ease: "easeOut" }}
-        />
-        <motion.circle
-          className="snapshot-donut__segment is-pending"
-          cx="120"
-          cy="120"
-          r="78"
-          pathLength="100"
-          strokeDasharray="17 83"
-          initial={shouldReduceMotion ? false : { strokeDashoffset: 100 }}
-          animate={{ strokeDashoffset: -49 }}
-          transition={{ duration: 0.8, delay: 0.16, ease: "easeOut" }}
-        />
+      <svg viewBox="0 0 280 280" aria-hidden="true">
+        <circle className="snapshot-donut__track" cx="140" cy="140" r="96" />
+        {segments.map((segment, index) => (
+          <motion.circle
+            key={segment.key}
+            className={`snapshot-donut__segment ${segment.tone}`}
+            cx="140"
+            cy="140"
+            r="96"
+            pathLength="100"
+            strokeDasharray={`${segment.length} ${100 - segment.length}`}
+            strokeDashoffset={segment.offset}
+            initial={shouldReduceMotion ? false : { opacity: 0 }}
+            animate={{ opacity: 1 }}
+            transition={{ duration: 0.4, delay: shouldReduceMotion ? 0 : index * 0.08, ease: "easeOut" }}
+          />
+        ))}
       </svg>
 
       <div className="snapshot-donut__center">
@@ -138,6 +125,26 @@ function SnapshotDonut({ percent = 72 }) {
       </div>
     </div>
   );
+}
+
+function buildSegments(counts) {
+  const ordered = [
+    { key: "active", tone: "is-active", value: Number(counts.active || 0) },
+    { key: "court", tone: "is-court", value: Number(counts.court || 0) },
+    { key: "closed", tone: "is-closed", value: Number(counts.closed || 0) },
+    { key: "pending", tone: "is-pending", value: Number(counts.pending || 0) },
+  ];
+  const total = ordered.reduce((sum, item) => sum + item.value, 0);
+  let offset = 25;
+
+  return ordered
+    .filter((item) => item.value > 0 && total > 0)
+    .map((item) => {
+      const length = Math.max(4, (item.value / total) * 100);
+      const segment = { ...item, length: Math.min(length, 100), offset };
+      offset -= segment.length;
+      return segment;
+    });
 }
 
 function IconBase({ children }) {

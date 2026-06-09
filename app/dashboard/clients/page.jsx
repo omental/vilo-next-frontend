@@ -1,8 +1,8 @@
 "use client";
 
 import Link from "next/link";
-import { useRouter } from "next/navigation";
-import { useEffect, useMemo, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
+import { Suspense, useEffect, useMemo, useState } from "react";
 import { apiRequest, apiUpload } from "../../../lib/api";
 import ClientIntakeModal from "../../../components/dashboard/ClientIntakeModal";
 
@@ -32,7 +32,16 @@ function inferPrimaryCase(client) {
 }
 
 export default function ClientsPage() {
+  return (
+    <Suspense fallback={<section className="dashboard-page-stack"><div className="vilo-state-block"><p className="vilo-state vilo-state--loading">Loading clients...</p></div></section>}>
+      <ClientsPageContent />
+    </Suspense>
+  );
+}
+
+function ClientsPageContent() {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const [clients, setClients] = useState([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -66,6 +75,10 @@ export default function ClientsPage() {
   useEffect(() => {
     load();
   }, []);
+
+  useEffect(() => {
+    if (searchParams.get("create") === "1") setCreateOpen(true);
+  }, [searchParams]);
 
   async function uploadClientIdFile(clientId, file) {
     if (!file) return;

@@ -1,8 +1,11 @@
 "use client";
 
+import Link from "next/link";
 import { motion, useReducedMotion } from "framer-motion";
 import Image from "next/image";
 import { usePathname, useRouter } from "next/navigation";
+import { useEffect, useState } from "react";
+import { apiRequest } from "../../lib/api";
 import { motionEase, createHoverLift, createItemVariants } from "../motion";
 
 const menuItems = [
@@ -27,21 +30,19 @@ const quickMetrics = [
   { label: "Unpaid Invoices", value: 53, colorClass: "is-green" }
 ];
 
-const recentActivity = [
-  { title: "Lorem Ipsum", timestamp: "Jul 13, 2:29 AM" },
-  { title: "Lorem Ipsum", timestamp: "Jul 13, 2:29 AM" },
-  { title: "Lorem Ipsum", timestamp: "Jul 13, 2:29 AM" }
-];
-
-const quickActions = [
-  { label: "Create Case", icon: PlusSquareIcon },
-  { label: "Add Client", icon: UserPlusIcon },
-  { label: "Upload Document", icon: UploadIcon }
+const createActions = [
+  { label: "New Case", href: "/dashboard/cases?create=1", icon: PlusSquareIcon },
+  { label: "New Client", href: "/dashboard/clients?create=1", icon: UserPlusIcon },
+  { label: "Upload Document", href: "/dashboard/documents?upload=1", icon: UploadIcon },
+  { label: "New Task", href: "/dashboard/tasks?create=1", icon: ClipboardListIcon },
+  { label: "New Event", href: "/dashboard/calendar?create=1", icon: CalendarIcon }
 ];
 
 export function Sidebar({ isMobileOpen = false, onClose = () => {} }) {
   const router = useRouter();
   const pathname = usePathname();
+  const [createOpen, setCreateOpen] = useState(false);
+  const [activityItems, setActivityItems] = useState([]);
   const shouldReduceMotion = useReducedMotion();
   const itemVariants = createItemVariants(shouldReduceMotion, "y", 10);
   const hoverLift = createHoverLift(shouldReduceMotion, -2, 1.01);
@@ -69,6 +70,31 @@ export function Sidebar({ isMobileOpen = false, onClose = () => {} }) {
         boxShadow: "0 10px 24px rgba(67, 44, 241, 0.35)",
         transition: { duration: 0.18 }
       };
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadActivity() {
+      try {
+        const data = await apiRequest("/api/v1/notifications?page=1&page_size=5");
+        if (cancelled) return;
+        setActivityItems((data.items || []).map((item) => ({
+          id: item.id,
+          title: item.title || "Activity",
+          timestamp: formatShortTimestamp(item.created_at),
+          module: prettyType(item.type),
+          href: resolveNotificationHref(item),
+        })));
+      } catch {
+        if (!cancelled) setActivityItems([]);
+      }
+    }
+
+    loadActivity();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   return (
     <motion.aside
@@ -120,19 +146,50 @@ export function Sidebar({ isMobileOpen = false, onClose = () => {} }) {
 
         <motion.button
           type="button"
-          className="vilo-sidebar__new-row"
+          className={`vilo-sidebar__new-row${createOpen ? " is-open" : ""}`}
           variants={itemVariants}
           whileHover={hoverLift}
-          onClick={onClose}
+          aria-expanded={createOpen}
+          aria-controls="vilo-create-menu"
+          onClick={() => setCreateOpen((prev) => !prev)}
         >
           <span className="vilo-sidebar__item-main">
             <span className="vilo-sidebar__icon-wrap">
               <PlusIcon />
             </span>
-            <span>New</span>
+            <span>Create New</span>
           </span>
           <ChevronDownIcon />
         </motion.button>
+
+        {createOpen ? (
+          <div id="vilo-create-menu" className="vilo-sidebar__create-menu" role="menu" aria-label="Create new">
+            {createActions.map((action) => {
+              const Icon = action.icon;
+
+              return (
+                <motion.button
+                  key={action.label}
+                  type="button"
+                  className="vilo-sidebar__create-action"
+                  variants={itemVariants}
+                  whileHover={hoverLift}
+                  role="menuitem"
+                  onClick={() => {
+                    setCreateOpen(false);
+                    router.push(action.href);
+                    onClose();
+                  }}
+                >
+                  <span className="vilo-sidebar__icon-wrap">
+                    <Icon />
+                  </span>
+                  <span>{action.label}</span>
+                </motion.button>
+              );
+            })}
+          </div>
+        ) : null}
 
         <div className="vilo-sidebar__divider" />
 
@@ -158,54 +215,64 @@ export function Sidebar({ isMobileOpen = false, onClose = () => {} }) {
           <p className="vilo-sidebar__eyebrow">RECENT ACTIVITY</p>
 
           <div className="vilo-activity">
-            {recentActivity.map((item, index) => (
-              <motion.button
-                key={`${item.title}-${index}`}
-                type="button"
-                className="vilo-activity__item"
-                variants={itemVariants}
-                whileHover={hoverLift}
-                onClick={onClose}
-              >
-                <span className="vilo-activity__status">
-                  <CheckCircleIcon />
-                </span>
-                <span className="vilo-activity__copy">
-                  <span className="vilo-activity__title">{item.title}</span>
-                  <span className="vilo-activity__time">{item.timestamp}</span>
-                </span>
-                <ChevronRightIcon />
-              </motion.button>
+            {activityItems.length === 0 ? <div className="vilo-activity__empty">No recent activity yet.</div> : null}
+            {activityItems.map((item) => (
+              <motion.div key={item.id} variants={itemVariants} whileHover={hoverLift}>
+                {item.href ? (
+                  <Link href={item.href} className="vilo-activity__item" onClick={onClose}>
+                    <span className="vilo-activity__status">
+                      <CheckCircleIcon />
+                    </span>
+                    <span className="vilo-activity__copy">
+                      <span className="vilo-activity__title">{item.title}</span>
+                      <span className="vilo-activity__time">{item.module} · {item.timestamp}</span>
+                    </span>
+                    <ChevronRightIcon />
+                  </Link>
+                ) : (
+                  <div className="vilo-activity__item is-static">
+                    <span className="vilo-activity__status">
+                      <CheckCircleIcon />
+                    </span>
+                    <span className="vilo-activity__copy">
+                      <span className="vilo-activity__title">{item.title}</span>
+                      <span className="vilo-activity__time">{item.module} · {item.timestamp}</span>
+                    </span>
+                  </div>
+                )}
+              </motion.div>
             ))}
-          </div>
-        </section>
-
-        <section className="vilo-sidebar__block">
-          <p className="vilo-sidebar__eyebrow">QUICK ACTIONS</p>
-
-          <div className="vilo-actions">
-            {quickActions.map((action) => {
-              const Icon = action.icon;
-
-              return (
-                <motion.button
-                  key={action.label}
-                  type="button"
-                  className="vilo-actions__button"
-                  variants={itemVariants}
-                  whileHover={hoverLift}
-                  onClick={onClose}
-                >
-                  <Icon />
-                  <span>{action.label}</span>
-                </motion.button>
-              );
-            })}
           </div>
         </section>
       </div>
     </motion.aside>
   );
+}
+
+function resolveNotificationHref(item) {
+  const meta = item?.metadata || {};
+  if (meta.conversation_id) return `/dashboard/messages?conversation=${meta.conversation_id}`;
+  if (meta.message_id) return "/dashboard/messages";
+  if (meta.document_id) return "/dashboard/documents";
+  if (meta.invoice_id) return "/dashboard/invoices";
+  if (meta.task_id) return "/dashboard/tasks";
+  if (meta.calendar_event_id) return `/dashboard/calendar?event_id=${meta.calendar_event_id}`;
+  if (meta.case_id) return `/dashboard/cases/${meta.case_id}`;
+  if (meta.client_id) return `/dashboard/clients/${meta.client_id}`;
+  if (item?.type?.includes("message")) return "/dashboard/messages";
+  return "";
+}
+
+function prettyType(value) {
+  const text = String(value || "activity").replace(/[_-]+/g, " ").trim();
+  return text ? `${text[0].toUpperCase()}${text.slice(1)}` : "Activity";
+}
+
+function formatShortTimestamp(value) {
+  if (!value) return "Just now";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "Just now";
+  return date.toLocaleString([], { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
 }
 
 function ProgressRing({ value }) {
