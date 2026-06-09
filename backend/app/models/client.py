@@ -18,6 +18,7 @@ class Client(Base):
     notes: Mapped[str | None] = mapped_column(Text, nullable=True)
     client_type: Mapped[str] = mapped_column(String(50), nullable=False, default="individual")
     trn_no: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    occupation: Mapped[str | None] = mapped_column(String(255), nullable=True)
     preferred_contact_method: Mapped[str | None] = mapped_column(String(50), nullable=True)
     date_of_birth: Mapped[date | None] = mapped_column(Date, nullable=True)
     billing_currency: Mapped[str | None] = mapped_column(String(10), nullable=True, default="USD")

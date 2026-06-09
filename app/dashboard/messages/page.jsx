@@ -1,7 +1,8 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { Suspense, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
+import { useSearchParams } from "next/navigation";
 import { apiRequest } from "../../../lib/api";
 
 const initialForm = {
@@ -130,6 +131,15 @@ function SendIcon() {
 }
 
 export default function MessagesPage() {
+  return (
+    <Suspense fallback={<section className="dashboard-page-stack"><div className="vilo-state-block"><p className="vilo-state vilo-state--loading">Loading messages...</p></div></section>}>
+      <MessagesPageContent />
+    </Suspense>
+  );
+}
+
+function MessagesPageContent() {
+  const searchParams = useSearchParams();
   const [conversations, setConversations] = useState([]);
   const [cases, setCases] = useState([]);
   const [selected, setSelected] = useState(null);
@@ -193,6 +203,21 @@ export default function MessagesPage() {
   useEffect(() => {
     init();
   }, []);
+
+  useEffect(() => {
+    if (searchParams.get("create") === "1") {
+      setShowCreateModal(true);
+    }
+  }, [searchParams]);
+
+  useEffect(() => {
+    const conversationId = Number(searchParams.get("conversation") || 0);
+    if (!conversationId || !conversations.length) return;
+    const target = conversations.find((row) => Number(row.id) === conversationId);
+    if (target) {
+      setSelected((prev) => (prev?.id === target.id ? prev : target));
+    }
+  }, [conversations, searchParams]);
 
   useEffect(() => {
     if (!selected?.id) return;

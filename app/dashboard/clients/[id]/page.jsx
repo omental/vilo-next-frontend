@@ -354,6 +354,7 @@ export default function ClientDetailPage() {
   const trn = client?.trn_no || readMetaLine(client?.notes, "TRN No") || "-";
   const created = formatDate(client?.created_at);
   const dob = formatDate(client?.date_of_birth);
+  const occupation = client?.occupation || "-";
   const preferredContact = client?.preferred_contact_method || readMetaLine(client?.notes, "Preferred Contact Method") || "-";
   const billingCurrency = client?.billing_currency || readMetaLine(client?.notes, "Billing Currency") || "USD";
   const statusLabel = client?.archived_at ? "Archived" : "Active";
@@ -510,6 +511,7 @@ export default function ClientDetailPage() {
               <div className="client-overview-row"><span>TRN No:</span><strong>{trn}</strong></div>
               <div className="client-overview-row"><span>Status:</span><span className={`vilo-badge ${client?.archived_at ? "vilo-badge--archived" : "vilo-badge--active"}`}>{statusLabel}</span></div>
               <div className="client-overview-row"><span>Type:</span><span className="vilo-badge vilo-badge--priority-medium">{type}</span></div>
+              {type === "Individual" ? <div className="client-overview-row"><span>Occupation:</span><strong>{occupation}</strong></div> : null}
               <div className="client-overview-row"><span>Preferred Contact:</span><strong>{preferredContact}</strong></div>
               <div className="client-overview-row"><span>Billing Currency:</span><strong>{billingCurrency}</strong></div>
               <div className="client-overview-row"><span>Date of Birth:</span><strong>{dob}</strong></div>

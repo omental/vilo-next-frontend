@@ -10,6 +10,7 @@ const initialState = {
   billing_currency: "USD",
   address: "",
   trn_no: "",
+  occupation: "",
   date_of_birth: "",
   email: "",
   phone: "",
@@ -38,6 +39,7 @@ function parseClient(client) {
     billing_currency: client?.billing_currency || readMetaLine(client?.notes, "Billing Currency") || "USD",
     address: client?.address || readMetaLine(client?.notes, "Address") || "",
     trn_no: client?.trn_no || readMetaLine(client?.notes, "TRN No") || "",
+    occupation: client?.occupation || "",
     date_of_birth: client?.date_of_birth || readMetaLine(client?.notes, "Date of Birth") || "",
     email: client?.email || "",
     phone: client?.phone || "",
@@ -58,6 +60,7 @@ function payloadFromState(state, existingClient) {
     notes: state.notes || null,
     client_type: state.client_type || "individual",
     trn_no: state.trn_no || null,
+    occupation: state.client_type === "corporate" ? null : state.occupation || null,
     preferred_contact_method: state.preferred_contact_method || null,
     date_of_birth: state.date_of_birth || null,
     billing_currency: state.billing_currency || "USD",
@@ -131,6 +134,7 @@ export default function ClientIntakeModal({ open, mode = "create", client = null
             <div><label>Billing Currency *</label><select value={form.billing_currency} onChange={(e) => setForm({ ...form, billing_currency: e.target.value })}><option value="USD">USD</option><option value="EUR">EUR</option><option value="AED">AED</option></select></div>
             <Field label="Address *" value={form.address} onChange={(v) => setForm({ ...form, address: v })} error={errors.address} placeholder="Enter Address" />
             <Field label="TRN No. *" value={form.trn_no} onChange={(v) => setForm({ ...form, trn_no: v })} error={errors.trn_no} placeholder="Enter TRN" />
+            {!corporate ? <Field label="Occupation" value={form.occupation} onChange={(v) => setForm({ ...form, occupation: v })} placeholder="Enter Occupation" /> : null}
             {!corporate ? <Field label="Date of Birth *" value={form.date_of_birth} onChange={(v) => setForm({ ...form, date_of_birth: v })} error={errors.date_of_birth} placeholder="YYYY-MM-DD" /> : null}
             <Field label="Email *" value={form.email} onChange={(v) => setForm({ ...form, email: v })} error={errors.email} placeholder="Enter Email" />
             <Field label="Phone *" value={form.phone} onChange={(v) => setForm({ ...form, phone: v })} error={errors.phone} placeholder="Enter Phone" />

@@ -44,6 +44,18 @@ def _safe_text(value: str | None) -> str:
     return (value or "-").replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
 
 
+def build_firm_details(org: Organization | None) -> list[str]:
+    details = [getattr(org, "name", None) or "VILO"]
+    for attr in ("address", "email", "phone"):
+        value = getattr(org, attr, None)
+        if value:
+            details.append(str(value))
+    tax_number = getattr(org, "tax_number", None) or getattr(org, "trn_no", None) or getattr(org, "vat_number", None)
+    if tax_number:
+        details.append(f"Tax/VAT: {tax_number}")
+    return details
+
+
 def _new_pdf_path(prefix: str) -> tuple[Path, str]:
     STORAGE_DIR.mkdir(parents=True, exist_ok=True)
     stamp = datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S")
@@ -105,7 +117,7 @@ async def generate_invoice_pdf(invoice_id: int, *, db: AsyncSession, organizatio
         [
             [Paragraph("Bill From", styles["ViloH2"]), Paragraph("Bill To", styles["ViloH2"]), Paragraph("Invoice", styles["ViloH2"])],
             [
-                Paragraph(f"{_safe_text(org.name if org else 'VILO')}<br/>{_safe_text(getattr(org, 'slug', None))}", styles["ViloBody"]),
+                Paragraph("<br/>".join(_safe_text(line) for line in build_firm_details(org)), styles["ViloBody"]),
                 Paragraph(f"{_safe_text(client.name if client else f'Client #{inv.client_id}')}<br/>{_safe_text(getattr(client, 'email', None))}<br/>{_safe_text(getattr(client, 'phone', None))}", styles["ViloBody"]),
                 Paragraph(
                     f"Invoice #: {_safe_text(inv.invoice_number)}<br/>Issue Date: {inv.issue_date}<br/>Due Date: {inv.due_date or '-'}<br/>Status: {_safe_text(inv.status)}",

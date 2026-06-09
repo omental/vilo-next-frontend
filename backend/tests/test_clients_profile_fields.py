@@ -40,6 +40,7 @@ class ClientProfileDBStub:
                 notes="Original notes",
                 client_type="individual",
                 trn_no="TRN-1",
+                occupation="Engineer",
                 preferred_contact_method="email",
                 date_of_birth=date(1980, 1, 1),
                 billing_currency="USD",
@@ -126,6 +127,7 @@ def test_create_client_with_typed_fields():
             "email": "kevin@example.com",
             "client_type": "corporate",
             "trn_no": "TRN-900",
+            "occupation": "Founder",
             "preferred_contact_method": "phone",
             "date_of_birth": "1988-01-02",
             "billing_currency": "AED",
@@ -135,6 +137,7 @@ def test_create_client_with_typed_fields():
         body = res.json()
         assert body["client_type"] == "corporate"
         assert body["trn_no"] == "TRN-900"
+        assert body["occupation"] == "Founder"
         assert body["preferred_contact_method"] == "phone"
         assert body["date_of_birth"] == "1988-01-02"
         assert body["billing_currency"] == "AED"
@@ -149,6 +152,7 @@ def test_update_client_typed_fields_and_archive_sets_archived_at():
         res = client.patch("/api/v1/clients/1", json={
             "client_type": "corporate",
             "trn_no": "TRN-UPDATED",
+            "occupation": "Managing Director",
             "preferred_contact_method": "sms",
             "date_of_birth": "1990-05-07",
             "billing_currency": "EUR",
@@ -158,6 +162,7 @@ def test_update_client_typed_fields_and_archive_sets_archived_at():
         body = res.json()
         assert body["client_type"] == "corporate"
         assert body["trn_no"] == "TRN-UPDATED"
+        assert body["occupation"] == "Managing Director"
         assert body["preferred_contact_method"] == "sms"
         assert body["billing_currency"] == "EUR"
         assert body["archived_at"] is not None
@@ -173,7 +178,7 @@ def test_get_client_returns_new_fields():
         res = client.get("/api/v1/clients/1")
         assert res.status_code == 200
         body = res.json()
-        for field in ["client_type", "trn_no", "preferred_contact_method", "date_of_birth", "billing_currency", "archived_at"]:
+        for field in ["client_type", "trn_no", "occupation", "preferred_contact_method", "date_of_birth", "billing_currency", "archived_at"]:
             assert field in body
     finally:
         cleanup(client)

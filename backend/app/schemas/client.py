@@ -11,6 +11,7 @@ class ClientCreate(BaseModel):
     user_id: int | None = None
     client_type: str = "individual"
     trn_no: str | None = None
+    occupation: str | None = None
     preferred_contact_method: str | None = None
     date_of_birth: date | None = None
     billing_currency: str | None = "USD"
@@ -26,6 +27,7 @@ class ClientUpdate(BaseModel):
     user_id: int | None = None
     client_type: str | None = None
     trn_no: str | None = None
+    occupation: str | None = None
     preferred_contact_method: str | None = None
     date_of_birth: date | None = None
     billing_currency: str | None = None
@@ -43,6 +45,7 @@ class ClientResponse(BaseModel):
     notes: str | None
     client_type: str
     trn_no: str | None
+    occupation: str | None
     preferred_contact_method: str | None
     date_of_birth: date | None
     billing_currency: str | None

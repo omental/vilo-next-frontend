@@ -16,9 +16,18 @@ from app.models.enums import UserRole
 from app.models.expense import Expense
 from app.models.invoice import Invoice
 from app.models.invoice_line_item import InvoiceLineItem
+from app.models.organization import Organization
 from app.models.time_entry import TimeEntry
 from app.models.user import User
-from app.schemas.invoice import InvoiceCreate, InvoiceLineItemResponse, InvoiceResponse, InvoiceSummaryResponse, InvoiceUpdate
+from app.schemas.invoice import (
+    InvoiceClientSummary,
+    InvoiceCreate,
+    InvoiceLineItemResponse,
+    InvoiceOrganizationSummary,
+    InvoiceResponse,
+    InvoiceSummaryResponse,
+    InvoiceUpdate,
+)
 from app.services.audit import log_audit_event
 from app.services.email import build_invoice_email
 from app.services.jobs import enqueue_email
@@ -36,13 +45,53 @@ def line_ser(li: InvoiceLineItem) -> InvoiceLineItemResponse:
     return InvoiceLineItemResponse(**{c: getattr(li, c) for c in InvoiceLineItemResponse.model_fields.keys()})
 
 
+def org_ser(org: Organization | None) -> InvoiceOrganizationSummary:
+    return InvoiceOrganizationSummary(
+        id=getattr(org, "id", 0),
+        name=getattr(org, "name", None) or "Firm",
+        address=getattr(org, "address", None),
+        email=getattr(org, "email", None),
+        phone=getattr(org, "phone", None),
+        tax_number=getattr(org, "tax_number", None) or getattr(org, "trn_no", None) or getattr(org, "vat_number", None),
+    )
+
+
+def client_ser(client: Client | None, fallback_id: int) -> InvoiceClientSummary:
+    return InvoiceClientSummary(
+        id=getattr(client, "id", fallback_id),
+        name=getattr(client, "name", None) or f"Client #{fallback_id}",
+        email=getattr(client, "email", None),
+        phone=getattr(client, "phone", None),
+        address=getattr(client, "address", None),
+        occupation=getattr(client, "occupation", None),
+        tax_number=getattr(client, "trn_no", None),
+    )
+
+
 def inv_ser(i: Invoice) -> InvoiceResponse:
-    base = {c: getattr(i, c) for c in InvoiceResponse.model_fields.keys() if c != "line_items"}
-    return InvoiceResponse(**base, line_items=[line_ser(x) for x in i.line_items])
+    base = {
+        c: getattr(i, c)
+        for c in InvoiceResponse.model_fields.keys()
+        if c not in {"line_items", "organization", "client"}
+    }
+    return InvoiceResponse(
+        **base,
+        organization=org_ser(getattr(i, "organization", None)),
+        client=client_ser(getattr(i, "client", None), i.client_id),
+        line_items=[line_ser(x) for x in i.line_items],
+    )
 
 
 async def get_invoice_or_404(db: AsyncSession, org_id: int, invoice_id: int) -> Invoice:
-    inv = await db.scalar(select(Invoice).where(Invoice.id == invoice_id, Invoice.organization_id == org_id).options(selectinload(Invoice.line_items)))
+    inv = await db.scalar(
+        select(Invoice)
+        .where(Invoice.id == invoice_id, Invoice.organization_id == org_id)
+        .options(
+            selectinload(Invoice.line_items),
+            selectinload(Invoice.client),
+            selectinload(Invoice.organization),
+        )
+    )
     if not inv: raise HTTPException(status_code=404, detail="Invoice not found")
     return inv
 
@@ -135,7 +184,16 @@ async def generate_from_case(case_id: int, db: AsyncSession = Depends(get_db), c
 
 @router.get("", response_model=list[InvoiceResponse])
 async def list_invoices(db: AsyncSession = Depends(get_db), current_user: User = Depends(role_guard(ALLOWED))):
-    rows = await db.scalars(select(Invoice).where(Invoice.organization_id == current_user.organization_id).options(selectinload(Invoice.line_items)).order_by(Invoice.created_at.desc()))
+    rows = await db.scalars(
+        select(Invoice)
+        .where(Invoice.organization_id == current_user.organization_id)
+        .options(
+            selectinload(Invoice.line_items),
+            selectinload(Invoice.client),
+            selectinload(Invoice.organization),
+        )
+        .order_by(Invoice.created_at.desc())
+    )
     return [inv_ser(i) for i in rows.all()]
 
 

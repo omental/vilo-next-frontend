@@ -3,6 +3,25 @@ from decimal import Decimal
 from pydantic import BaseModel
 
 
+class InvoiceOrganizationSummary(BaseModel):
+    id: int
+    name: str
+    address: str | None = None
+    email: str | None = None
+    phone: str | None = None
+    tax_number: str | None = None
+
+
+class InvoiceClientSummary(BaseModel):
+    id: int
+    name: str
+    email: str | None = None
+    phone: str | None = None
+    address: str | None = None
+    occupation: str | None = None
+    tax_number: str | None = None
+
+
 class InvoiceCreate(BaseModel):
     client_id: int
     case_id: int | None = None
@@ -51,6 +70,8 @@ class InvoiceResponse(BaseModel):
     created_by: int
     created_at: datetime
     updated_at: datetime
+    organization: InvoiceOrganizationSummary
+    client: InvoiceClientSummary
     line_items: list[InvoiceLineItemResponse] = []
 
 

@@ -8,40 +8,59 @@ import { useEffect, useState } from "react";
 import { apiRequest } from "../../lib/api";
 import { motionEase, createHoverLift, createItemVariants } from "../motion";
 
-const menuItems = [
+const billingChildren = [
+  { label: "Invoices", href: "/dashboard/invoices" },
+  { label: "Time Entries", href: "/dashboard/time-entries" },
+];
+
+const financeChildren = [
+  { label: "Trust", href: "/dashboard/trust" },
+  { label: "Expenses", href: "/dashboard/expenses" },
+];
+
+const navigationItems = [
   { label: "Dashboard", icon: HomeIcon, href: "/dashboard" },
-  { label: "Files", icon: FileTextIcon, href: "/dashboard/cases" },
+  // TODO: Restore a distinct Files route when the product has one.
   { label: "Clients", icon: UsersIcon, href: "/dashboard/clients" },
   { label: "Calendar", icon: CalendarIcon, href: "/dashboard/calendar" },
   { label: "Tasks", icon: ClipboardListIcon, href: "/dashboard/tasks" },
   { label: "Documents", icon: FileStackIcon, href: "/dashboard/documents" },
   { label: "Precedents", icon: ListIcon, href: "/dashboard/precedents" },
   { label: "Messages", icon: MessageCircleIcon, href: "/dashboard/messages" },
-  { label: "Billing", icon: DollarSignIcon, href: "/dashboard/billing", expandable: true },
-  { label: "Finance", icon: LinkIcon, href: "/dashboard/finance", expandable: true },
+  { label: "Billing", icon: DollarSignIcon, children: billingChildren },
+  { label: "Finance", icon: TrustIcon, children: financeChildren },
   { label: "Team", icon: NetworkIcon, href: "/dashboard/team" },
   { label: "Reports", icon: ClipboardIcon, href: "/dashboard/reports" },
-  { label: "Settings", icon: SettingsIcon, href: "/dashboard/settings" }
-];
-
-const quickMetrics = [
-  { label: "Open Cases", value: 53, colorClass: "is-indigo" },
-  { label: "Total Billed Hours", value: 53, colorClass: "is-red" },
-  { label: "Unpaid Invoices", value: 53, colorClass: "is-green" }
+  { label: "Settings", icon: SettingsIcon, href: "/dashboard/settings" },
 ];
 
 const createActions = [
-  { label: "New Case", href: "/dashboard/cases?create=1", icon: PlusSquareIcon },
-  { label: "New Client", href: "/dashboard/clients?create=1", icon: UserPlusIcon },
-  { label: "Upload Document", href: "/dashboard/documents?upload=1", icon: UploadIcon },
-  { label: "New Task", href: "/dashboard/tasks?create=1", icon: ClipboardListIcon },
-  { label: "New Event", href: "/dashboard/calendar?create=1", icon: CalendarIcon }
+  { label: "Case Management", href: "/dashboard/cases?create=1", icon: BriefcaseIcon },
+  { label: "Client", href: "/dashboard/clients?create=1", icon: UserPlusIcon },
+  { label: "Tasks", href: "/dashboard/tasks?create=1", icon: TaskPlusIcon },
+  { label: "Documents", href: "/dashboard/documents?upload=1", icon: FileStackIcon },
+  { label: "Invoice", href: "/dashboard/invoices?create=1", icon: DollarSignIcon },
+  { label: "Time Entry", href: "/dashboard/time-entries?create=1", icon: ClockIcon },
+  { label: "Expense", href: "/dashboard/expenses?create=1", icon: TrustIcon },
+  { label: "Event", href: "/dashboard/calendar?create=1", icon: FlagIcon },
+  { label: "Messages", href: "/dashboard/messages?create=1", icon: MessageCircleIcon },
 ];
+
+function isPathMatch(pathname, href) {
+  if (!href) return false;
+  return href === "/dashboard" ? pathname === href : pathname === href || pathname.startsWith(`${href}/`);
+}
+
+function hasActiveChild(pathname, children = []) {
+  return children.some((child) => isPathMatch(pathname, child.href));
+}
 
 export function Sidebar({ isMobileOpen = false, onClose = () => {} }) {
   const router = useRouter();
   const pathname = usePathname();
-  const [createOpen, setCreateOpen] = useState(false);
+  const [createOpen, setCreateOpen] = useState(true);
+  const [billingOpen, setBillingOpen] = useState(hasActiveChild(pathname, billingChildren));
+  const [financeOpen, setFinanceOpen] = useState(hasActiveChild(pathname, financeChildren));
   const [activityItems, setActivityItems] = useState([]);
   const shouldReduceMotion = useReducedMotion();
   const itemVariants = createItemVariants(shouldReduceMotion, "y", 10);
@@ -49,7 +68,7 @@ export function Sidebar({ isMobileOpen = false, onClose = () => {} }) {
   const sidebarVariants = shouldReduceMotion
     ? {
         hidden: { opacity: 1 },
-        show: { opacity: 1 }
+        show: { opacity: 1 },
       }
     : {
         hidden: { opacity: 0 },
@@ -59,16 +78,16 @@ export function Sidebar({ isMobileOpen = false, onClose = () => {} }) {
             duration: 0.3,
             ease: motionEase,
             when: "beforeChildren",
-            staggerChildren: 0.04
-          }
-        }
+            staggerChildren: 0.04,
+          },
+        },
       };
   const activeHover = shouldReduceMotion
     ? {}
     : {
         scale: 1.015,
         boxShadow: "0 10px 24px rgba(67, 44, 241, 0.35)",
-        transition: { duration: 0.18 }
+        transition: { duration: 0.18 },
       };
 
   useEffect(() => {
@@ -96,6 +115,20 @@ export function Sidebar({ isMobileOpen = false, onClose = () => {} }) {
     };
   }, []);
 
+  useEffect(() => {
+    if (hasActiveChild(pathname, billingChildren)) {
+      setBillingOpen(true);
+    }
+    if (hasActiveChild(pathname, financeChildren)) {
+      setFinanceOpen(true);
+    }
+  }, [pathname]);
+
+  function navigateTo(href) {
+    router.push(href);
+    onClose();
+  }
+
   return (
     <motion.aside
       className={`sidebar vilo-sidebar${isMobileOpen ? " is-mobile-open" : ""}`}
@@ -112,22 +145,66 @@ export function Sidebar({ isMobileOpen = false, onClose = () => {} }) {
           <p className="vilo-sidebar__eyebrow">APPS &amp; PAGES</p>
 
           <nav className="vilo-sidebar__nav" aria-label="Sidebar navigation">
-            {menuItems.map((item) => {
+            {navigationItems.map((item) => {
               const Icon = item.icon;
-              const isActive =
-                item.href === "/dashboard" ? pathname === item.href : pathname.startsWith(item.href);
+              const active = item.children ? hasActiveChild(pathname, item.children) : isPathMatch(pathname, item.href);
+
+              if (item.children) {
+                const forcedOpen = hasActiveChild(pathname, item.children);
+                const open = forcedOpen || (item.label === "Billing" ? billingOpen : financeOpen);
+                const toggle = item.label === "Billing" ? setBillingOpen : setFinanceOpen;
+
+                return (
+                  <motion.div key={item.label} className="vilo-sidebar__group" variants={itemVariants}>
+                    <motion.button
+                      type="button"
+                      className={`vilo-sidebar__item vilo-sidebar__item--group${active ? " is-active" : ""}`}
+                      whileHover={active ? {} : hoverLift}
+                      aria-expanded={open}
+                      aria-controls={`sidebar-group-${item.label.toLowerCase()}`}
+                      onClick={() => toggle((prev) => (forcedOpen ? true : !prev))}
+                    >
+                      <span className="vilo-sidebar__item-main">
+                        <span className="vilo-sidebar__icon-wrap">
+                          <Icon />
+                        </span>
+                        <span>{item.label}</span>
+                      </span>
+                      <ChevronDownIcon className={open ? "is-open" : ""} />
+                    </motion.button>
+
+                    {open ? (
+                      <div id={`sidebar-group-${item.label.toLowerCase()}`} className="vilo-sidebar__subnav">
+                        {item.children.map((child) => {
+                          const childActive = isPathMatch(pathname, child.href);
+
+                          return (
+                            <motion.button
+                              key={child.label}
+                              type="button"
+                              className={`vilo-sidebar__subitem${childActive ? " is-active" : ""}`}
+                              variants={itemVariants}
+                              whileHover={hoverLift}
+                              onClick={() => navigateTo(child.href)}
+                            >
+                              <span>{child.label}</span>
+                            </motion.button>
+                          );
+                        })}
+                      </div>
+                    ) : null}
+                  </motion.div>
+                );
+              }
 
               return (
                 <motion.button
                   key={item.label}
                   type="button"
-                  className={`vilo-sidebar__item${isActive ? " is-active" : ""}`}
+                  className={`vilo-sidebar__item${active ? " is-active" : ""}`}
                   variants={itemVariants}
-                  whileHover={isActive ? activeHover : hoverLift}
-                  onClick={() => {
-                    router.push(item.href);
-                    onClose();
-                  }}
+                  whileHover={active ? activeHover : hoverLift}
+                  onClick={() => navigateTo(item.href)}
                 >
                   <span className="vilo-sidebar__item-main">
                     <span className="vilo-sidebar__icon-wrap">
@@ -135,7 +212,6 @@ export function Sidebar({ isMobileOpen = false, onClose = () => {} }) {
                     </span>
                     <span>{item.label}</span>
                   </span>
-                  {item.expandable ? <ChevronDownIcon /> : null}
                 </motion.button>
               );
             })}
@@ -157,9 +233,9 @@ export function Sidebar({ isMobileOpen = false, onClose = () => {} }) {
             <span className="vilo-sidebar__icon-wrap">
               <PlusIcon />
             </span>
-            <span>Create New</span>
+            <span>New</span>
           </span>
-          <ChevronDownIcon />
+          <ChevronDownIcon className={createOpen ? "is-open" : ""} />
         </motion.button>
 
         {createOpen ? (
@@ -177,8 +253,7 @@ export function Sidebar({ isMobileOpen = false, onClose = () => {} }) {
                   role="menuitem"
                   onClick={() => {
                     setCreateOpen(false);
-                    router.push(action.href);
-                    onClose();
+                    navigateTo(action.href);
                   }}
                 >
                   <span className="vilo-sidebar__icon-wrap">
@@ -191,27 +266,7 @@ export function Sidebar({ isMobileOpen = false, onClose = () => {} }) {
           </div>
         ) : null}
 
-        <div className="vilo-sidebar__divider" />
-
-        <section className="vilo-sidebar__block">
-          <p className="vilo-sidebar__eyebrow">QUICK METRICS</p>
-
-          <div className="vilo-metrics">
-            <ProgressRing value={75} />
-            <ul className="vilo-metrics__legend" aria-label="Quick metrics">
-              {quickMetrics.map((metric) => (
-                <li key={metric.label}>
-                  <span className={`vilo-metrics__dot ${metric.colorClass}`} />
-                  <span>
-                    {metric.label}: {metric.value}
-                  </span>
-                </li>
-              ))}
-            </ul>
-          </div>
-        </section>
-
-        <section className="vilo-sidebar__block">
+        <section className="vilo-sidebar__block vilo-sidebar__activity-block">
           <p className="vilo-sidebar__eyebrow">RECENT ACTIVITY</p>
 
           <div className="vilo-activity">
@@ -275,54 +330,6 @@ function formatShortTimestamp(value) {
   return date.toLocaleString([], { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
 }
 
-function ProgressRing({ value }) {
-  const radius = 27;
-  const circumference = 2 * Math.PI * radius;
-  const dashOffset = circumference - (value / 100) * circumference;
-  const shouldReduceMotion = useReducedMotion();
-
-  return (
-    <div className="vilo-ring" aria-label={`Completion ${value}%`}>
-      <svg viewBox="0 0 72 72" aria-hidden="true">
-        <circle cx="36" cy="36" r="27" className="vilo-ring__track" />
-        <motion.circle
-          cx="36"
-          cy="36"
-          r="27"
-          className="vilo-ring__segment is-indigo"
-          initial={shouldReduceMotion ? false : { strokeDashoffset: circumference }}
-          animate={{ strokeDashoffset: dashOffset }}
-          transition={{ duration: 0.75, ease: "easeOut" }}
-          strokeDasharray={circumference}
-        />
-        <motion.circle
-          cx="36"
-          cy="36"
-          r="21"
-          className="vilo-ring__segment is-green"
-          initial={shouldReduceMotion ? false : { strokeDashoffset: circumference }}
-          animate={{ strokeDashoffset: circumference - 0.68 * circumference }}
-          transition={{ duration: 0.75, delay: 0.08, ease: "easeOut" }}
-          strokeDasharray={circumference}
-        />
-        <motion.circle
-          cx="36"
-          cy="36"
-          r="33"
-          className="vilo-ring__segment is-cyan"
-          initial={shouldReduceMotion ? false : { strokeDashoffset: circumference }}
-          animate={{ strokeDashoffset: circumference - 0.56 * circumference }}
-          transition={{ duration: 0.75, delay: 0.16, ease: "easeOut" }}
-          strokeDasharray={circumference}
-        />
-      </svg>
-      <div className="vilo-ring__center">
-        <strong>{value}%</strong>
-      </div>
-    </div>
-  );
-}
-
 function IconBase({ children, className = "" }) {
   return (
     <svg
@@ -345,17 +352,6 @@ function HomeIcon() {
     <IconBase>
       <path d="M3 10.5 12 3l9 7.5" />
       <path d="M5.5 9.5V20h13V9.5" />
-    </IconBase>
-  );
-}
-
-function FileTextIcon() {
-  return (
-    <IconBase>
-      <path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8Z" />
-      <path d="M14 3v5h5" />
-      <path d="M9 13h6" />
-      <path d="M9 17h6" />
     </IconBase>
   );
 }
@@ -438,12 +434,13 @@ function DollarSignIcon() {
   );
 }
 
-function LinkIcon() {
+function TrustIcon() {
   return (
     <IconBase>
-      <path d="M10.5 13.5 13.5 10.5" />
-      <path d="M7 17a4 4 0 0 1 0-5.7l2.8-2.8a4 4 0 0 1 5.7 0" />
-      <path d="M17 7a4 4 0 0 1 0 5.7l-2.8 2.8a4 4 0 0 1-5.7 0" />
+      <circle cx="8" cy="15.5" r="4" />
+      <circle cx="16.5" cy="8.5" r="4" />
+      <path d="M11.2 13.1 13.4 10.9" />
+      <path d="M5.8 18.3 4.5 19.5" />
     </IconBase>
   );
 }
@@ -498,9 +495,9 @@ function CheckCircleIcon() {
   );
 }
 
-function ChevronDownIcon() {
+function ChevronDownIcon({ className = "" }) {
   return (
-    <IconBase className="vilo-sidebar__chevron">
+    <IconBase className={`vilo-sidebar__chevron ${className}`.trim()}>
       <path d="m6 9 6 6 6-6" />
     </IconBase>
   );
@@ -510,16 +507,6 @@ function ChevronRightIcon() {
   return (
     <IconBase className="vilo-sidebar__activity-chevron">
       <path d="m9 6 6 6-6 6" />
-    </IconBase>
-  );
-}
-
-function PlusSquareIcon() {
-  return (
-    <IconBase>
-      <rect x="3" y="3" width="18" height="18" rx="4" />
-      <path d="M12 8v8" />
-      <path d="M8 12h8" />
     </IconBase>
   );
 }
@@ -535,12 +522,44 @@ function UserPlusIcon() {
   );
 }
 
-function UploadIcon() {
+function BriefcaseIcon() {
   return (
     <IconBase>
-      <path d="M12 16V6" />
-      <path d="m8 10 4-4 4 4" />
-      <path d="M4 16.5V18a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-1.5" />
+      <rect x="4" y="7" width="16" height="12" rx="3" />
+      <path d="M9 7V5.8A1.8 1.8 0 0 1 10.8 4h2.4A1.8 1.8 0 0 1 15 5.8V7" />
+      <path d="M4 12h16" />
+    </IconBase>
+  );
+}
+
+function TaskPlusIcon() {
+  return (
+    <IconBase>
+      <rect x="5" y="4" width="14" height="17" rx="3" />
+      <path d="M9 4.5h6" />
+      <path d="M9 11h4" />
+      <path d="M9 15h4" />
+      <path d="M16.5 12.5v4" />
+      <path d="M14.5 14.5h4" />
+    </IconBase>
+  );
+}
+
+function ClockIcon() {
+  return (
+    <IconBase>
+      <circle cx="12" cy="12" r="8.5" />
+      <path d="M12 7.8v4.6" />
+      <path d="M12 12.4h3.3" />
+    </IconBase>
+  );
+}
+
+function FlagIcon() {
+  return (
+    <IconBase>
+      <path d="M6 20V4" />
+      <path d="M6 4h9l-1.8 3L15 10H6" />
     </IconBase>
   );
 }
