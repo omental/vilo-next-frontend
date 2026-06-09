@@ -6,6 +6,7 @@ import { apiRequest } from "../../../lib/api";
 
 const VIEW_OPTIONS = ["month", "week", "day"];
 const EVENT_TYPES = ["court", "client", "consultation", "travel", "staff", "note"];
+const WEEKDAY_LABELS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 
 const TYPE_CLASS = {
   court: "is-court",
@@ -59,6 +60,21 @@ function formatTime(dateStr) {
   return new Date(dateStr).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
 }
 
+function formatEventDate(date) {
+  return date.toLocaleDateString([], { weekday: "short", month: "short", day: "numeric" });
+}
+
+function eventTypeLabel(type) {
+  const normalized = String(type || "note");
+  return normalized[0].toUpperCase() + normalized.slice(1);
+}
+
+function parseDateValue(value) {
+  if (!value) return null;
+  const parsed = new Date(`${value}T00:00:00`);
+  return Number.isNaN(parsed.getTime()) ? null : parsed;
+}
+
 export default function CalendarPage() {
   return (
     <Suspense fallback={<section className="dashboard-page-stack"><div className="vilo-state-block"><p className="vilo-state vilo-state--loading">Loading calendar...</p></div></section>}>
@@ -75,10 +91,8 @@ function CalendarPageContent() {
   const [view, setView] = useState("month");
   const [selectedMonth, setSelectedMonth] = useState(startOfMonth(new Date()));
   const [selectedDate, setSelectedDate] = useState(new Date());
-
   const [modalOpen, setModalOpen] = useState(false);
   const [form, setForm] = useState(initialForm);
-
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
@@ -201,6 +215,14 @@ function CalendarPageContent() {
     setSelectedMonth((prev) => new Date(prev.getFullYear(), prev.getMonth() + delta, 1));
   }
 
+  function focusEvent(eventId) {
+    const params = new URLSearchParams(searchParams.toString());
+    params.delete("create");
+    params.delete("date");
+    params.set("event_id", String(eventId));
+    router.push(`/dashboard/calendar?${params.toString()}`);
+  }
+
   function openModalForDate(date, syncQuery = true) {
     const d = new Date(date);
     setSelectedDate(d);
@@ -258,11 +280,7 @@ function CalendarPageContent() {
 
       const createdMonth = new Date(`${form.date}T00:00:00`);
       const sameMonth = createdMonth.getMonth() === selectedMonth.getMonth() && createdMonth.getFullYear() === selectedMonth.getFullYear();
-      if (!sameMonth) {
-        setSuccess("Event created in another month.");
-      } else {
-        setSuccess("Event created successfully.");
-      }
+      setSuccess(sameMonth ? "Event created successfully." : "Event created in another month.");
       closeModal();
       await load();
     } catch (err) {
@@ -272,11 +290,25 @@ function CalendarPageContent() {
     }
   }
 
+  const monthSummary = `${monthCounts.events} events scheduled in ${monthLabel(selectedMonth)}.`;
+
   return (
     <section className="dashboard-page-stack calendar-page">
-      <div className="clients-header-row">
-        <div className="dashboard-page-heading"><h1>Calendar</h1></div>
-        <button type="button" className="vilo-btn vilo-btn--secondary" onClick={() => openModalForDate(selectedDate)}>+ Add Event</button>
+      <div className="calendar-page-topbar">
+        <div className="calendar-page-titleblock">
+          <div className="dashboard-page-heading">
+            <h1>Calendar</h1>
+            <p className="calendar-page-subtitle">{monthSummary}</p>
+          </div>
+        </div>
+        <div className="calendar-page-topbar__actions">
+          <div className="calendar-month-switcher">
+            <button type="button" className="calendar-month-switcher__arrow" onClick={() => moveMonth(-1)} aria-label="Previous month">‹</button>
+            <div className="calendar-month-switcher__label">{monthLabel(selectedMonth)}</div>
+            <button type="button" className="calendar-month-switcher__arrow" onClick={() => moveMonth(1)} aria-label="Next month">›</button>
+          </div>
+          <button type="button" className="vilo-btn vilo-btn--primary" onClick={() => openModalForDate(selectedDate)}>+ Add Event</button>
+        </div>
       </div>
 
       {error ? <div className="vilo-state-block"><p className="vilo-state vilo-state--error">{error}</p></div> : null}
@@ -285,16 +317,18 @@ function CalendarPageContent() {
       <div className="calendar-layout-grid">
         <article className="dashboard-card calendar-main-card">
           <div className="calendar-main-head">
-            <div className="calendar-month-controls">
+            <div className="calendar-main-head__meta">
+              <p className="calendar-main-head__eyebrow">Scheduling view</p>
               <h2>{monthLabel(selectedMonth)}</h2>
-              <div className="vilo-table-actions">
-                <button type="button" className="vilo-btn vilo-btn--ghost vilo-btn--xs" onClick={() => moveMonth(-1)}>‹</button>
-                <button type="button" className="vilo-btn vilo-btn--ghost vilo-btn--xs" onClick={() => moveMonth(1)}>›</button>
-              </div>
             </div>
-            <div className="calendar-view-toggle">
+            <div className="calendar-view-toggle" role="tablist" aria-label="Calendar views">
               {VIEW_OPTIONS.map((option) => (
-                <button key={option} type="button" className={view === option ? "vilo-btn vilo-btn--primary vilo-btn--xs" : "vilo-btn vilo-btn--ghost vilo-btn--xs"} onClick={() => setView(option)}>
+                <button
+                  key={option}
+                  type="button"
+                  className={view === option ? "calendar-view-toggle__btn is-active" : "calendar-view-toggle__btn"}
+                  onClick={() => setView(option)}
+                >
                   {option[0].toUpperCase() + option.slice(1)}
                 </button>
               ))}
@@ -304,44 +338,64 @@ function CalendarPageContent() {
           {loading ? <div className="vilo-state-block"><p className="vilo-state vilo-state--loading">Loading calendar...</p></div> : null}
 
           {!loading && view === "month" ? (
-            <div>
+            <div className="calendar-month-shell">
               <div className="calendar-weekdays">
-                {[
-                  "Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday",
-                ].map((day) => <span key={day}>{day}</span>)}
+                {WEEKDAY_LABELS.map((day) => <span key={day}>{day}</span>)}
               </div>
+
               <div className="calendar-month-grid">
                 {monthGrid.map((date) => {
                   const key = ymd(date);
-                  const dayEventsList = (eventsByDay.get(key) || []).slice(0, 3);
+                  const dayEventsList = eventsByDay.get(key) || [];
+                  const previewEvents = dayEventsList.slice(0, 3);
+                  const hiddenCount = Math.max(0, dayEventsList.length - previewEvents.length);
                   const inMonth = date.getMonth() === selectedMonth.getMonth();
                   const isToday = sameDay(date, new Date()) && inMonth;
+                  const isSelectedDate = sameDay(date, selectedDate);
+
                   return (
-                    <button
-                      type="button"
+                    <div
                       key={key}
-                      className={`calendar-day-cell ${inMonth ? "" : "is-faded"} ${isToday ? "is-today" : ""}`}
+                      className={`calendar-day-cell ${inMonth ? "" : "is-faded"} ${isToday ? "is-today" : ""} ${isSelectedDate ? "is-selected-date" : ""}`}
+                      role="button"
+                      tabIndex={0}
                       onClick={() => openModalForDate(date)}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter" || e.key === " ") {
+                          e.preventDefault();
+                          openModalForDate(date);
+                        }
+                      }}
                     >
-                      <span className="calendar-day-number">{date.getDate()}</span>
-                      <div className="calendar-day-events">
-                        {dayEventsList.map((event) => (
-                          <span
-                            key={event.id}
-                            className={`calendar-event-pill ${TYPE_CLASS[event.eventType] || "is-note"}${selectedEventId === event.id ? " is-selected" : ""}`}
-                            title={event.title}
-                          >
-                            {formatTime(event.start_at)} {event.title}
-                          </span>
-                        ))}
+                      <div className="calendar-day-cell__head">
+                        <span className="calendar-day-number">{date.getDate()}</span>
                       </div>
-                    </button>
+                      <div className="calendar-day-events">
+                        {previewEvents.map((event) => (
+                          <button
+                            key={event.id}
+                            type="button"
+                            className={`calendar-event-pill ${TYPE_CLASS[event.eventType] || "is-note"}${selectedEventId === event.id ? " is-selected" : ""}`}
+                            title={`${event.title} · ${formatTime(event.start_at)}`}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              focusEvent(event.id);
+                            }}
+                          >
+                            <span className="calendar-event-pill__time">{formatTime(event.start_at)}</span>
+                            <span className="calendar-event-pill__title">{event.title}</span>
+                          </button>
+                        ))}
+                        {hiddenCount ? <span className="calendar-event-more">+{hiddenCount} more</span> : null}
+                      </div>
+                    </div>
                   );
                 })}
               </div>
+
               <div className="calendar-legend">
                 {EVENT_TYPES.map((type) => (
-                  <span key={type}><i className={`calendar-event-dot ${TYPE_CLASS[type] || "is-note"}`} />{type[0].toUpperCase() + type.slice(1)}</span>
+                  <span key={type}><i className={`calendar-event-dot ${TYPE_CLASS[type] || "is-note"}`} />{eventTypeLabel(type)}</span>
                 ))}
               </div>
             </div>
@@ -356,10 +410,10 @@ function CalendarPageContent() {
                   <div key={key} className="calendar-list-day">
                     <h3>{day.toLocaleDateString([], { weekday: "short", month: "short", day: "numeric" })}</h3>
                     {list.length ? list.map((event) => (
-                      <div key={event.id} className={`calendar-list-item ${TYPE_CLASS[event.eventType] || "is-note"}${selectedEventId === event.id ? " is-selected" : ""}`}>
+                      <button key={event.id} type="button" className={`calendar-list-item ${TYPE_CLASS[event.eventType] || "is-note"}${selectedEventId === event.id ? " is-selected" : ""}`} onClick={() => focusEvent(event.id)}>
                         <strong>{event.title}</strong>
                         <span>{formatTime(event.start_at)}{event.case_id ? ` · Case #${event.case_id}` : ""}</span>
-                      </div>
+                      </button>
                     )) : <p className="vilo-state">No events</p>}
                   </div>
                 );
@@ -372,10 +426,10 @@ function CalendarPageContent() {
               <div className="calendar-list-day">
                 <h3>{selectedDate.toLocaleDateString([], { weekday: "long", month: "long", day: "numeric", year: "numeric" })}</h3>
                 {dayEvents.length ? dayEvents.map((event) => (
-                  <div key={event.id} className={`calendar-list-item ${TYPE_CLASS[event.eventType] || "is-note"}${selectedEventId === event.id ? " is-selected" : ""}`}>
+                  <button key={event.id} type="button" className={`calendar-list-item ${TYPE_CLASS[event.eventType] || "is-note"}${selectedEventId === event.id ? " is-selected" : ""}`} onClick={() => focusEvent(event.id)}>
                     <strong>{event.title}</strong>
                     <span>{formatTime(event.start_at)}{event.case_id ? ` · Case #${event.case_id}` : ""}</span>
-                  </div>
+                  </button>
                 )) : <div className="vilo-state-block"><p className="vilo-state">No events for this day.</p></div>}
               </div>
             </div>
@@ -383,7 +437,7 @@ function CalendarPageContent() {
         </article>
 
         <aside className="calendar-side-stack">
-          <article className="dashboard-card">
+          <article className="dashboard-card calendar-side-card">
             <div className="dashboard-card__header"><h2>Upcoming</h2></div>
             {upcomingEvents.length ? (
               <div className="calendar-upcoming-list">
@@ -392,24 +446,30 @@ function CalendarPageContent() {
                     key={event.id}
                     type="button"
                     className={`calendar-upcoming-item ${TYPE_CLASS[event.eventType] || "is-note"}${selectedEventId === event.id ? " is-selected" : ""}`}
-                    onClick={() => router.push(`/dashboard/calendar?event_id=${event.id}`)}
+                    onClick={() => focusEvent(event.id)}
                   >
-                    <span>{event.start.toLocaleDateString([], { month: "short", day: "numeric" })} · {formatTime(event.start_at)}</span>
+                    <div className="calendar-upcoming-item__topline">
+                      <span>{formatEventDate(event.start)}</span>
+                      <small>{formatTime(event.start_at)}</small>
+                    </div>
                     <strong>{event.title}</strong>
-                    <small>{event.case_id ? `Case #${event.case_id}` : "No case linked"}</small>
+                    <div className="calendar-upcoming-item__meta">
+                      <span>{eventTypeLabel(event.eventType)}</span>
+                      <span>{event.case_id ? `Case #${event.case_id}` : "No case linked"}</span>
+                    </div>
                   </button>
                 ))}
               </div>
             ) : <div className="vilo-state-block"><p className="vilo-state">No upcoming events.</p></div>}
           </article>
 
-          <article className="dashboard-card">
+          <article className="dashboard-card calendar-side-card">
             <div className="dashboard-card__header"><h2>Monthly Overview</h2></div>
             <div className="calendar-overview-list">
-              <OverviewRow label="Events" count={monthCounts.events} pct={100} />
-              <OverviewRow label="Court" count={monthCounts.court} pct={monthCounts.events ? Math.round((monthCounts.court / monthCounts.events) * 100) : 0} />
-              <OverviewRow label="Client" count={monthCounts.client} pct={monthCounts.events ? Math.round((monthCounts.client / monthCounts.events) * 100) : 0} />
-              <OverviewRow label="Consults" count={monthCounts.consultation} pct={monthCounts.events ? Math.round((monthCounts.consultation / monthCounts.events) * 100) : 0} />
+              <OverviewRow label="Events" count={monthCounts.events} pct={100} tone="is-court" />
+              <OverviewRow label="Court" count={monthCounts.court} pct={monthCounts.events ? Math.round((monthCounts.court / monthCounts.events) * 100) : 0} tone="is-travel" />
+              <OverviewRow label="Client" count={monthCounts.client} pct={monthCounts.events ? Math.round((monthCounts.client / monthCounts.events) * 100) : 0} tone="is-client" />
+              <OverviewRow label="Consults" count={monthCounts.consultation} pct={monthCounts.events ? Math.round((monthCounts.consultation / monthCounts.events) * 100) : 0} tone="is-consultation" />
             </div>
           </article>
         </aside>
@@ -417,30 +477,57 @@ function CalendarPageContent() {
 
       {modalOpen ? (
         <div className="vilo-modal-overlay" onClick={closeModal}>
-          <div className="vilo-modal" onClick={(e) => e.stopPropagation()}>
+          <div className="vilo-modal calendar-event-modal" onClick={(e) => e.stopPropagation()}>
             <div className="vilo-modal__header">
-              <h3>Add Event</h3>
+              <div>
+                <h3>Add Event</h3>
+                <p className="calendar-event-modal__copy">Create an event for {form.date || ymd(selectedDate)}.</p>
+              </div>
               <button className="vilo-btn vilo-btn--ghost vilo-btn--xs" type="button" onClick={closeModal}>Close</button>
             </div>
-            <form className="vilo-modal__body vilo-form-grid" onSubmit={createEvent}>
-              <input placeholder="Title *" value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} required />
-              <select value={form.event_type} onChange={(e) => setForm({ ...form, event_type: e.target.value })} required>
-                {EVENT_TYPES.map((t) => <option key={t} value={t}>{t[0].toUpperCase() + t.slice(1)}</option>)}
-              </select>
-              <div className="vilo-form-row-two">
-                <input type="date" value={form.date} onChange={(e) => setForm({ ...form, date: e.target.value })} required />
-                <select value={form.case_id} onChange={(e) => setForm({ ...form, case_id: e.target.value })}>
-                  <option value="">Related Case (Optional)</option>
-                  {cases.map((c) => <option key={c.id} value={c.id}>{c.title}</option>)}
+            <form className="vilo-modal__body calendar-event-modal__body" onSubmit={createEvent}>
+              <div>
+                <label>Title *</label>
+                <input placeholder="Enter event title" value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} required />
+              </div>
+              <div>
+                <label>Event Type *</label>
+                <select value={form.event_type} onChange={(e) => setForm({ ...form, event_type: e.target.value })} required>
+                  {EVENT_TYPES.map((t) => <option key={t} value={t}>{eventTypeLabel(t)}</option>)}
                 </select>
               </div>
               <div className="vilo-form-row-two">
-                <input type="time" value={form.start_time} onChange={(e) => setForm({ ...form, start_time: e.target.value })} required />
-                <input type="time" value={form.end_time} onChange={(e) => setForm({ ...form, end_time: e.target.value })} />
+                <div>
+                  <label>Date *</label>
+                  <input type="date" value={form.date} onChange={(e) => setForm({ ...form, date: e.target.value })} required />
+                </div>
+                <div>
+                  <label>Related Case</label>
+                  <select value={form.case_id} onChange={(e) => setForm({ ...form, case_id: e.target.value })}>
+                    <option value="">Related Case (Optional)</option>
+                    {cases.map((c) => <option key={c.id} value={c.id}>{c.title}</option>)}
+                  </select>
+                </div>
               </div>
-              <input placeholder="Location" value={form.location} onChange={(e) => setForm({ ...form, location: e.target.value })} />
-              <textarea placeholder="Description / Notes" value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} />
-              <div className="vilo-table-actions">
+              <div className="vilo-form-row-two">
+                <div>
+                  <label>Start Time *</label>
+                  <input type="time" value={form.start_time} onChange={(e) => setForm({ ...form, start_time: e.target.value })} required />
+                </div>
+                <div>
+                  <label>End Time</label>
+                  <input type="time" value={form.end_time} onChange={(e) => setForm({ ...form, end_time: e.target.value })} />
+                </div>
+              </div>
+              <div>
+                <label>Location</label>
+                <input placeholder="Enter location" value={form.location} onChange={(e) => setForm({ ...form, location: e.target.value })} />
+              </div>
+              <div>
+                <label>Description / Notes</label>
+                <textarea placeholder="Add notes or context" value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} />
+              </div>
+              <div className="vilo-table-actions calendar-event-modal__actions">
                 <button type="button" className="vilo-btn vilo-btn--secondary" onClick={closeModal}>Cancel</button>
                 <button type="submit" className="vilo-btn vilo-btn--primary" disabled={saving}>{saving ? "Saving..." : "Create Event"}</button>
               </div>
@@ -452,17 +539,14 @@ function CalendarPageContent() {
   );
 }
 
-function OverviewRow({ label, count, pct }) {
+function OverviewRow({ label, count, pct, tone }) {
   return (
     <div className="calendar-overview-row">
-      <div><strong>{label}</strong><span>{count}</span></div>
-      <div className="calendar-overview-bar"><i style={{ width: `${Math.max(0, Math.min(100, pct))}%` }} /></div>
+      <div className="calendar-overview-row__header">
+        <strong>{label}</strong>
+        <span>{count}</span>
+      </div>
+      <div className="calendar-overview-bar"><i className={tone} style={{ width: `${Math.max(0, Math.min(100, pct))}%` }} /></div>
     </div>
   );
-}
-
-function parseDateValue(value) {
-  if (!value) return null;
-  const parsed = new Date(`${value}T00:00:00`);
-  return Number.isNaN(parsed.getTime()) ? null : parsed;
 }

@@ -31,3 +31,4 @@ backend/storage/
 backend/.venv/
 __pycache__/
 *.pyc
+design-reference/
