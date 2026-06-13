@@ -137,9 +137,15 @@ export function Sidebar({ isMobileOpen = false, onClose = () => {} }) {
       variants={sidebarVariants}
     >
       <div className="vilo-sidebar__inner">
-        <div className="vilo-sidebar__brand">
+        <Link
+          href="/dashboard"
+          className="vilo-sidebar__brand"
+          aria-label="Go to dashboard"
+          title="Go to dashboard"
+          onClick={onClose}
+        >
           <Image src="/assets/vilo-logo.png" alt="VILO" width={120} height={36} className="vilo-brand-logo" priority />
-        </div>
+        </Link>
 
         <div className="vilo-sidebar__block">
           <p className="vilo-sidebar__eyebrow">APPS &amp; PAGES</p>
@@ -309,8 +315,8 @@ function resolveNotificationHref(item) {
   if (meta.conversation_id) return `/dashboard/messages?conversation=${meta.conversation_id}`;
   if (meta.message_id) return "/dashboard/messages";
   if (meta.document_id) return "/dashboard/documents";
-  if (meta.invoice_id) return "/dashboard/invoices";
-  if (meta.task_id) return "/dashboard/tasks";
+  if (meta.invoice_id) return `/dashboard/invoices/${meta.invoice_id}`;
+  if (meta.task_id) return `/dashboard/tasks?task_id=${meta.task_id}`;
   if (meta.calendar_event_id) return `/dashboard/calendar?event_id=${meta.calendar_event_id}`;
   if (meta.case_id) return `/dashboard/cases/${meta.case_id}`;
   if (meta.client_id) return `/dashboard/clients/${meta.client_id}`;

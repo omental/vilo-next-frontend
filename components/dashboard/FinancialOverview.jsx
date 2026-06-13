@@ -1,6 +1,7 @@
 "use client";
 
 import { motion, useReducedMotion } from "framer-motion";
+import Link from "next/link";
 import { createCardVariants, createHoverLift, createItemVariants } from "../motion";
 
 const chartValues = [190, 105, 210, 80, 175, 240, 260];
@@ -110,13 +111,27 @@ export function FinancialOverview({ revenueText = "$230,000", summaryItems = def
 
             return (
               <motion.article key={item.label} className="financial-summary__item" variants={itemVariants}>
-                <span className={`financial-summary__icon ${item.tone}`}>
-                  <Icon />
-                </span>
-                <div className="financial-summary__copy">
-                  <p>{item.label}:</p>
-                  <strong>{item.value}</strong>
-                </div>
+                {item.href ? (
+                  <Link href={item.href} className="financial-summary__link">
+                    <span className={`financial-summary__icon ${item.tone}`}>
+                      <Icon />
+                    </span>
+                    <div className="financial-summary__copy">
+                      <p>{item.label}:</p>
+                      <strong>{item.value}</strong>
+                    </div>
+                  </Link>
+                ) : (
+                  <>
+                    <span className={`financial-summary__icon ${item.tone}`}>
+                      <Icon />
+                    </span>
+                    <div className="financial-summary__copy">
+                      <p>{item.label}:</p>
+                      <strong>{item.value}</strong>
+                    </div>
+                  </>
+                )}
               </motion.article>
             );
           })}

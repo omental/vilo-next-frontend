@@ -115,7 +115,7 @@ export function CalendarOverview({ events = [] }) {
 
         <div className="calendar-events">
           {eventItems.map((item, index) => (
-            <motion.article
+            <motion.div
               key={`${item.color}-${index}`}
               className={`calendar-event ${item.color}${item.href ? " is-clickable" : ""}`}
               variants={eventVariants}
@@ -123,9 +123,18 @@ export function CalendarOverview({ events = [] }) {
               animate="show"
               transition={{ delay: shouldReduceMotion ? 0 : 0.08 * index }}
             >
-              {item.href ? <Link href={item.href} className="calendar-event__link">{item.title}</Link> : <p>{item.title}</p>}
-              <span>{item.time}</span>
-            </motion.article>
+              {item.href ? (
+                <Link href={item.href} className="calendar-event__card-link">
+                  <span className="calendar-event__link">{item.title}</span>
+                  <span>{item.time}</span>
+                </Link>
+              ) : (
+                <>
+                  <p>{item.title}</p>
+                  <span>{item.time}</span>
+                </>
+              )}
+            </motion.div>
           ))}
         </div>
       </div>

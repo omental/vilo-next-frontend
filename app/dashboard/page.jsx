@@ -21,6 +21,12 @@ function fmtShortDate(value) {
   return d.toLocaleDateString("en-US", { month: "short", day: "numeric" });
 }
 
+function taskHref(task) {
+  if (task?.id) return `/dashboard/tasks?task_id=${task.id}`;
+  if (task?.case_id) return `/dashboard/cases/${task.case_id}`;
+  return "";
+}
+
 export default function DashboardPage() {
   const [widgets, setWidgets] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -70,20 +76,20 @@ export default function DashboardPage() {
     label: task.title || `Task #${task.id}`,
     priority: task.priority || "medium",
     tone: task.priority === "high" ? "is-high" : task.priority === "low" ? "is-low" : "is-normal",
-    href: task.case_id ? `/dashboard/cases/${task.case_id}` : task.id ? `/dashboard/tasks/${task.id}` : "",
+    href: taskHref(task),
   }));
 
   const snapshotStats = [
-    { label: "Total Cases", value: Number(firm?.total_cases ?? 100), tone: "is-violet" },
-    { label: "High Priority", value: Number(firm?.high_priority_cases ?? 15), tone: "is-orange" },
-    { label: "Tasks", value: Number(firm?.total_tasks ?? 88), tone: "is-green" },
-    { label: "Stalled Cases", value: Number(firm?.stalled_cases ?? 10), tone: "is-red" },
+    { label: "Total Cases", value: Number(firm?.total_cases ?? 100), tone: "is-violet", href: "/dashboard/cases" },
+    { label: "High Priority", value: Number(firm?.high_priority_cases ?? 15), tone: "is-orange", href: "/dashboard/cases" },
+    { label: "Tasks", value: Number(firm?.total_tasks ?? 88), tone: "is-green", href: "/dashboard/tasks" },
+    { label: "Stalled Cases", value: Number(firm?.stalled_cases ?? 10), tone: "is-red", href: "/dashboard/cases" },
   ];
 
   const financialSummaryItems = [
-    { label: "Monthly expenses", value: fmtCurrency(financial?.monthly_expenses), tone: "is-green" },
-    { label: "Net Profit", value: fmtCurrency(financial?.net_profit), tone: "is-orange" },
-    { label: "Trust Account", value: fmtCurrency(financial?.trust_account_balance), tone: "is-violet" },
+    { label: "Monthly expenses", value: fmtCurrency(financial?.monthly_expenses), tone: "is-green", href: "/dashboard/expenses" },
+    { label: "Net Profit", value: fmtCurrency(financial?.net_profit), tone: "is-orange", href: "/dashboard/finance" },
+    { label: "Trust Account", value: fmtCurrency(financial?.trust_account_balance), tone: "is-violet", href: "/dashboard/trust" },
   ];
 
   const activeCaseRows = (widgets?.active_cases || []).slice(0, 4).map((item) => ({

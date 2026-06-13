@@ -1,6 +1,7 @@
 "use client";
 
 import { motion, useReducedMotion } from "framer-motion";
+import Link from "next/link";
 import { createCardVariants, createHoverLift, createItemVariants } from "../motion";
 
 const fallbackSnapshotStats = [
@@ -79,13 +80,27 @@ export function FirmSnapshot({
 
             return (
               <motion.article key={item.label} className="snapshot-stat" variants={itemVariants}>
-                <div className="snapshot-stat__copy">
-                  <p>{item.label}:</p>
-                  <strong>{item.value}</strong>
-                </div>
-                <span className={`snapshot-stat__icon ${item.tone}`}>
-                  <Icon />
-                </span>
+                {item.href ? (
+                  <Link href={item.href} className="snapshot-stat__link">
+                    <div className="snapshot-stat__copy">
+                      <p>{item.label}:</p>
+                      <strong>{item.value}</strong>
+                    </div>
+                    <span className={`snapshot-stat__icon ${item.tone}`}>
+                      <Icon />
+                    </span>
+                  </Link>
+                ) : (
+                  <>
+                    <div className="snapshot-stat__copy">
+                      <p>{item.label}:</p>
+                      <strong>{item.value}</strong>
+                    </div>
+                    <span className={`snapshot-stat__icon ${item.tone}`}>
+                      <Icon />
+                    </span>
+                  </>
+                )}
               </motion.article>
             );
           })}
@@ -98,30 +113,35 @@ export function FirmSnapshot({
 function SnapshotDonut({ percent = 72, counts = { active: 0, court: 0, closed: 0, pending: 0 } }) {
   const shouldReduceMotion = useReducedMotion();
   const segments = buildSegments(counts);
+  const safePercent = Number.isFinite(Number(percent)) ? Math.max(0, Math.min(100, Math.round(Number(percent)))) : 0;
+  const circumference = 2 * Math.PI * 96;
+  const svgSize = 280;
+  const center = svgSize / 2;
+  const radius = 96;
 
   return (
-    <div className="snapshot-donut" aria-label={`Case Status ${percent} percent`}>
-      <svg viewBox="0 0 280 280" aria-hidden="true">
-        <circle className="snapshot-donut__track" cx="140" cy="140" r="96" />
+    <div className="snapshot-donut" aria-label={`Case Status ${safePercent} percent`}>
+      <svg viewBox={`0 0 ${svgSize} ${svgSize}`} aria-hidden="true">
+        <circle className="snapshot-donut__track" cx={center} cy={center} r={radius} />
         {segments.map((segment, index) => (
           <motion.circle
             key={segment.key}
             className={`snapshot-donut__segment ${segment.tone}`}
-            cx="140"
-            cy="140"
-            r="96"
-            pathLength="100"
-            strokeDasharray={`${segment.length} ${100 - segment.length}`}
+            cx={center}
+            cy={center}
+            r={radius}
+            strokeDasharray={`${segment.length} ${circumference - segment.length}`}
             strokeDashoffset={segment.offset}
-            initial={shouldReduceMotion ? false : { opacity: 0 }}
-            animate={{ opacity: 1 }}
-            transition={{ duration: 0.4, delay: shouldReduceMotion ? 0 : index * 0.08, ease: "easeOut" }}
+            initial={shouldReduceMotion ? false : { opacity: 0, strokeDasharray: `0 ${circumference}` }}
+            animate={{ opacity: 1, strokeDasharray: `${segment.length} ${circumference - segment.length}` }}
+            transition={{ duration: 0.7, delay: shouldReduceMotion ? 0 : index * 0.12, ease: "easeOut" }}
           />
         ))}
       </svg>
 
       <div className="snapshot-donut__center">
-        <strong>{percent}%</strong>
+        <span>Open workload</span>
+        <strong>{safePercent}%</strong>
       </div>
     </div>
   );
@@ -135,13 +155,14 @@ function buildSegments(counts) {
     { key: "pending", tone: "is-pending", value: Number(counts.pending || 0) },
   ];
   const total = ordered.reduce((sum, item) => sum + item.value, 0);
-  let offset = 25;
+  const circumference = 2 * Math.PI * 96;
+  let offset = circumference * 0.25;
 
   return ordered
     .filter((item) => item.value > 0 && total > 0)
     .map((item) => {
-      const length = Math.max(4, (item.value / total) * 100);
-      const segment = { ...item, length: Math.min(length, 100), offset };
+      const length = (item.value / total) * circumference;
+      const segment = { ...item, length, offset };
       offset -= segment.length;
       return segment;
     });

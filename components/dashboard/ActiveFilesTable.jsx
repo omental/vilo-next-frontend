@@ -78,7 +78,15 @@ export function ActiveFilesTable({ rows = fallbackRows }) {
                 initial={shouldReduceMotion ? false : "hidden"}
                 animate="show"
                 transition={{ delay: shouldReduceMotion ? 0 : 0.07 * index }}
+                role={row.href ? "link" : undefined}
+                tabIndex={row.href ? 0 : undefined}
                 onClick={row.href ? () => router.push(row.href) : undefined}
+                onKeyDown={row.href ? (event) => {
+                  if (event.key === "Enter" || event.key === " ") {
+                    event.preventDefault();
+                    router.push(row.href);
+                  }
+                } : undefined}
               >
                 <td>{row.href ? <Link href={row.href} className="files-table__link">{row.caseId}</Link> : row.caseId}</td>
                 <td>{row.clientHref ? <Link href={row.clientHref} className="files-table__link" onClick={(event) => event.stopPropagation()}>{row.client}</Link> : row.client}</td>

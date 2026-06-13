@@ -27,6 +27,7 @@ function TasksPageContent() {
   const searchParams = useSearchParams();
   const titleInputRef = useRef(null);
   const formCardRef = useRef(null);
+  const highlightedTaskRef = useRef(null);
   const [tasks, setTasks] = useState([]);
   const [cases, setCases] = useState([]);
   const [team, setTeam] = useState([]);
@@ -68,22 +69,37 @@ function TasksPageContent() {
 
   const filteredTasks = useMemo(() => {
     const filter = searchParams.get("filter");
+    const selectedTaskId = Number(searchParams.get("task_id") || 0);
     const now = new Date();
+    let nextTasks = tasks;
     if (filter === "due_today") {
-      return tasks.filter((task) => {
+      nextTasks = tasks.filter((task) => {
         if (!task.due_date || task.status === "completed") return false;
         const due = new Date(task.due_date);
         return due.toDateString() === now.toDateString();
       });
     }
     if (filter === "overdue") {
-      return tasks.filter((task) => {
+      nextTasks = tasks.filter((task) => {
         if (!task.due_date || task.status === "completed") return false;
         return new Date(task.due_date) < now;
       });
     }
-    return tasks;
+    if (selectedTaskId && !nextTasks.some((task) => Number(task.id) === selectedTaskId)) {
+      const selectedTask = tasks.find((task) => Number(task.id) === selectedTaskId);
+      if (selectedTask) {
+        nextTasks = [selectedTask, ...nextTasks];
+      }
+    }
+    return nextTasks;
   }, [searchParams, tasks]);
+
+  const selectedTaskId = Number(searchParams.get("task_id") || 0);
+
+  useEffect(() => {
+    if (!selectedTaskId || !filteredTasks.some((task) => Number(task.id) === selectedTaskId)) return;
+    highlightedTaskRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
+  }, [filteredTasks, selectedTaskId]);
 
   async function createTask(e) {
     e.preventDefault();
@@ -183,7 +199,11 @@ function TasksPageContent() {
               <thead><tr><th>Title</th><th>Status</th><th>Priority</th><th>Due</th><th>Action</th></tr></thead>
               <tbody>
                 {filteredTasks.map((task) => (
-                  <tr key={task.id}>
+                  <tr
+                    key={task.id}
+                    ref={Number(task.id) === selectedTaskId ? highlightedTaskRef : null}
+                    className={Number(task.id) === selectedTaskId ? "team-table__row-highlight" : ""}
+                  >
                     <td>{task.title}</td>
                     <td><span className={`vilo-badge vilo-badge--${task.status}`}>{task.status}</span></td>
                     <td><span className={`vilo-badge vilo-badge--priority-${task.priority}`}>{task.priority}</span></td>
