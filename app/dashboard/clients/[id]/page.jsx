@@ -26,6 +26,12 @@ function formatContactMethod(value) {
   return normalized[0].toUpperCase() + normalized.slice(1);
 }
 
+function labelize(value) {
+  return String(value || "")
+    .replace(/_/g, " ")
+    .replace(/\b\w/g, (char) => char.toUpperCase());
+}
+
 export default function ClientDetailPage() {
   const { id } = useParams();
   const notesSectionRef = useRef(null);
@@ -79,7 +85,7 @@ export default function ClientDetailPage() {
       const results = await Promise.allSettled([
         apiRequest("/api/v1/cases"),
         apiRequest(`/api/v1/clients/${id}/id-documents`),
-        apiRequest("/api/v1/tasks"),
+        apiRequest(`/api/v1/tasks?client_id=${id}`),
         apiRequest("/api/v1/team"),
         apiRequest(`/api/v1/invoices?client_id=${id}`),
         apiRequest(`/api/v1/documents?client_id=${id}`),
@@ -177,19 +183,24 @@ export default function ClientDetailPage() {
     [cases, id],
   );
 
-  const relatedCaseIds = useMemo(
-    () => new Set(relatedCases.map((row) => Number(row.id))),
+  const assignedUsers = useMemo(
+    () => team.filter((user) => selectedTeamIds.includes(user.id)),
+    [selectedTeamIds, team],
+  );
+
+  const teamById = useMemo(
+    () => new Map(team.map((user) => [Number(user.id), user])),
+    [team],
+  );
+
+  const casesById = useMemo(
+    () => new Map(relatedCases.map((row) => [Number(row.id), row])),
     [relatedCases],
   );
 
   const relatedTasks = useMemo(
-    () => tasks.filter((row) => row.case_id && relatedCaseIds.has(Number(row.case_id))),
-    [tasks, relatedCaseIds],
-  );
-
-  const assignedUsers = useMemo(
-    () => team.filter((user) => selectedTeamIds.includes(user.id)),
-    [selectedTeamIds, team],
+    () => tasks,
+    [tasks],
   );
 
   const availableTeam = useMemo(
@@ -224,7 +235,7 @@ export default function ClientDetailPage() {
       priority: row.priority || "medium",
       filing_date: row.due_date || row.created_at,
       status: row.status || "pending",
-      type: "notes",
+      type: "tasks",
       href: `/dashboard/tasks?task_id=${row.id}`,
     }));
 
@@ -438,6 +449,7 @@ export default function ClientDetailPage() {
                 ["messages", "Messages"],
                 ["documents", "Documents"],
                 ["cases", "Cases"],
+                ["tasks", "Tasks"],
               ].map(([key, label]) => (
                 <button key={key} type="button" className={timelineTab === key ? "case-tab-btn is-active" : "case-tab-btn"} onClick={() => setTimelineTab(key)}>{label}</button>
               ))}
@@ -450,6 +462,7 @@ export default function ClientDetailPage() {
                 <select value={timelineType} onChange={(e) => setTimelineType(e.target.value)}>
                   <option value="all">Type</option>
                   <option value="cases">Cases</option>
+                  <option value="tasks">Tasks</option>
                   <option value="documents">Documents</option>
                   <option value="messages">Messages</option>
                   <option value="notes">Notes</option>
@@ -526,6 +539,47 @@ export default function ClientDetailPage() {
               </div>
             ) : (
               <p className="vilo-card-copy">No invoices yet for this client.</p>
+            )}
+          </article>
+
+          <article className="dashboard-card clients-list-card">
+            <div className="dashboard-card__header">
+              <h2>Tasks</h2>
+              <Link href={`/dashboard/tasks?create=1&client_id=${id}`} className="vilo-btn vilo-btn--primary vilo-btn--xs">
+                Add Task
+              </Link>
+            </div>
+            {tasks.length ? (
+              <div className="vilo-table-wrap case-table-wrap">
+                <table className="team-table">
+                  <thead><tr><th>Title</th><th>Linked Case</th><th>Assigned</th><th>Status</th><th>Priority</th><th>Due</th><th>Action</th></tr></thead>
+                  <tbody>
+                    {tasks.map((task) => (
+                      <tr key={task.id} className={`tasks-table-row${task.status === "completed" ? " is-completed" : ""}${task.is_overdue ? " is-overdue" : ""}`}>
+                        <td>
+                          <div className="tasks-table-title">
+                            <strong>{task.title}</strong>
+                            <span>{labelize(task.task_type || "general")}</span>
+                          </div>
+                        </td>
+                        <td>{task.case_id ? casesById.get(Number(task.case_id))?.title || `Case #${task.case_id}` : "No case linked"}</td>
+                        <td>{teamById.get(Number(task.assigned_user_id || task.assigned_to || 0))?.name || "Unassigned"}</td>
+                        <td>
+                          <div className="tasks-status-stack">
+                            <span className={`vilo-badge vilo-badge--${task.status}`}>{labelize(task.status)}</span>
+                            {task.is_overdue ? <span className="vilo-badge vilo-badge--overdue">Overdue</span> : null}
+                          </div>
+                        </td>
+                        <td><span className={`vilo-badge vilo-badge--priority-${task.priority}`}>{labelize(task.priority)}</span></td>
+                        <td>{formatDate(task.due_date)}</td>
+                        <td><Link href={`/dashboard/tasks?task_id=${task.id}`}>Open</Link></td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            ) : (
+              <p className="vilo-card-copy">No tasks linked to this client yet.</p>
             )}
           </article>
 

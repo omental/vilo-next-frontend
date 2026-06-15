@@ -27,6 +27,19 @@ function fmtDate(v) {
   return d.toLocaleDateString("en-US");
 }
 
+function fmtDateTime(v) {
+  if (!v) return "-";
+  const d = new Date(v);
+  if (Number.isNaN(d.getTime())) return "-";
+  return d.toLocaleString("en-US", { month: "short", day: "numeric", year: "numeric", hour: "numeric", minute: "2-digit" });
+}
+
+function labelize(value) {
+  return String(value || "")
+    .replace(/_/g, " ")
+    .replace(/\b\w/g, (char) => char.toUpperCase());
+}
+
 function EmptyState({ text }) {
   return <div className="vilo-state-block"><p className="vilo-state">{text}</p></div>;
 }
@@ -395,6 +408,7 @@ export default function CaseDetailPage() {
   const totalPages = Math.max(1, Math.ceil(timelineRows.length / perPage));
 
   const clientName = useMemo(() => clients.find((c) => c.id === item?.client_id)?.name || `#${item?.client_id || "-"}`, [clients, item]);
+  const teamById = useMemo(() => new Map(team.map((member) => [Number(member.id), member])), [team]);
   const expectedCompletion = useMemo(() => {
     if (!tasks.length) return "-";
     const sorted = [...tasks].filter((t) => t.due_date).sort((a, b) => new Date(a.due_date) - new Date(b.due_date));
@@ -571,15 +585,32 @@ export default function CaseDetailPage() {
               <div className="case-tab-panel">
                 <div className="case-tab-headline-row">
                   <h2>Tasks</h2>
-                  <button type="button" className="vilo-btn vilo-btn--secondary" onClick={() => setModalType("add-task")}>Add Task</button>
+                  <Link href={`/dashboard/tasks?create=1&case_id=${id}`} className="vilo-btn vilo-btn--secondary">Add Task</Link>
                 </div>
                 {tasks.length ? (
                   <div className="vilo-table-wrap case-table-wrap">
                     <table className="team-table">
-                      <thead><tr><th>Title</th><th>Status</th><th>Priority</th><th>Due Date</th></tr></thead>
+                      <thead><tr><th>Title</th><th>Assigned</th><th>Status</th><th>Priority</th><th>Due Date</th><th>Action</th></tr></thead>
                       <tbody>
                         {tasks.map((t) => (
-                          <tr key={t.id}><td>{t.title}</td><td><span className={`vilo-badge vilo-badge--${t.status}`}>{t.status}</span></td><td><span className={`vilo-badge vilo-badge--priority-${t.priority}`}>{t.priority}</span></td><td>{fmtDate(t.due_date)}</td></tr>
+                          <tr key={t.id} className={`tasks-table-row${t.status === "completed" ? " is-completed" : ""}${t.is_overdue ? " is-overdue" : ""}`}>
+                            <td>
+                              <div className="tasks-table-title">
+                                <strong>{t.title}</strong>
+                                <span>{labelize(t.task_type || "general")}</span>
+                              </div>
+                            </td>
+                            <td>{teamById.get(Number(t.assigned_user_id || t.assigned_to || 0))?.name || "Unassigned"}</td>
+                            <td>
+                              <div className="tasks-status-stack">
+                                <span className={`vilo-badge vilo-badge--${t.status}`}>{labelize(t.status)}</span>
+                                {t.is_overdue ? <span className="vilo-badge vilo-badge--overdue">Overdue</span> : null}
+                              </div>
+                            </td>
+                            <td><span className={`vilo-badge vilo-badge--priority-${t.priority}`}>{labelize(t.priority)}</span></td>
+                            <td>{fmtDateTime(t.due_date)}</td>
+                            <td><Link href={`/dashboard/tasks?task_id=${t.id}`}>Open</Link></td>
+                          </tr>
                         ))}
                       </tbody>
                     </table>

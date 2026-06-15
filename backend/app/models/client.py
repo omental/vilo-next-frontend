@@ -36,6 +36,7 @@ class Client(Base):
     intakes = relationship("ClientIntake", back_populates="client", cascade="all, delete-orphan")
     documents = relationship("Document", back_populates="client")
     assignments = relationship("ClientAssignment", back_populates="client", cascade="all, delete-orphan")
+    tasks = relationship("Task", back_populates="client")
 
 
 class ClientAssignment(Base):

@@ -93,20 +93,30 @@ function normalizeValue(value) {
     .replace(/[_-]+/g, " ");
 }
 
-function getEventCategory(event) {
+function titleCase(value) {
+  return String(value || "")
+    .replace(/_/g, " ")
+    .replace(/\b\w/g, (char) => char.toUpperCase());
+}
+
+function getEventCategory(item) {
+  if (item.source_type === "task") {
+    if (String(item.task_type || "").toLowerCase() === "deadline") return "deadline";
+    return "reminder";
+  }
+
   const candidates = [
-    event.event_type,
-    event.type,
-    event.category,
-    event.eventType,
-    event.status,
-    event.title,
+    item.event_type,
+    item.type,
+    item.category,
+    item.eventType,
+    item.status,
+    item.title,
   ];
 
   for (const candidate of candidates) {
     const value = normalizeValue(candidate);
     if (!value) continue;
-
     if (value.includes("court") || value.includes("hearing") || value.includes("trial") || value.includes("appearance")) return "court";
     if (value.includes("consult")) return "consultation";
     if (value.includes("deadline") || value.includes("due") || value.includes("filing")) return "deadline";
@@ -129,6 +139,21 @@ function getToneClass(category) {
   return CATEGORY_TO_TONE[category] || CATEGORY_TO_TONE.other;
 }
 
+function getTaskPillLabel(item) {
+  if (item.is_overdue) return "Overdue";
+  if (item.completed) return "Completed";
+  return titleCase(item.priority || item.status || "Task");
+}
+
+function matchesFilter(item, activeFilter) {
+  if (activeFilter === "all") return true;
+  if (activeFilter === "reminder" && item.source_type === "task") return true;
+  if (activeFilter === "deadline" && item.source_type === "task") {
+    return item.category === "deadline" || Boolean(item.due_date || item.start_at);
+  }
+  return item.category === activeFilter;
+}
+
 export default function CalendarPage() {
   return (
     <Suspense fallback={<section className="dashboard-page-stack"><div className="vilo-state-block"><p className="vilo-state vilo-state--loading">Loading calendar...</p></div></section>}>
@@ -140,7 +165,7 @@ export default function CalendarPage() {
 function CalendarPageContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
-  const [events, setEvents] = useState([]);
+  const [items, setItems] = useState([]);
   const [cases, setCases] = useState([]);
   const [view, setView] = useState("month");
   const [selectedMonth, setSelectedMonth] = useState(startOfMonth(new Date()));
@@ -157,11 +182,11 @@ function CalendarPageContent() {
     setLoading(true);
     setError("");
     try {
-      const [eventData, caseData] = await Promise.all([
-        apiRequest("/api/v1/calendar/events"),
+      const [calendarData, caseData] = await Promise.all([
+        apiRequest("/api/v1/calendar/events?include_tasks=true"),
         apiRequest("/api/v1/cases"),
       ]);
-      setEvents(eventData || []);
+      setItems(calendarData || []);
       setCases(caseData || []);
     } catch {
       setError("Unable to load calendar data right now.");
@@ -186,71 +211,77 @@ function CalendarPageContent() {
     if (searchParams.get("create") !== "1") return;
     const queryDate = parseDateValue(searchParams.get("date"));
     openModalForDate(queryDate || selectedDate, false);
-  }, [searchParams]);
+  }, [searchParams]); // eslint-disable-line react-hooks/exhaustive-deps
 
   function monthLabel(date) {
     return date.toLocaleDateString([], { month: "long", year: "numeric" });
   }
 
-  function parseEvent(event) {
-    const start = new Date(event.start_at);
-    const category = getEventCategory(event);
+  function parseCalendarItem(item) {
+    const start = new Date(item.start_at);
+    const category = getEventCategory(item);
+    const isTask = item.source_type === "task";
     return {
-      ...event,
+      ...item,
       start,
       dateKey: ymd(start),
       category,
+      isTask,
       toneClass: getToneClass(category),
-      displayType: getEventTypeLabel(String(event.event_type || "")),
+      displayType: isTask ? titleCase(item.task_type || "task") : getEventTypeLabel(String(item.event_type || "")),
     };
   }
 
-  const normalizedEvents = useMemo(() => events.map(parseEvent).sort((a, b) => a.start - b.start), [events]);
+  const normalizedItems = useMemo(
+    () => items.map(parseCalendarItem).sort((a, b) => a.start - b.start),
+    [items],
+  );
 
-  const filteredEvents = useMemo(() => {
-    if (activeFilter === "all") return normalizedEvents;
-    return normalizedEvents.filter((event) => event.category === activeFilter);
-  }, [activeFilter, normalizedEvents]);
+  const filteredItems = useMemo(
+    () => normalizedItems.filter((item) => matchesFilter(item, activeFilter)),
+    [activeFilter, normalizedItems],
+  );
 
-  const monthEvents = useMemo(
-    () => normalizedEvents.filter((event) => event.start.getMonth() === selectedMonth.getMonth() && event.start.getFullYear() === selectedMonth.getFullYear()),
-    [normalizedEvents, selectedMonth],
+  const monthItems = useMemo(
+    () => normalizedItems.filter((item) => item.start.getMonth() === selectedMonth.getMonth() && item.start.getFullYear() === selectedMonth.getFullYear()),
+    [normalizedItems, selectedMonth],
   );
 
   const monthCounts = useMemo(() => {
-    const counts = { events: monthEvents.length, court: 0, meeting: 0, consultation: 0 };
-    monthEvents.forEach((event) => {
-      if (event.category === "court") counts.court += 1;
-      if (event.category === "meeting") counts.meeting += 1;
-      if (event.category === "consultation") counts.consultation += 1;
+    const counts = { items: monthItems.length, tasks: 0, court: 0, meeting: 0, consultation: 0 };
+    monthItems.forEach((item) => {
+      if (item.isTask) counts.tasks += 1;
+      if (item.category === "court") counts.court += 1;
+      if (item.category === "meeting") counts.meeting += 1;
+      if (item.category === "consultation") counts.consultation += 1;
     });
     return counts;
-  }, [monthEvents]);
+  }, [monthItems]);
 
-  const eventsByDay = useMemo(() => {
+  const itemsByDay = useMemo(() => {
     const map = new Map();
-    normalizedEvents.forEach((event) => {
-      const list = map.get(event.dateKey) || [];
-      list.push(event);
-      map.set(event.dateKey, list);
+    normalizedItems.forEach((item) => {
+      const list = map.get(item.dateKey) || [];
+      list.push(item);
+      map.set(item.dateKey, list);
     });
     return map;
-  }, [normalizedEvents]);
+  }, [normalizedItems]);
 
-  const filteredEventsByDay = useMemo(() => {
+  const filteredItemsByDay = useMemo(() => {
     const map = new Map();
-    filteredEvents.forEach((event) => {
-      const list = map.get(event.dateKey) || [];
-      list.push(event);
-      map.set(event.dateKey, list);
+    filteredItems.forEach((item) => {
+      const list = map.get(item.dateKey) || [];
+      list.push(item);
+      map.set(item.dateKey, list);
     });
     return map;
-  }, [filteredEvents]);
+  }, [filteredItems]);
 
-  const upcomingEvents = useMemo(() => {
+  const upcomingItems = useMemo(() => {
     const now = new Date();
-    return filteredEvents.filter((event) => event.start >= now).slice(0, 8);
-  }, [filteredEvents]);
+    return filteredItems.filter((item) => item.start >= now).slice(0, 8);
+  }, [filteredItems]);
 
   const monthGrid = useMemo(() => {
     const start = startOfMonth(selectedMonth);
@@ -277,33 +308,35 @@ function CalendarPageContent() {
   }, [selectedDate]);
 
   const selectedDateKey = ymd(selectedDate);
-  const selectedDateEvents = useMemo(() => eventsByDay.get(selectedDateKey) || [], [eventsByDay, selectedDateKey]);
-  const selectedDateFilteredEvents = useMemo(() => filteredEventsByDay.get(selectedDateKey) || [], [filteredEventsByDay, selectedDateKey]);
+  const selectedDateItems = useMemo(() => itemsByDay.get(selectedDateKey) || [], [itemsByDay, selectedDateKey]);
+  const selectedDateFilteredItems = useMemo(() => filteredItemsByDay.get(selectedDateKey) || [], [filteredItemsByDay, selectedDateKey]);
 
   const selectedEventId = Number(searchParams.get("event_id") || 0);
+  const selectedTaskId = Number(searchParams.get("task_id") || 0);
 
   useEffect(() => {
-    if (!selectedEventId) return;
-    const matched = normalizedEvents.find((event) => event.id === selectedEventId);
+    const matched = normalizedItems.find((item) => (item.isTask ? item.id === selectedTaskId : item.id === selectedEventId));
     if (!matched) return;
     setSelectedDate(new Date(matched.start));
     setSelectedMonth(startOfMonth(matched.start));
-  }, [normalizedEvents, selectedEventId]);
+  }, [normalizedItems, selectedEventId, selectedTaskId]);
 
   function moveMonth(delta) {
     setSelectedMonth((prev) => new Date(prev.getFullYear(), prev.getMonth() + delta, 1));
   }
 
-  function focusEvent(eventId) {
+  function focusItem(item) {
+    if (item.isTask) {
+      router.push(`/dashboard/tasks?task_id=${item.task_id || item.id}`);
+      return;
+    }
     const params = new URLSearchParams(searchParams.toString());
     params.delete("create");
     params.delete("date");
-    params.set("event_id", String(eventId));
-    const matched = normalizedEvents.find((event) => event.id === eventId);
-    if (matched) {
-      setSelectedDate(new Date(matched.start));
-      setSelectedMonth(startOfMonth(matched.start));
-    }
+    params.delete("task_id");
+    params.set("event_id", String(item.id));
+    setSelectedDate(new Date(item.start));
+    setSelectedMonth(startOfMonth(item.start));
     router.push(`/dashboard/calendar?${params.toString()}`);
   }
 
@@ -341,8 +374,8 @@ function CalendarPageContent() {
     router.replace(next ? `/dashboard/calendar?${next}` : "/dashboard/calendar");
   }
 
-  async function createEvent(e) {
-    e.preventDefault();
+  async function createEvent(event) {
+    event.preventDefault();
     setError("");
     setSuccess("");
 
@@ -368,9 +401,7 @@ function CalendarPageContent() {
         }),
       });
 
-      const createdMonth = new Date(`${form.date}T00:00:00`);
-      const sameMonth = createdMonth.getMonth() === selectedMonth.getMonth() && createdMonth.getFullYear() === selectedMonth.getFullYear();
-      setSuccess(sameMonth ? "Event created successfully." : "Event created in another month.");
+      setSuccess("Event created successfully.");
       closeModal();
       await load();
     } catch {
@@ -380,12 +411,12 @@ function CalendarPageContent() {
     }
   }
 
-  const monthSummary = `${monthCounts.events} events scheduled in ${monthLabel(selectedMonth)}.`;
+  const monthSummary = `${monthCounts.items} scheduled items in ${monthLabel(selectedMonth)}.`;
   const filterLabel = getCategoryLabel(activeFilter);
   const selectedDateHeading = formatLongDate(selectedDate);
   const selectedDateEmptyMessage = activeFilter === "all"
-    ? "No events scheduled for this day."
-    : `No ${filterLabel.toLowerCase()} events scheduled for this day.`;
+    ? "No events or tasks scheduled for this day."
+    : `No ${filterLabel.toLowerCase()} items scheduled for this day.`;
 
   return (
     <section className="dashboard-page-stack calendar-page">
@@ -441,16 +472,16 @@ function CalendarPageContent() {
               <div className="calendar-month-grid">
                 {monthGrid.map((date) => {
                   const key = ymd(date);
-                  const allDayEvents = eventsByDay.get(key) || [];
-                  const filteredDayEvents = filteredEventsByDay.get(key) || [];
-                  const visibleDayEvents = activeFilter === "all" ? allDayEvents : filteredDayEvents;
-                  const previewEvents = visibleDayEvents.slice(0, 3);
-                  const hiddenCount = Math.max(0, visibleDayEvents.length - previewEvents.length);
+                  const allDayItems = itemsByDay.get(key) || [];
+                  const filteredDayItems = filteredItemsByDay.get(key) || [];
+                  const visibleDayItems = activeFilter === "all" ? allDayItems : filteredDayItems;
+                  const previewItems = visibleDayItems.slice(0, 3);
+                  const hiddenCount = Math.max(0, visibleDayItems.length - previewItems.length);
                   const inMonth = date.getMonth() === selectedMonth.getMonth();
                   const isToday = sameDay(date, new Date()) && inMonth;
                   const isSelectedDate = sameDay(date, selectedDate);
-                  const hasFilterMatch = activeFilter !== "all" && filteredDayEvents.length > 0;
-                  const isFilterMuted = activeFilter !== "all" && allDayEvents.length > 0 && filteredDayEvents.length === 0;
+                  const hasFilterMatch = activeFilter !== "all" && filteredDayItems.length > 0;
+                  const isFilterMuted = activeFilter !== "all" && allDayItems.length > 0 && filteredDayItems.length === 0;
 
                   return (
                     <div
@@ -459,9 +490,9 @@ function CalendarPageContent() {
                       role="button"
                       tabIndex={0}
                       onClick={() => selectCalendarDate(date)}
-                      onKeyDown={(e) => {
-                        if (e.key === "Enter" || e.key === " ") {
-                          e.preventDefault();
+                      onKeyDown={(event) => {
+                        if (event.key === "Enter" || event.key === " ") {
+                          event.preventDefault();
                           selectCalendarDate(date);
                         }
                       }}
@@ -471,23 +502,23 @@ function CalendarPageContent() {
                         {hasFilterMatch ? <span className={`calendar-day-match-dot ${getToneClass(activeFilter)}`} aria-hidden="true" /> : null}
                       </div>
                       <div className="calendar-day-events">
-                        {previewEvents.map((event) => (
+                        {previewItems.map((item) => (
                           <button
-                            key={event.id}
+                            key={`${item.source_type}-${item.id}`}
                             type="button"
-                            className={`calendar-event-pill ${event.toneClass}${selectedEventId === event.id ? " is-selected" : ""}`}
-                            title={`${event.title} · ${formatTime(event.start_at)}`}
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              focusEvent(event.id);
+                            className={`calendar-event-pill ${item.toneClass}${selectedEventId === item.id || selectedTaskId === item.id ? " is-selected" : ""}${item.isTask ? " is-task" : ""}${item.completed ? " is-completed" : ""}${item.is_overdue ? " is-overdue" : ""}`}
+                            title={`${item.title} · ${formatTime(item.start_at)}`}
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              focusItem(item);
                             }}
                           >
-                            <span className="calendar-event-pill__time">{formatTime(event.start_at)}</span>
-                            <span className="calendar-event-pill__title">{event.title}</span>
+                            <span className="calendar-event-pill__time">{formatTime(item.start_at)}</span>
+                            <span className="calendar-event-pill__title">{item.title}</span>
                           </button>
                         ))}
                         {hiddenCount ? <span className="calendar-event-more">+{hiddenCount} more</span> : null}
-                        {!visibleDayEvents.length && activeFilter !== "all" && allDayEvents.length ? <span className="calendar-day-empty-hint">No {filterLabel.toLowerCase()}</span> : null}
+                        {!visibleDayItems.length && activeFilter !== "all" && allDayItems.length ? <span className="calendar-day-empty-hint">No {filterLabel.toLowerCase()}</span> : null}
                       </div>
                     </div>
                   );
@@ -518,16 +549,21 @@ function CalendarPageContent() {
             <div className="calendar-list-view">
               {weekDays.map((day) => {
                 const key = ymd(day);
-                const list = activeFilter === "all" ? (eventsByDay.get(key) || []) : (filteredEventsByDay.get(key) || []);
+                const list = activeFilter === "all" ? (itemsByDay.get(key) || []) : (filteredItemsByDay.get(key) || []);
                 return (
                   <div key={key} className="calendar-list-day">
                     <h3>{day.toLocaleDateString([], { weekday: "short", month: "short", day: "numeric" })}</h3>
-                    {list.length ? list.map((event) => (
-                      <button key={event.id} type="button" className={`calendar-list-item ${event.toneClass}${selectedEventId === event.id ? " is-selected" : ""}`} onClick={() => focusEvent(event.id)}>
-                        <strong>{event.title}</strong>
-                        <span>{formatTime(event.start_at)}{event.case_id ? ` · Case #${event.case_id}` : ""}</span>
+                    {list.length ? list.map((item) => (
+                      <button
+                        key={`${item.source_type}-${item.id}`}
+                        type="button"
+                        className={`calendar-list-item ${item.toneClass}${selectedEventId === item.id || selectedTaskId === item.id ? " is-selected" : ""}${item.isTask ? " is-task" : ""}${item.completed ? " is-completed" : ""}${item.is_overdue ? " is-overdue" : ""}`}
+                        onClick={() => focusItem(item)}
+                      >
+                        <strong>{item.title}</strong>
+                        <span>{formatTime(item.start_at)}{item.case_id ? ` · Case #${item.case_id}` : ""}</span>
                       </button>
-                    )) : <p className="vilo-state">{activeFilter === "all" ? "No events" : `No ${filterLabel.toLowerCase()} events`}</p>}
+                    )) : <p className="vilo-state">{activeFilter === "all" ? "No events or tasks" : `No ${filterLabel.toLowerCase()} items`}</p>}
                   </div>
                 );
               })}
@@ -538,10 +574,15 @@ function CalendarPageContent() {
             <div className="calendar-list-view">
               <div className="calendar-list-day">
                 <h3>{selectedDateHeading}</h3>
-                {selectedDateFilteredEvents.length ? selectedDateFilteredEvents.map((event) => (
-                  <button key={event.id} type="button" className={`calendar-list-item ${event.toneClass}${selectedEventId === event.id ? " is-selected" : ""}`} onClick={() => focusEvent(event.id)}>
-                    <strong>{event.title}</strong>
-                    <span>{formatTime(event.start_at)}{event.case_id ? ` · Case #${event.case_id}` : ""}</span>
+                {selectedDateFilteredItems.length ? selectedDateFilteredItems.map((item) => (
+                  <button
+                    key={`${item.source_type}-${item.id}`}
+                    type="button"
+                    className={`calendar-list-item ${item.toneClass}${selectedEventId === item.id || selectedTaskId === item.id ? " is-selected" : ""}${item.isTask ? " is-task" : ""}${item.completed ? " is-completed" : ""}${item.is_overdue ? " is-overdue" : ""}`}
+                    onClick={() => focusItem(item)}
+                  >
+                    <strong>{item.title}</strong>
+                    <span>{formatTime(item.start_at)}{item.case_id ? ` · Case #${item.case_id}` : ""}</span>
                   </button>
                 )) : <div className="vilo-state-block"><p className="vilo-state">{selectedDateEmptyMessage}</p></div>}
               </div>
@@ -556,36 +597,41 @@ function CalendarPageContent() {
                 <p className="calendar-main-head__eyebrow">Selected date</p>
                 <h2>{selectedDateHeading}</h2>
               </div>
-              <button type="button" className="vilo-btn vilo-btn--primary" onClick={() => openModalForDate(selectedDate)}>
-                Add Event
-              </button>
+              <div className="calendar-selected-card__actions">
+                <button type="button" className="vilo-btn vilo-btn--secondary vilo-btn--xs" onClick={() => router.push(`/dashboard/tasks?create=1&due_date=${selectedDateKey}`)}>
+                  Add Task
+                </button>
+                <button type="button" className="vilo-btn vilo-btn--primary vilo-btn--xs" onClick={() => openModalForDate(selectedDate)}>
+                  Add Event
+                </button>
+              </div>
             </div>
 
             {loading ? (
               <div className="vilo-state-block"><p className="vilo-state vilo-state--loading">Loading events...</p></div>
             ) : (
               <div className="calendar-selected-list">
-                {selectedDateFilteredEvents.length ? selectedDateFilteredEvents.map((event) => (
+                {selectedDateFilteredItems.length ? selectedDateFilteredItems.map((item) => (
                   <button
-                    key={event.id}
+                    key={`${item.source_type}-${item.id}`}
                     type="button"
-                    className={`calendar-upcoming-item ${event.toneClass}${selectedEventId === event.id ? " is-selected" : ""}`}
-                    onClick={() => focusEvent(event.id)}
+                    className={`calendar-upcoming-item ${item.toneClass}${selectedEventId === item.id || selectedTaskId === item.id ? " is-selected" : ""}${item.isTask ? " is-task" : ""}${item.completed ? " is-completed" : ""}${item.is_overdue ? " is-overdue" : ""}`}
+                    onClick={() => focusItem(item)}
                   >
                     <div className="calendar-upcoming-item__topline">
-                      <span>{getCategoryLabel(event.category)}</span>
-                      <small>{formatTime(event.start_at)}</small>
+                      <span>{item.isTask ? "Task" : getCategoryLabel(item.category)}</span>
+                      <small>{formatTime(item.start_at)}</small>
                     </div>
-                    <strong>{event.title}</strong>
+                    <strong>{item.title}</strong>
                     <div className="calendar-upcoming-item__meta">
-                      <span>{event.case_id ? `Case #${event.case_id}` : "No case linked"}</span>
-                      <span>{event.location || event.displayType}</span>
+                      <span>{item.case_id ? `Case #${item.case_id}` : "No case linked"}</span>
+                      <span>{item.isTask ? getTaskPillLabel(item) : (item.location || item.displayType)}</span>
                     </div>
                   </button>
                 )) : (
                   <div className="calendar-selected-empty">
                     <p>{selectedDateEmptyMessage}</p>
-                    {activeFilter !== "all" && selectedDateEvents.length ? <span>{selectedDateEvents.length} other event(s) exist on this date.</span> : null}
+                    {activeFilter !== "all" && selectedDateItems.length ? <span>{selectedDateItems.length} other item(s) exist on this date.</span> : null}
                   </div>
                 )}
               </div>
@@ -595,38 +641,39 @@ function CalendarPageContent() {
           <article className="dashboard-card calendar-side-card">
             <div className="dashboard-card__header"><h2>Upcoming</h2></div>
             {loading ? (
-              <div className="vilo-state-block"><p className="vilo-state vilo-state--loading">Loading upcoming events...</p></div>
-            ) : upcomingEvents.length ? (
+              <div className="vilo-state-block"><p className="vilo-state vilo-state--loading">Loading upcoming items...</p></div>
+            ) : upcomingItems.length ? (
               <div className="calendar-upcoming-list">
-                {upcomingEvents.map((event) => (
+                {upcomingItems.map((item) => (
                   <button
-                    key={event.id}
+                    key={`${item.source_type}-${item.id}`}
                     type="button"
-                    className={`calendar-upcoming-item ${event.toneClass}${selectedEventId === event.id ? " is-selected" : ""}`}
-                    onClick={() => focusEvent(event.id)}
+                    className={`calendar-upcoming-item ${item.toneClass}${selectedEventId === item.id || selectedTaskId === item.id ? " is-selected" : ""}${item.isTask ? " is-task" : ""}${item.completed ? " is-completed" : ""}${item.is_overdue ? " is-overdue" : ""}`}
+                    onClick={() => focusItem(item)}
                   >
                     <div className="calendar-upcoming-item__topline">
-                      <span>{formatEventDate(event.start)}</span>
-                      <small>{formatTime(event.start_at)}</small>
+                      <span>{formatEventDate(item.start)}</span>
+                      <small>{formatTime(item.start_at)}</small>
                     </div>
-                    <strong>{event.title}</strong>
+                    <strong>{item.title}</strong>
                     <div className="calendar-upcoming-item__meta">
-                      <span>{getCategoryLabel(event.category)}</span>
-                      <span>{event.case_id ? `Case #${event.case_id}` : "No case linked"}</span>
+                      <span>{item.isTask ? titleCase(item.task_type || "task") : getCategoryLabel(item.category)}</span>
+                      <span>{item.case_id ? `Case #${item.case_id}` : "No case linked"}</span>
                     </div>
                   </button>
                 ))}
               </div>
-            ) : <div className="vilo-state-block"><p className="vilo-state">{activeFilter === "all" ? "No upcoming events." : `No upcoming ${filterLabel.toLowerCase()} events.`}</p></div>}
+            ) : <div className="vilo-state-block"><p className="vilo-state">{activeFilter === "all" ? "No upcoming events or tasks." : `No upcoming ${filterLabel.toLowerCase()} items.`}</p></div>}
           </article>
 
           <article className="dashboard-card calendar-side-card">
             <div className="dashboard-card__header"><h2>Monthly Overview</h2></div>
             <div className="calendar-overview-list">
-              <OverviewRow label="Events" count={monthCounts.events} pct={100} tone="is-court" />
-              <OverviewRow label="Court" count={monthCounts.court} pct={monthCounts.events ? Math.round((monthCounts.court / monthCounts.events) * 100) : 0} tone="is-court" />
-              <OverviewRow label="Meeting" count={monthCounts.meeting} pct={monthCounts.events ? Math.round((monthCounts.meeting / monthCounts.events) * 100) : 0} tone="is-client" />
-              <OverviewRow label="Consults" count={monthCounts.consultation} pct={monthCounts.events ? Math.round((monthCounts.consultation / monthCounts.events) * 100) : 0} tone="is-consultation" />
+              <OverviewRow label="Items" count={monthCounts.items} pct={100} tone="is-court" />
+              <OverviewRow label="Tasks" count={monthCounts.tasks} pct={monthCounts.items ? Math.round((monthCounts.tasks / monthCounts.items) * 100) : 0} tone="is-staff" />
+              <OverviewRow label="Court" count={monthCounts.court} pct={monthCounts.items ? Math.round((monthCounts.court / monthCounts.items) * 100) : 0} tone="is-court" />
+              <OverviewRow label="Meeting" count={monthCounts.meeting} pct={monthCounts.items ? Math.round((monthCounts.meeting / monthCounts.items) * 100) : 0} tone="is-client" />
+              <OverviewRow label="Consults" count={monthCounts.consultation} pct={monthCounts.items ? Math.round((monthCounts.consultation / monthCounts.items) * 100) : 0} tone="is-consultation" />
             </div>
           </article>
         </aside>
@@ -634,7 +681,7 @@ function CalendarPageContent() {
 
       {modalOpen ? (
         <div className="vilo-modal-overlay" onClick={closeModal}>
-          <div className="vilo-modal calendar-event-modal" onClick={(e) => e.stopPropagation()}>
+          <div className="vilo-modal calendar-event-modal" onClick={(event) => event.stopPropagation()}>
             <div className="vilo-modal__header calendar-event-modal__header">
               <div>
                 <h3>Add Event</h3>
@@ -648,24 +695,18 @@ function CalendarPageContent() {
                 <div className="calendar-event-modal__section">
                   <div className="calendar-event-modal__field">
                     <label htmlFor="calendar-event-title">Event title *</label>
-                    <input
-                      id="calendar-event-title"
-                      placeholder="Enter event title"
-                      value={form.title}
-                      onChange={(e) => setForm({ ...form, title: e.target.value })}
-                      required
-                    />
+                    <input id="calendar-event-title" placeholder="Enter event title" value={form.title} onChange={(event) => setForm({ ...form, title: event.target.value })} required />
                   </div>
                 </div>
 
                 <div className="calendar-event-modal__grid">
                   <div className="calendar-event-modal__field">
                     <label htmlFor="calendar-event-date">Date *</label>
-                    <input id="calendar-event-date" type="date" value={form.date} onChange={(e) => setForm({ ...form, date: e.target.value })} required />
+                    <input id="calendar-event-date" type="date" value={form.date} onChange={(event) => setForm({ ...form, date: event.target.value })} required />
                   </div>
                   <div className="calendar-event-modal__field">
                     <label htmlFor="calendar-event-type">Type / Category *</label>
-                    <select id="calendar-event-type" value={form.event_type} onChange={(e) => setForm({ ...form, event_type: e.target.value })} required>
+                    <select id="calendar-event-type" value={form.event_type} onChange={(event) => setForm({ ...form, event_type: event.target.value })} required>
                       {EVENT_TYPE_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
                     </select>
                   </div>
@@ -674,31 +715,31 @@ function CalendarPageContent() {
                 <div className="calendar-event-modal__grid">
                   <div className="calendar-event-modal__field">
                     <label htmlFor="calendar-event-start">Start time *</label>
-                    <input id="calendar-event-start" type="time" value={form.start_time} onChange={(e) => setForm({ ...form, start_time: e.target.value })} required />
+                    <input id="calendar-event-start" type="time" value={form.start_time} onChange={(event) => setForm({ ...form, start_time: event.target.value })} required />
                   </div>
                   <div className="calendar-event-modal__field">
                     <label htmlFor="calendar-event-end">End time</label>
-                    <input id="calendar-event-end" type="time" value={form.end_time} onChange={(e) => setForm({ ...form, end_time: e.target.value })} />
+                    <input id="calendar-event-end" type="time" value={form.end_time} onChange={(event) => setForm({ ...form, end_time: event.target.value })} />
                   </div>
                 </div>
 
                 <div className="calendar-event-modal__grid">
                   <div className="calendar-event-modal__field">
                     <label htmlFor="calendar-event-case">Related case</label>
-                    <select id="calendar-event-case" value={form.case_id} onChange={(e) => setForm({ ...form, case_id: e.target.value })}>
+                    <select id="calendar-event-case" value={form.case_id} onChange={(event) => setForm({ ...form, case_id: event.target.value })}>
                       <option value="">No related case</option>
-                      {cases.map((c) => <option key={c.id} value={c.id}>{c.title}</option>)}
+                      {cases.map((caseRow) => <option key={caseRow.id} value={caseRow.id}>{caseRow.title}</option>)}
                     </select>
                   </div>
                   <div className="calendar-event-modal__field">
                     <label htmlFor="calendar-event-location">Location</label>
-                    <input id="calendar-event-location" placeholder="Enter location" value={form.location} onChange={(e) => setForm({ ...form, location: e.target.value })} />
+                    <input id="calendar-event-location" placeholder="Enter location" value={form.location} onChange={(event) => setForm({ ...form, location: event.target.value })} />
                   </div>
                 </div>
 
                 <div className="calendar-event-modal__field">
                   <label htmlFor="calendar-event-description">Description / Notes</label>
-                  <textarea id="calendar-event-description" placeholder="Add notes or context" value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} />
+                  <textarea id="calendar-event-description" placeholder="Add notes or context" value={form.description} onChange={(event) => setForm({ ...form, description: event.target.value })} />
                 </div>
               </div>
 

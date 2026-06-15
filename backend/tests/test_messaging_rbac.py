@@ -94,3 +94,16 @@ def test_cross_org_conversation_access_hidden_or_blocked(client_for_user):
     # When conversation is not in participant scope, API should not allow access.
     res = client.get("/api/v1/conversations/98765")
     assert res.status_code in (403, 404)
+
+
+@pytest.mark.parametrize("role", STAFF_ROLES)
+def test_staff_allowed_on_org_scoped_user_search(client_for_user, role):
+    client = client_for_user(role)
+    res = client.get("/api/v1/users?search=law")
+    assert res.status_code == 200
+
+
+def test_client_blocked_from_org_scoped_user_search(client_for_user):
+    client = client_for_user("client")
+    res = client.get("/api/v1/users?search=law")
+    assert res.status_code == 403

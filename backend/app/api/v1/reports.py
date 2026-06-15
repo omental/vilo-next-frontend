@@ -26,6 +26,7 @@ from app.services.pdf import generate_report_pdf
 router = APIRouter(prefix="/reports", tags=["reports"])
 OPER_REPORTS = ["partner", "admin", "lawyer"]
 CASE_TASK_REPORTS = ["partner", "admin", "lawyer", "paralegal"]
+OPEN_TASK_STATUSES = ["pending", "not_started", "in_progress", "waiting"]
 
 
 def d(value):
@@ -61,7 +62,7 @@ async def dashboard_widgets(db: AsyncSession = Depends(get_db), current_user=Dep
     closed_cases = int((await db.scalar(select(func.count(Case.id)).where(Case.organization_id == org_id, Case.status == "closed"))) or 0)
     pending_cases = int((await db.scalar(select(func.count(Case.id)).where(Case.organization_id == org_id, Case.status == "draft"))) or 0)
     high_priority_cases = int((await db.scalar(select(func.count(Case.id)).where(Case.organization_id == org_id, Case.priority == "high"))) or 0)
-    total_tasks = int((await db.scalar(select(func.count(Task.id)).where(Task.organization_id == org_id))) or 0)
+    total_tasks = int((await db.scalar(select(func.count(Task.id)).where(Task.organization_id == org_id, Task.archived_at.is_(None)))) or 0)
     stalled_cases = int((await db.scalar(select(func.count(Case.id)).where(Case.organization_id == org_id, Case.status == "active", Case.updated_at < (now.replace(hour=0, minute=0, second=0, microsecond=0) - timedelta(days=30))))) or 0)
 
     court_cases = int((await db.scalar(
@@ -76,7 +77,8 @@ async def dashboard_widgets(db: AsyncSession = Depends(get_db), current_user=Dep
     due_today_count = int((await db.scalar(
         select(func.count(Task.id)).where(
             Task.organization_id == org_id,
-            Task.status.in_(["pending", "in_progress"]),
+            Task.status.in_(OPEN_TASK_STATUSES),
+            Task.archived_at.is_(None),
             Task.due_date.is_not(None),
             func.date(Task.due_date) == today,
         )
@@ -84,7 +86,8 @@ async def dashboard_widgets(db: AsyncSession = Depends(get_db), current_user=Dep
     overdue_count = int((await db.scalar(
         select(func.count(Task.id)).where(
             Task.organization_id == org_id,
-            Task.status.in_(["pending", "in_progress"]),
+            Task.status.in_(OPEN_TASK_STATUSES),
+            Task.archived_at.is_(None),
             Task.due_date.is_not(None),
             Task.due_date < now,
         )
@@ -100,7 +103,8 @@ async def dashboard_widgets(db: AsyncSession = Depends(get_db), current_user=Dep
         select(Task.id, Task.title, Task.priority, Task.due_date, Task.case_id)
         .where(
             Task.organization_id == org_id,
-            Task.status.in_(["pending", "in_progress"]),
+            Task.status.in_(OPEN_TASK_STATUSES),
+            Task.archived_at.is_(None),
         )
         .order_by(Task.due_date.asc().nullslast(), Task.created_at.desc())
         .limit(8)
@@ -148,7 +152,7 @@ async def dashboard_widgets(db: AsyncSession = Depends(get_db), current_user=Dep
         select(Case.id, Case.title, Case.status, Client.name, User.name.label("lead_name"), func.min(Task.due_date).label("next_due"))
         .join(Client, Client.id == Case.client_id)
         .join(User, User.id == Case.created_by)
-        .outerjoin(Task, and_(Task.case_id == Case.id, Task.organization_id == org_id, Task.status.in_(["pending", "in_progress"])))
+        .outerjoin(Task, and_(Task.case_id == Case.id, Task.organization_id == org_id, Task.status.in_(OPEN_TASK_STATUSES), Task.archived_at.is_(None)))
         .where(Case.organization_id == org_id, Case.status == "active")
         .group_by(Case.id, Case.title, Case.status, Client.name, User.name)
         .order_by(Case.updated_at.desc())
@@ -242,8 +246,8 @@ async def dashboard_summary(db: AsyncSession = Depends(get_db), current_user=Dep
     total_cases = int((await db.scalar(select(func.count(Case.id)).where(Case.organization_id == org_id))) or 0)
     active_cases = int((await db.scalar(select(func.count(Case.id)).where(Case.organization_id == org_id, Case.status == "active"))) or 0)
     closed_cases = int((await db.scalar(select(func.count(Case.id)).where(Case.organization_id == org_id, Case.status == "closed"))) or 0)
-    pending_tasks = int((await db.scalar(select(func.count(Task.id)).where(Task.organization_id == org_id, Task.status.in_(["pending", "in_progress"])))) or 0)
-    overdue_tasks = int((await db.scalar(select(func.count(Task.id)).where(Task.organization_id == org_id, Task.status.in_(["pending", "in_progress"]), Task.due_date.is_not(None), Task.due_date < now))) or 0)
+    pending_tasks = int((await db.scalar(select(func.count(Task.id)).where(Task.organization_id == org_id, Task.status.in_(OPEN_TASK_STATUSES), Task.archived_at.is_(None)))) or 0)
+    overdue_tasks = int((await db.scalar(select(func.count(Task.id)).where(Task.organization_id == org_id, Task.status.in_(OPEN_TASK_STATUSES), Task.archived_at.is_(None), Task.due_date.is_not(None), Task.due_date < now))) or 0)
     upcoming_events = int((await db.scalar(select(func.count(CalendarEvent.id)).where(CalendarEvent.organization_id == org_id, CalendarEvent.start_at >= now))) or 0)
     outstanding_invoices = int((await db.scalar(select(func.count(Invoice.id)).where(Invoice.organization_id == org_id, Invoice.balance_due > 0))) or 0)
     total_invoice_amount = d(await db.scalar(select(func.coalesce(func.sum(Invoice.total), 0)).where(Invoice.organization_id == org_id)))
@@ -263,7 +267,7 @@ async def dashboard_summary(db: AsyncSession = Depends(get_db), current_user=Dep
     )).all()
     overdue_task_rows = (await db.execute(
         select(Task.id, Task.title, Task.due_date, Task.case_id, Task.status)
-        .where(Task.organization_id == org_id, Task.status.in_(["pending", "in_progress"]), Task.due_date.is_not(None), Task.due_date < now)
+        .where(Task.organization_id == org_id, Task.status.in_(OPEN_TASK_STATUSES), Task.archived_at.is_(None), Task.due_date.is_not(None), Task.due_date < now)
         .order_by(Task.due_date.asc()).limit(10)
     )).all()
 
@@ -369,7 +373,7 @@ async def trust_report(db: AsyncSession = Depends(get_db), current_user=Depends(
 @router.get("/tasks")
 async def tasks_report(status: str | None = None, assigned_to: int | None = None, case_id: int | None = None, db: AsyncSession = Depends(get_db), current_user=Depends(role_guard(CASE_TASK_REPORTS))):
     org_id = current_user.organization_id
-    filters = [Task.organization_id == org_id]
+    filters = [Task.organization_id == org_id, Task.archived_at.is_(None)]
     if status: filters.append(Task.status == status)
     if assigned_to: filters.append(Task.assigned_to == assigned_to)
     if case_id: filters.append(Task.case_id == case_id)
@@ -377,14 +381,16 @@ async def tasks_report(status: str | None = None, assigned_to: int | None = None
     rows = (await db.execute(select(Task.id, Task.title, Task.status, Task.priority, Task.assigned_to, Task.case_id, Task.due_date).where(and_(*filters)).order_by(Task.created_at.desc()))).all()
     crows = (await db.execute(select(Task.status, func.count(Task.id)).where(and_(*filters)).group_by(Task.status))).all()
     cmap = {k: int(v) for k, v in crows}
-    overdue_count = int((await db.scalar(select(func.count(Task.id)).where(and_(*filters), Task.status.in_(["pending", "in_progress"]), Task.due_date.is_not(None), Task.due_date < datetime.now(timezone.utc)))) or 0)
+    overdue_count = int((await db.scalar(select(func.count(Task.id)).where(and_(*filters), Task.status.in_(OPEN_TASK_STATUSES), Task.due_date.is_not(None), Task.due_date < datetime.now(timezone.utc)))) or 0)
 
     return {
         "total_tasks": len(rows),
-        "pending_count": cmap.get("pending", 0),
-        "in_progress_count": cmap.get("in_progress", 0),
+        "pending_count": cmap.get("pending", 0) + cmap.get("not_started", 0),
+        "in_progress_count": cmap.get("in_progress", 0) + cmap.get("waiting", 0),
         "completed_count": cmap.get("completed", 0),
         "cancelled_count": cmap.get("cancelled", 0),
+        "waiting_count": cmap.get("waiting", 0),
+        "not_started_count": cmap.get("not_started", 0),
         "overdue_count": overdue_count,
         "tasks": [{"id": r.id, "title": r.title, "status": r.status, "priority": r.priority, "assigned_to": r.assigned_to, "case_id": r.case_id, "due_date": r.due_date} for r in rows],
     }
