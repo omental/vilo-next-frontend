@@ -30,6 +30,7 @@ function TasksPageContent() {
   const highlightedTaskRef = useRef(null);
   const [tasks, setTasks] = useState([]);
   const [cases, setCases] = useState([]);
+  const [clients, setClients] = useState([]);
   const [team, setTeam] = useState([]);
   const [form, setForm] = useState(initialForm);
   const [loading, setLoading] = useState(true);
@@ -37,18 +38,21 @@ function TasksPageContent() {
   const [success, setSuccess] = useState("");
   const [createOpen, setCreateOpen] = useState(searchParams.get("create") === "1");
   const [menuOpenId, setMenuOpenId] = useState(null);
+  const requestedClientId = Number(searchParams.get("client_id") || 0);
 
   async function load() {
     setLoading(true);
     setError("");
     try {
-      const [taskData, caseData, teamData] = await Promise.all([
+      const [taskData, caseData, clientData, teamData] = await Promise.all([
         apiRequest("/api/v1/tasks"),
         apiRequest("/api/v1/cases"),
+        apiRequest("/api/v1/clients"),
         apiRequest("/api/v1/team"),
       ]);
       setTasks(taskData);
       setCases(caseData);
+      setClients(clientData);
       setTeam(teamData.filter((u) => u.role !== "client"));
     } catch (err) {
       setError(err.message);
@@ -63,9 +67,26 @@ function TasksPageContent() {
     const shouldOpen = searchParams.get("create") === "1";
     setCreateOpen(shouldOpen);
     if (!shouldOpen) return;
+    const requestedCases = requestedClientId
+      ? cases.filter((row) => Number(row.client_id) === requestedClientId)
+      : [];
+    setForm((current) => {
+      const nextCaseId = current.case_id || (requestedCases.length === 1 ? String(requestedCases[0].id) : "");
+      return { ...current, case_id: nextCaseId };
+    });
     formCardRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
     titleInputRef.current?.focus();
-  }, [searchParams]);
+  }, [cases, requestedClientId, searchParams]);
+
+  const requestedClient = useMemo(
+    () => clients.find((client) => Number(client.id) === requestedClientId) || null,
+    [clients, requestedClientId],
+  );
+
+  const caseOptions = useMemo(() => {
+    if (!requestedClientId) return cases;
+    return cases.filter((row) => Number(row.client_id) === requestedClientId);
+  }, [cases, requestedClientId]);
 
   const filteredTasks = useMemo(() => {
     const filter = searchParams.get("filter");
@@ -159,13 +180,20 @@ function TasksPageContent() {
             <div className="vilo-form-row-two">
               <select value={form.case_id} onChange={(e) => setForm({ ...form, case_id: e.target.value })}>
                 <option value="">No linked case</option>
-                {cases.map((c) => <option key={c.id} value={c.id}>{c.title}</option>)}
+                {caseOptions.map((c) => <option key={c.id} value={c.id}>{c.title}</option>)}
               </select>
               <select value={form.assigned_to} onChange={(e) => setForm({ ...form, assigned_to: e.target.value })}>
                 <option value="">Unassigned</option>
                 {team.map((u) => <option key={u.id} value={u.id}>{u.name} ({u.role})</option>)}
               </select>
             </div>
+
+            {requestedClient ? (
+              <p className="vilo-card-copy">
+                Client context: <strong>{requestedClient.name}</strong>
+                {caseOptions.length ? "" : " — tasks can only link to cases, and this client has no available cases yet."}
+              </p>
+            ) : null}
 
             <div className="vilo-form-row-two">
               <select value={form.status} onChange={(e) => setForm({ ...form, status: e.target.value })}>

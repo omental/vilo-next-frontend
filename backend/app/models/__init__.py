@@ -1,6 +1,6 @@
 from app.models.organization import Organization
 from app.models.user import User
-from app.models.client import Client
+from app.models.client import Client, ClientAssignment
 from app.models.case import Case, CaseAssignment
 from app.models.task import Task
 from app.models.calendar_event import CalendarEvent
@@ -23,7 +23,7 @@ from app.models.notification import Notification
 from app.models.audit_log import AuditLog
 
 __all__ = [
-    "Organization","User","Client","Case","CaseAssignment","Task","CalendarEvent","CaseTimelineEvent",
+    "Organization","User","Client","ClientAssignment","Case","CaseAssignment","Task","CalendarEvent","CaseTimelineEvent",
     "Document","DocumentVersion","CaseNote","TimeEntry","Expense","Invoice","InvoiceLineItem",
     "TrustAccount","TrustLedger","TrustTransaction","ClientIntake","Conversation","ConversationParticipant","Message","MessageCaseReference","UserInvite","Notification","AuditLog",
 ]

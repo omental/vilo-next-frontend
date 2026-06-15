@@ -6,15 +6,16 @@ from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, Upl
 from fastapi.responses import FileResponse
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
-from app.api.deps import get_current_user, role_guard
+from app.api.deps import role_guard
 from app.db.session import get_db
-from app.models.client import Client
+from app.models.client import Client, ClientAssignment
 from app.models.document import Document
 from app.models.enums import UserRole
 from app.models.user import User
 from app.schemas.document import DocumentResponse
-from app.schemas.client import ClientCreate, ClientResponse, ClientUpdate
+from app.schemas.client import AssignedUser, ClientCreate, ClientResponse, ClientUpdate
 from app.services.audit import log_audit_event
 
 router = APIRouter(prefix="/clients", tags=["clients"])
@@ -25,6 +26,17 @@ STORAGE_ROOT = Path("backend/storage/documents")
 
 
 def to_response(client: Client) -> ClientResponse:
+    assigned_users = [
+        AssignedUser(
+            id=assignment.user.id,
+            name=assignment.user.name,
+            email=assignment.user.email,
+            role=assignment.user.role.value,
+            status=assignment.user.status.value,
+        )
+        for assignment in getattr(client, "assignments", [])
+        if getattr(assignment, "user", None) is not None
+    ]
     return ClientResponse(
         id=client.id,
         organization_id=client.organization_id,
@@ -41,6 +53,8 @@ def to_response(client: Client) -> ClientResponse:
         date_of_birth=client.date_of_birth,
         billing_currency=client.billing_currency,
         archived_at=client.archived_at,
+        assigned_users=assigned_users,
+        assigned_user_ids=[user.id for user in assigned_users],
         created_at=client.created_at,
         updated_at=client.updated_at,
     )
@@ -57,10 +71,12 @@ def normalize_client_type(value: str | None) -> str:
 
 async def get_client_for_org(db: AsyncSession, organization_id: int, client_id: int) -> Client:
     client = await db.scalar(
-        select(Client).where(
+        select(Client)
+        .where(
             Client.id == client_id,
             Client.organization_id == organization_id,
         )
+        .options(selectinload(Client.assignments).selectinload(ClientAssignment.user))
     )
     if not client:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Client not found")
@@ -115,6 +131,42 @@ async def validate_client_user(db: AsyncSession, organization_id: int, user_id: 
     return user
 
 
+async def validate_assignments(db: AsyncSession, organization_id: int, user_ids: list[int]) -> list[User]:
+    if not user_ids:
+        return []
+    rows = await db.scalars(select(User).where(User.organization_id == organization_id, User.id.in_(user_ids)))
+    users = rows.all()
+    if len(users) != len(set(user_ids)):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="One or more assigned users are invalid")
+    if any(user.role == UserRole.client for user in users):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Assigned users must be staff members")
+    return users
+
+
+async def sync_client_assignments(client: Client, users: list[User], db: AsyncSession) -> None:
+    wanted = {user.id for user in users}
+    existing_by_user = {assignment.user_id: assignment for assignment in getattr(client, "assignments", [])}
+
+    kept_assignments = []
+    for assignment in list(getattr(client, "assignments", [])):
+        if assignment.user_id in wanted:
+            kept_assignments.append(assignment)
+            continue
+        await db.delete(assignment)
+
+    client.assignments = kept_assignments
+    for user in users:
+        if user.id in existing_by_user:
+            continue
+        assignment = ClientAssignment(client_id=client.id, user_id=user.id)
+        if hasattr(user, "_sa_instance_state"):
+            assignment.user = user
+        else:
+            assignment.__dict__["user"] = user
+        client.assignments.append(assignment)
+        db.add(assignment)
+
+
 @router.post("", response_model=ClientResponse)
 async def create_client(
     payload: ClientCreate,
@@ -122,6 +174,7 @@ async def create_client(
     current_user: User = Depends(role_guard(ALLOWED_STAFF)),
 ):
     await validate_client_user(db, current_user.organization_id, payload.user_id)
+    assigned_users = await validate_assignments(db, current_user.organization_id, payload.assigned_user_ids)
     now = datetime.now(timezone.utc)
     client = Client(
         organization_id=current_user.organization_id,
@@ -142,8 +195,10 @@ async def create_client(
         updated_at=now,
     )
     db.add(client)
+    await db.flush()
+    await sync_client_assignments(client, assigned_users, db)
     await db.commit()
-    await db.refresh(client)
+    client = await get_client_for_org(db, current_user.organization_id, client.id)
     return to_response(client)
 
 
@@ -153,7 +208,11 @@ async def list_clients(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(role_guard(ALLOWED_STAFF)),
 ):
-    query = select(Client).where(Client.organization_id == current_user.organization_id)
+    query = (
+        select(Client)
+        .where(Client.organization_id == current_user.organization_id)
+        .options(selectinload(Client.assignments).selectinload(ClientAssignment.user))
+    )
     if status_filter == "active":
         query = query.where(Client.archived_at.is_(None))
     elif status_filter == "archived":
@@ -184,17 +243,20 @@ async def update_client(
 ):
     client = await get_client_for_org(db, current_user.organization_id, client_id)
 
-    updates = payload.model_dump(exclude_unset=True)
+    updates = payload.model_dump(exclude_unset=True, exclude={"assigned_user_ids"})
     if "user_id" in updates:
         await validate_client_user(db, current_user.organization_id, updates["user_id"])
     if "client_type" in updates and updates["client_type"] is not None:
         updates["client_type"] = normalize_client_type(updates["client_type"])
     for key, value in updates.items():
         setattr(client, key, value)
+    if payload.assigned_user_ids is not None:
+        users = await validate_assignments(db, current_user.organization_id, payload.assigned_user_ids)
+        await sync_client_assignments(client, users, db)
     client.updated_at = datetime.now(timezone.utc)
 
     await db.commit()
-    await db.refresh(client)
+    client = await get_client_for_org(db, current_user.organization_id, client.id)
     return to_response(client)
 
 

@@ -97,7 +97,6 @@ export default function ClientIntakeModal({ open, mode = "create", client = null
     if (!corporate && !form.date_of_birth.trim()) next.date_of_birth = "Date of birth is required.";
     if (!form.email.trim()) next.email = "Email is required.";
     if (!form.phone.trim()) next.phone = "Phone is required.";
-    if (!form.notes.trim()) next.notes = "Notes are required.";
     setErrors(next);
     return Object.keys(next).length === 0;
   }
@@ -138,7 +137,7 @@ export default function ClientIntakeModal({ open, mode = "create", client = null
             {!corporate ? <Field label="Date of Birth *" value={form.date_of_birth} onChange={(v) => setForm({ ...form, date_of_birth: v })} error={errors.date_of_birth} placeholder="YYYY-MM-DD" /> : null}
             <Field label="Email *" value={form.email} onChange={(v) => setForm({ ...form, email: v })} error={errors.email} placeholder="Enter Email" />
             <Field label="Phone *" value={form.phone} onChange={(v) => setForm({ ...form, phone: v })} error={errors.phone} placeholder="Enter Phone" />
-            <div><label>Preferred Contact Method *</label><select value={form.preferred_contact_method} onChange={(e) => setForm({ ...form, preferred_contact_method: e.target.value })}><option value="email">Email</option><option value="phone">Phone</option><option value="sms">SMS</option></select></div>
+            <div><label>Preferred Contact Method *</label><select value={form.preferred_contact_method} onChange={(e) => setForm({ ...form, preferred_contact_method: e.target.value })}><option value="email">Email</option><option value="phone">Phone</option><option value="sms">SMS</option><option value="whatsapp">WhatsApp</option></select></div>
           </div>
 
           <div className="client-upload-block">
@@ -157,7 +156,7 @@ export default function ClientIntakeModal({ open, mode = "create", client = null
           </div>
 
           <div>
-            <label>Notes *</label>
+            <label>Notes</label>
             <textarea value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })} placeholder="Notes" />
             {errors.notes ? <small className="vilo-form-error">{errors.notes}</small> : null}
           </div>

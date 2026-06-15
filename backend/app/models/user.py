@@ -22,6 +22,7 @@ class User(Base):
     organization = relationship("Organization", back_populates="users")
     created_cases = relationship("Case", back_populates="creator")
     case_assignments = relationship("CaseAssignment", back_populates="user", cascade="all, delete-orphan")
+    client_assignments = relationship("ClientAssignment", back_populates="user", cascade="all, delete-orphan")
     assigned_tasks = relationship("Task", foreign_keys="Task.assigned_to", back_populates="assignee")
     created_tasks = relationship("Task", foreign_keys="Task.created_by", back_populates="creator")
     created_calendar_events = relationship("CalendarEvent", back_populates="creator")

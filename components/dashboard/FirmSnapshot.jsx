@@ -31,13 +31,6 @@ const fallbackSnapshotStats = [
   }
 ];
 
-const legendItems = [
-  { label: "Active", tone: "is-active" },
-  { label: "Court", tone: "is-court" },
-  { label: "Closed", tone: "is-closed" },
-  { label: "Pending", tone: "is-pending" }
-];
-
 export function FirmSnapshot({
   snapshotStats = fallbackSnapshotStats,
   caseStatusPercent = 72,
@@ -47,6 +40,13 @@ export function FirmSnapshot({
   const cardVariants = createCardVariants(shouldReduceMotion);
   const itemVariants = createItemVariants(shouldReduceMotion, "y", 10);
   const hoverLift = createHoverLift(shouldReduceMotion);
+
+  const statusItems = [
+    { key: "active", label: "Active", tone: "is-active", value: Number(caseStatusCounts.active || 0) },
+    { key: "court", label: "Court", tone: "is-court", value: Number(caseStatusCounts.court || 0) },
+    { key: "closed", label: "Closed", tone: "is-closed", value: Number(caseStatusCounts.closed || 0) },
+    { key: "pending", label: "Pending", tone: "is-pending", value: Number(caseStatusCounts.pending || 0) },
+  ];
 
   return (
     <motion.section
@@ -60,18 +60,28 @@ export function FirmSnapshot({
       </div>
 
       <div className="snapshot-layout">
-        <div className="snapshot-chart-block">
-          <p className="snapshot-chart-block__label">Case Status</p>
-          <SnapshotDonut percent={caseStatusPercent} counts={caseStatusCounts} />
+        <div className="snapshot-chart-panel">
+          <div className="snapshot-chart-block">
+            <p className="snapshot-chart-block__label">Case Status</p>
+            <SnapshotDonut percent={caseStatusPercent} counts={caseStatusCounts} />
+          </div>
 
-          <ul className="snapshot-legend" aria-label="Firm snapshot legend">
-            {legendItems.map((item) => (
-              <li key={item.label}>
-                <span className={`snapshot-legend__dot ${item.tone}`} />
-                <span>{item.label}</span>
-              </li>
-            ))}
-          </ul>
+          <div className="snapshot-breakdown" aria-label="Firm snapshot breakdown">
+            <div className="snapshot-breakdown__header">
+              <p>Status Breakdown</p>
+              <span>{statusItems.reduce((sum, item) => sum + item.value, 0)} cases</span>
+            </div>
+
+            <ul className="snapshot-legend" aria-label="Firm snapshot legend">
+              {statusItems.map((item) => (
+                <li key={item.key} className="snapshot-legend__item">
+                  <span className={`snapshot-legend__dot ${item.tone}`} />
+                  <span className="snapshot-legend__label">{item.label}</span>
+                  <strong className="snapshot-legend__value">{item.value}</strong>
+                </li>
+              ))}
+            </ul>
+          </div>
         </div>
 
         <div className="snapshot-stats">
@@ -114,10 +124,10 @@ function SnapshotDonut({ percent = 72, counts = { active: 0, court: 0, closed: 0
   const shouldReduceMotion = useReducedMotion();
   const segments = buildSegments(counts);
   const safePercent = Number.isFinite(Number(percent)) ? Math.max(0, Math.min(100, Math.round(Number(percent)))) : 0;
-  const circumference = 2 * Math.PI * 96;
-  const svgSize = 280;
+  const circumference = 2 * Math.PI * 84;
+  const svgSize = 248;
   const center = svgSize / 2;
-  const radius = 96;
+  const radius = 84;
 
   return (
     <div className="snapshot-donut" aria-label={`Case Status ${safePercent} percent`}>
@@ -155,7 +165,7 @@ function buildSegments(counts) {
     { key: "pending", tone: "is-pending", value: Number(counts.pending || 0) },
   ];
   const total = ordered.reduce((sum, item) => sum + item.value, 0);
-  const circumference = 2 * Math.PI * 96;
+  const circumference = 2 * Math.PI * 84;
   let offset = circumference * 0.25;
 
   return ordered

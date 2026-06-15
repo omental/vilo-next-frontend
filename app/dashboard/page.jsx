@@ -129,7 +129,11 @@ export default function DashboardPage() {
           </div>
 
           <div className="dashboard-row-grid dashboard-row-grid--tertiary">
-            <CalendarOverview events={calendarEvents} />
+            <CalendarOverview
+              events={calendarEvents}
+              month={Number(calendar?.month || 0)}
+              year={Number(calendar?.year || 0)}
+            />
             <FinancialOverview
               revenueText={fmtCurrency(financial?.monthly_revenue)}
               summaryItems={financialSummaryItems}

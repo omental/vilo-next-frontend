@@ -28,6 +28,12 @@ class ClientProfileDBStub:
     def __init__(self):
         now = datetime.now(timezone.utc)
         self.user = SimpleNamespace(id=77, organization_id=1, role=UserRole.client)
+        self.users = {
+            20: SimpleNamespace(id=20, organization_id=1, name="Staff One", email="staff1@example.com", role=UserRole.lawyer, status=RecordStatus.active),
+            21: SimpleNamespace(id=21, organization_id=1, name="Staff Two", email="staff2@example.com", role=UserRole.paralegal, status=RecordStatus.active),
+            30: SimpleNamespace(id=30, organization_id=2, name="Other Org", email="other@example.com", role=UserRole.lawyer, status=RecordStatus.active),
+            99: SimpleNamespace(id=99, organization_id=1, name="Client User", email="client@example.com", role=UserRole.client, status=RecordStatus.active),
+        }
         self.clients = {
             1: SimpleNamespace(
                 id=1,
@@ -45,6 +51,7 @@ class ClientProfileDBStub:
                 date_of_birth=date(1980, 1, 1),
                 billing_currency="USD",
                 archived_at=None,
+                assignments=[],
                 created_at=now,
                 updated_at=now,
             )
@@ -61,12 +68,32 @@ class ClientProfileDBStub:
         if "FROM users" in q:
             return self.user
         if "FROM clients" in q:
-            return next(iter(self.clients.values()), None)
+            params = query.compile().params
+            requested_id = params.get("id_1")
+            if requested_id is not None:
+                return self.clients.get(requested_id)
+            return next(reversed(self.clients.values()), None)
         return None
 
     async def scalars(self, query, *args, **kwargs):
         q = str(query)
         assert "organization_id" in q
+        if "FROM users" in q:
+            params = query.compile().params
+            requested_ids = next((value for value in params.values() if isinstance(value, (list, tuple, set))), None)
+            rows = [user for user in self.users.values() if user.organization_id == 1]
+            if requested_ids is not None:
+                rows = [user for user in rows if user.id in requested_ids]
+
+            class _Rows:
+                def __init__(self, values):
+                    self._values = values
+
+                def all(self):
+                    return self._values
+
+            return _Rows(rows)
+
         rows = list(self.clients.values())
         if "clients.archived_at IS NULL" in q:
             rows = [c for c in rows if c.archived_at is None]
@@ -88,6 +115,9 @@ class ClientProfileDBStub:
             self.next_id += 1
         self.clients[obj.id] = obj
         self.added.append(obj)
+
+    async def flush(self):
+        return None
 
     async def commit(self):
         return None
@@ -153,7 +183,7 @@ def test_update_client_typed_fields_and_archive_sets_archived_at():
             "client_type": "corporate",
             "trn_no": "TRN-UPDATED",
             "occupation": "Managing Director",
-            "preferred_contact_method": "sms",
+            "preferred_contact_method": "whatsapp",
             "date_of_birth": "1990-05-07",
             "billing_currency": "EUR",
             "archived_at": "2026-05-26T10:00:00Z",
@@ -163,9 +193,43 @@ def test_update_client_typed_fields_and_archive_sets_archived_at():
         assert body["client_type"] == "corporate"
         assert body["trn_no"] == "TRN-UPDATED"
         assert body["occupation"] == "Managing Director"
-        assert body["preferred_contact_method"] == "sms"
+        assert body["preferred_contact_method"] == "whatsapp"
         assert body["billing_currency"] == "EUR"
         assert body["archived_at"] is not None
+    finally:
+        cleanup(client)
+
+
+def test_create_client_accepts_optional_notes_and_team_assignments():
+    db = ClientProfileDBStub()
+    client = build_client("partner", db)
+    try:
+        res = client.post("/api/v1/clients", json={
+            "name": "Taylor Client",
+            "email": "taylor@example.com",
+            "notes": None,
+            "preferred_contact_method": "whatsapp",
+            "assigned_user_ids": [20, 21],
+        })
+        assert res.status_code == 200
+        body = res.json()
+        assert body["notes"] is None
+        assert body["preferred_contact_method"] == "whatsapp"
+        assert body["assigned_user_ids"] == [20, 21]
+        assert [row["name"] for row in body["assigned_users"]] == ["Staff One", "Staff Two"]
+    finally:
+        cleanup(client)
+
+
+def test_update_client_rejects_cross_org_or_client_role_assignments():
+    db = ClientProfileDBStub()
+    client = build_client("partner", db)
+    try:
+        res = client.patch("/api/v1/clients/1", json={"assigned_user_ids": [30]})
+        assert res.status_code == 400
+
+        res = client.patch("/api/v1/clients/1", json={"assigned_user_ids": [99]})
+        assert res.status_code == 400
     finally:
         cleanup(client)
 

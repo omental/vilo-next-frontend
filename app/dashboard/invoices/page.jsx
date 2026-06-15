@@ -44,6 +44,7 @@ function InvoicesPageContent() {
   const [createError, setCreateError] = useState("");
   const [createOpen, setCreateOpen] = useState(false);
   const [form, setForm] = useState(initialForm);
+  const requestedClientId = searchParams.get("client_id") || "";
 
   async function load() {
     setLoading(true);
@@ -74,6 +75,15 @@ function InvoicesPageContent() {
     }
   }, [searchParams]);
 
+  useEffect(() => {
+    if (searchParams.get("create") !== "1") return;
+    const nextClientId = searchParams.get("client_id") || "";
+    setForm((current) => {
+      if (current.client_id === nextClientId) return current;
+      return { ...current, client_id: nextClientId, case_id: "" };
+    });
+  }, [searchParams]);
+
   const selectedClientId = Number(form.client_id || 0);
   const caseOptions = useMemo(() => {
     if (!selectedClientId) return cases;
@@ -88,16 +98,19 @@ function InvoicesPageContent() {
 
   function openCreateModal() {
     setCreateError("");
-    setForm(initialForm);
+    setForm({ ...initialForm, client_id: requestedClientId });
     setCreateOpen(true);
   }
 
   function closeCreateModal() {
     setCreateOpen(false);
     setCreateError("");
-    setForm(initialForm);
+    setForm({ ...initialForm, client_id: requestedClientId });
     if (searchParams.get("create") === "1") {
-      router.replace("/dashboard/invoices");
+      const params = new URLSearchParams(searchParams.toString());
+      params.delete("create");
+      const next = params.toString();
+      router.replace(next ? `/dashboard/invoices?${next}` : "/dashboard/invoices");
     }
   }
 

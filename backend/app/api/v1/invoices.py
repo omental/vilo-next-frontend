@@ -2,7 +2,7 @@ from datetime import date, datetime, timezone
 from decimal import Decimal
 from pathlib import Path
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Request
 from fastapi.responses import FileResponse
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -200,10 +200,16 @@ async def generate_from_case(case_id: int, db: AsyncSession = Depends(get_db), c
 
 
 @router.get("", response_model=list[InvoiceResponse])
-async def list_invoices(db: AsyncSession = Depends(get_db), current_user: User = Depends(role_guard(ALLOWED))):
+async def list_invoices(
+    client_id: int | None = Query(default=None),
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(role_guard(ALLOWED)),
+):
+    query = select(Invoice).where(Invoice.organization_id == current_user.organization_id)
+    if client_id is not None:
+        query = query.where(Invoice.client_id == client_id)
     rows = await db.scalars(
-        select(Invoice)
-        .where(Invoice.organization_id == current_user.organization_id)
+        query
         .options(
             selectinload(Invoice.line_items),
             selectinload(Invoice.client),

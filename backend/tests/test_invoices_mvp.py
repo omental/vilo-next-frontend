@@ -62,7 +62,40 @@ class InvoiceDBStub:
             client=client,
             line_items=[],
         )
+        other_client = SimpleNamespace(
+            id=11,
+            organization_id=1,
+            name="Avery Stone",
+            email="avery@example.com",
+            phone="+15550001111",
+            address="20 Main Street",
+            occupation="Designer",
+            trn_no="TRN-77",
+        )
+        other_invoice = SimpleNamespace(
+            id=102,
+            organization_id=1,
+            client_id=11,
+            case_id=None,
+            invoice_number="INV-2026-0002",
+            status="sent",
+            issue_date=date(2026, 6, 11),
+            due_date=date(2026, 6, 21),
+            subtotal=Decimal("0.00"),
+            tax_amount=Decimal("0.00"),
+            total=Decimal("0.00"),
+            paid_amount=Decimal("0.00"),
+            balance_due=Decimal("0.00"),
+            notes="Second invoice",
+            created_by=1,
+            created_at=now,
+            updated_at=now,
+            organization=org,
+            client=other_client,
+            line_items=[],
+        )
         self.invoice = invoice
+        self.invoices = [invoice, other_invoice]
         self.scalar_queue = []
 
     async def scalar(self, query, *args, **kwargs):
@@ -86,7 +119,12 @@ class InvoiceDBStub:
                 return self._rows
 
         if "FROM invoices" in q:
-            return _Rows([self.invoice])
+            rows = self.invoices
+            params = query.compile().params
+            requested_client_id = params.get("client_id_1")
+            if requested_client_id is not None:
+                rows = [row for row in rows if row.client_id == requested_client_id]
+            return _Rows(rows)
         return _Rows([])
 
 
@@ -145,3 +183,16 @@ def test_invoice_detail_cross_org_access_remains_hidden():
 def test_build_firm_details_uses_safe_fallbacks_only():
     details = build_firm_details(SimpleNamespace(name="Acme Legal", slug="acme-legal"))
     assert details == ["Acme Legal"]
+
+
+def test_list_invoices_can_filter_by_client_id():
+    db = InvoiceDBStub()
+    client = build_client("partner", db)
+    try:
+        res = client.get("/api/v1/invoices?client_id=10")
+        assert res.status_code == 200
+        body = res.json()
+        assert len(body) == 1
+        assert body[0]["client_id"] == 10
+    finally:
+        cleanup(client)

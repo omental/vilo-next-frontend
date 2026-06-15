@@ -2,7 +2,7 @@
 
 import { Suspense, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
-import { useSearchParams } from "next/navigation";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { apiRequest } from "../../../lib/api";
 
 const initialForm = {
@@ -139,9 +139,12 @@ export default function MessagesPage() {
 }
 
 function MessagesPageContent() {
+  const router = useRouter();
+  const pathname = usePathname();
   const searchParams = useSearchParams();
   const [conversations, setConversations] = useState([]);
   const [cases, setCases] = useState([]);
+  const [clients, setClients] = useState([]);
   const [selected, setSelected] = useState(null);
   const [messages, setMessages] = useState([]);
   const [form, setForm] = useState(initialForm);
@@ -161,6 +164,7 @@ function MessagesPageContent() {
   const [sendError, setSendError] = useState("");
   const [meId, setMeId] = useState(null);
   const threadEndRef = useRef(null);
+  const requestedClientId = Number(searchParams.get("client_id") || 0);
 
   async function loadConversations() {
     const rows = await apiRequest("/api/v1/conversations");
@@ -189,8 +193,9 @@ function MessagesPageContent() {
     setLoading(true);
     setError("");
     try {
-      const [caseRows, me] = await Promise.all([apiRequest("/api/v1/cases"), apiRequest("/api/v1/auth/me")]);
+      const [caseRows, clientRows, me] = await Promise.all([apiRequest("/api/v1/cases"), apiRequest("/api/v1/clients"), apiRequest("/api/v1/auth/me")]);
       setCases(caseRows || []);
+      setClients(clientRows || []);
       setMeId(me?.id || null);
       await loadConversations();
     } catch (err) {
@@ -209,6 +214,19 @@ function MessagesPageContent() {
       setShowCreateModal(true);
     }
   }, [searchParams]);
+
+  useEffect(() => {
+    if (searchParams.get("create") !== "1" || !requestedClientId) return;
+    const targetClient = clients.find((client) => Number(client.id) === requestedClientId);
+    const relatedCase = cases.find((caseRow) => Number(caseRow.client_id) === requestedClientId);
+    setForm((current) => ({
+      ...current,
+      conversation_type: targetClient?.user_id && relatedCase ? "client" : "internal",
+      title: current.title || (targetClient ? `Message: ${targetClient.name}` : current.title),
+      case_id: relatedCase ? String(relatedCase.id) : "",
+      participant_ids: targetClient?.user_id ? String(targetClient.user_id) : "",
+    }));
+  }, [cases, clients, requestedClientId, searchParams]);
 
   useEffect(() => {
     const conversationId = Number(searchParams.get("conversation") || 0);
@@ -248,7 +266,7 @@ function MessagesPageContent() {
         }),
       });
       setForm(initialForm);
-      setShowCreateModal(false);
+      closeCreateModal();
       await loadConversations();
       setSelected(created);
     } catch (err) {
@@ -317,6 +335,20 @@ function MessagesPageContent() {
 
   const selectedTitle = selected ? conversationLabel(selected) : "";
   const selectedSubtitle = selected?.case_title || `${selected?.participant_count || 0} participants`;
+  const requestedClient = useMemo(
+    () => clients.find((client) => Number(client.id) === requestedClientId) || null,
+    [clients, requestedClientId],
+  );
+
+  function closeCreateModal() {
+    setShowCreateModal(false);
+    setForm(initialForm);
+    if (searchParams.get("create") !== "1") return;
+    const params = new URLSearchParams(searchParams.toString());
+    params.delete("create");
+    const next = params.toString();
+    router.replace(next ? `${pathname}?${next}` : pathname);
+  }
 
   return (
     <section className="dashboard-page-stack">
@@ -501,14 +533,20 @@ function MessagesPageContent() {
       </div>
 
       {showCreateModal ? (
-        <div className="vilo-modal-overlay" onClick={() => setShowCreateModal(false)}>
+        <div className="vilo-modal-overlay" onClick={closeCreateModal}>
           <div className="vilo-modal" onClick={(e) => e.stopPropagation()}>
             <div className="vilo-modal__header">
               <h3>New Message</h3>
-              <button type="button" className="vilo-btn vilo-btn--ghost vilo-btn--xs" onClick={() => setShowCreateModal(false)}>Close</button>
+              <button type="button" className="vilo-btn vilo-btn--ghost vilo-btn--xs" onClick={closeCreateModal}>Close</button>
             </div>
             <div className="vilo-modal__body">
               <form className="vilo-form-grid" onSubmit={createConversation}>
+                {requestedClient ? (
+                  <p className="vilo-card-copy">
+                    Client context: <strong>{requestedClient.name}</strong>
+                    {form.conversation_type === "client" && form.case_id ? "" : " — no linked client conversation could be inferred automatically, so this will open as a regular compose flow unless you choose a case and participant."}
+                  </p>
+                ) : null}
                 <div className="vilo-form-row-two">
                   <select value={form.conversation_type} onChange={(e) => setForm({ ...form, conversation_type: e.target.value })}>
                     <option value="internal">internal</option>

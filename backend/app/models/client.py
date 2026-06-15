@@ -1,5 +1,5 @@
 from datetime import date, datetime
-from sqlalchemy import Date, DateTime, ForeignKey, String, Text
+from sqlalchemy import Date, DateTime, ForeignKey, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base
@@ -35,3 +35,16 @@ class Client(Base):
     trust_transactions = relationship("TrustTransaction", back_populates="client")
     intakes = relationship("ClientIntake", back_populates="client", cascade="all, delete-orphan")
     documents = relationship("Document", back_populates="client")
+    assignments = relationship("ClientAssignment", back_populates="client", cascade="all, delete-orphan")
+
+
+class ClientAssignment(Base):
+    __tablename__ = "client_assignments"
+    __table_args__ = (UniqueConstraint("client_id", "user_id", name="uq_client_assignments_client_user"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True, index=True)
+    client_id: Mapped[int] = mapped_column(ForeignKey("clients.id", ondelete="CASCADE"), index=True, nullable=False)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True, nullable=False)
+
+    client = relationship("Client", back_populates="assignments")
+    user = relationship("User", back_populates="client_assignments")

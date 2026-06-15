@@ -74,6 +74,15 @@ async def validate_case(db: AsyncSession, organization_id: int, case_id: int | N
     return case
 
 
+async def validate_client(db: AsyncSession, organization_id: int, client_id: int | None):
+    if client_id is None:
+        return None
+    client = await db.scalar(select(Client).where(Client.id == client_id, Client.organization_id == organization_id))
+    if not client:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Client must belong to your organization")
+    return client
+
+
 def safe_original_name(original: str) -> str:
     name = os.path.basename((original or "").strip())
     if not name or name in {".", ".."}:
@@ -108,6 +117,7 @@ async def upload_document(
     category: str | None = Form(default=None),
     visibility: str = Form(default="internal"),
     case_id: int | None = Form(default=None),
+    client_id: int | None = Form(default=None),
     file: UploadFile = File(...),
     request: Request = None,
     background_tasks: BackgroundTasks = None,
@@ -117,6 +127,10 @@ async def upload_document(
     if visibility not in VALID_VISIBILITY:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid visibility")
     case = await validate_case(db, current_user.organization_id, case_id)
+    client = await validate_client(db, current_user.organization_id, client_id)
+    if case is not None and client is not None and case.client_id != client.id:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Case does not belong to client")
+    resolved_client_id = client.id if client is not None else (case.client_id if case is not None else None)
 
     original_name = safe_original_name(file.filename or "")
     data = await file.read()
@@ -131,6 +145,7 @@ async def upload_document(
     document = Document(
         organization_id=current_user.organization_id,
         case_id=case_id,
+        client_id=resolved_client_id,
         uploaded_by=current_user.id,
         title=title,
         description=description,

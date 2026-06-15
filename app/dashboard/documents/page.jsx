@@ -6,6 +6,7 @@ import { apiDownload, apiRequest, apiUpload } from "../../../lib/api";
 import { getCachedUser } from "../../../lib/auth";
 
 const initialForm = {
+  client_id: "",
   case_id: "",
   title: "",
   description: "",
@@ -46,6 +47,7 @@ function DocumentsPageContent() {
   const fileInputRef = useRef(null);
   const [documents, setDocuments] = useState([]);
   const [cases, setCases] = useState([]);
+  const [clients, setClients] = useState([]);
   const [form, setForm] = useState(initialForm);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -67,18 +69,21 @@ function DocumentsPageContent() {
   const [dragActive, setDragActive] = useState(false);
   const [folderNotice, setFolderNotice] = useState("");
   const uploadOpen = searchParams.get("upload") === "1";
+  const requestedClientId = searchParams.get("client_id") || "";
   const currentUser = useMemo(() => getCachedUser(), []);
 
   async function load() {
     setLoading(true);
     setError("");
     try {
-      const [docs, caseData] = await Promise.all([
+      const [docs, caseData, clientData] = await Promise.all([
         apiRequest("/api/v1/documents"),
         apiRequest("/api/v1/cases"),
+        apiRequest("/api/v1/clients"),
       ]);
       setDocuments(docs || []);
       setCases(caseData || []);
+      setClients(clientData || []);
     } catch (err) {
       setError(err.message || "Failed to load documents");
     } finally {
@@ -92,9 +97,13 @@ function DocumentsPageContent() {
 
   useEffect(() => {
     if (!uploadOpen) return;
+    setForm((current) => {
+      if (current.client_id === requestedClientId) return current;
+      return { ...current, client_id: requestedClientId, case_id: "" };
+    });
     const timer = window.setTimeout(() => titleInputRef.current?.focus(), 60);
     return () => window.clearTimeout(timer);
-  }, [uploadOpen]);
+  }, [requestedClientId, uploadOpen]);
 
   useEffect(() => {
     setMenuOpenId(null);
@@ -142,6 +151,11 @@ function DocumentsPageContent() {
   const casesById = useMemo(() => {
     return new Map(cases.map((row) => [Number(row.id), row]));
   }, [cases]);
+
+  const caseOptions = useMemo(() => {
+    if (!form.client_id) return cases;
+    return cases.filter((row) => Number(row.client_id) === Number(form.client_id));
+  }, [cases, form.client_id]);
 
   const categoryOptions = useMemo(() => {
     const seen = new Set(CATEGORY_OPTIONS.map((option) => option.value).filter(Boolean));
@@ -247,6 +261,7 @@ function DocumentsPageContent() {
       formData.append("title", form.title.trim());
       if (form.description.trim()) formData.append("description", form.description.trim());
       if (form.category) formData.append("category", form.category);
+      if (form.client_id) formData.append("client_id", form.client_id);
       if (form.case_id) formData.append("case_id", form.case_id);
       formData.append("file", form.file);
 
@@ -326,7 +341,7 @@ function DocumentsPageContent() {
   }
 
   function closeUploadModal() {
-    setForm(initialForm);
+    setForm({ ...initialForm, client_id: requestedClientId });
     setDragActive(false);
     const params = new URLSearchParams(searchParams.toString());
     params.delete("upload");
@@ -565,6 +580,18 @@ function DocumentsPageContent() {
                 </div>
 
                 <div className="documents-intake-form__field">
+                  <label htmlFor="document-client">Client (optional)</label>
+                  <select
+                    id="document-client"
+                    value={form.client_id}
+                    onChange={(event) => setForm((current) => ({ ...current, client_id: event.target.value, case_id: "" }))}
+                  >
+                    <option value="">Select Client</option>
+                    {clients.map((clientRow) => <option key={clientRow.id} value={clientRow.id}>{clientRow.name}</option>)}
+                  </select>
+                </div>
+
+                <div className="documents-intake-form__field">
                   <label htmlFor="document-case">Case (optional)</label>
                   <select
                     id="document-case"
@@ -572,7 +599,7 @@ function DocumentsPageContent() {
                     onChange={(event) => setForm((current) => ({ ...current, case_id: event.target.value }))}
                   >
                     <option value="">Select Case</option>
-                    {cases.map((caseRow) => <option key={caseRow.id} value={caseRow.id}>{caseRow.title}</option>)}
+                    {caseOptions.map((caseRow) => <option key={caseRow.id} value={caseRow.id}>{caseRow.title}</option>)}
                   </select>
                 </div>
 

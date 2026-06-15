@@ -1,5 +1,13 @@
 from datetime import date, datetime
-from pydantic import BaseModel, EmailStr
+from pydantic import BaseModel, EmailStr, Field
+
+
+class AssignedUser(BaseModel):
+    id: int
+    name: str
+    email: str
+    role: str
+    status: str
 
 
 class ClientCreate(BaseModel):
@@ -16,6 +24,7 @@ class ClientCreate(BaseModel):
     date_of_birth: date | None = None
     billing_currency: str | None = "USD"
     archived_at: datetime | None = None
+    assigned_user_ids: list[int] = Field(default_factory=list)
 
 
 class ClientUpdate(BaseModel):
@@ -32,6 +41,7 @@ class ClientUpdate(BaseModel):
     date_of_birth: date | None = None
     billing_currency: str | None = None
     archived_at: datetime | None = None
+    assigned_user_ids: list[int] | None = None
 
 
 class ClientResponse(BaseModel):
@@ -50,5 +60,7 @@ class ClientResponse(BaseModel):
     date_of_birth: date | None
     billing_currency: str | None
     archived_at: datetime | None
+    assigned_users: list[AssignedUser]
+    assigned_user_ids: list[int]
     created_at: datetime
     updated_at: datetime

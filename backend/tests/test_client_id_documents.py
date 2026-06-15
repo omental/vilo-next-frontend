@@ -223,3 +223,23 @@ def test_existing_case_document_upload_flow_still_works(monkeypatch):
             assert body["case_id"] is None
         finally:
             cleanup(client)
+
+
+def test_document_upload_can_link_direct_client(monkeypatch):
+    client_row = _client_obj()
+    db = ClientDocsDBStub(scalar_values=[client_row])
+    client = build_client("partner", db)
+    with TemporaryDirectory() as tmpdir:
+        monkeypatch.setattr(documents_module, "STORAGE_ROOT", Path(tmpdir))
+        try:
+            res = client.post(
+                "/api/v1/documents/upload",
+                data={"title": "Client Doc", "visibility": "internal", "client_id": "7"},
+                files={"file": ("memo.pdf", b"%PDF-client", "application/pdf")},
+            )
+            assert res.status_code == 200
+            body = res.json()
+            assert body["client_id"] == 7
+            assert body["case_id"] is None
+        finally:
+            cleanup(client)

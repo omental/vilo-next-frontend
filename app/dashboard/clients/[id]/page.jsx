@@ -1,25 +1,11 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useMemo, useState } from "react";
-import { useParams, useRouter } from "next/navigation";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { useParams } from "next/navigation";
 import { apiDownload, apiRequest, apiUpload } from "../../../../lib/api";
 import { getToken } from "../../../../lib/auth";
 import ClientIntakeModal from "../../../../components/dashboard/ClientIntakeModal";
-
-function readMetaLine(notes, label) {
-  const token = `${label}:`;
-  const idx = String(notes || "").indexOf(token);
-  if (idx === -1) return "";
-  return String(notes || "").slice(idx + token.length).split("\n")[0].trim();
-}
-
-function clientType(client) {
-  if (client?.client_type) return client.client_type.toLowerCase() === "corporate" ? "Corporate" : "Individual";
-  const type = readMetaLine(client?.notes, "Client Type").toLowerCase();
-  if (type === "corporate") return "Corporate";
-  return "Individual";
-}
 
 function formatDate(value) {
   if (!value) return "-";
@@ -28,9 +14,21 @@ function formatDate(value) {
   return date.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
 }
 
+function formatMoney(value) {
+  return new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(Number(value || 0));
+}
+
+function formatContactMethod(value) {
+  const normalized = String(value || "").trim().toLowerCase();
+  if (!normalized) return "-";
+  if (normalized === "sms") return "SMS";
+  if (normalized === "whatsapp") return "WhatsApp";
+  return normalized[0].toUpperCase() + normalized.slice(1);
+}
+
 export default function ClientDetailPage() {
   const { id } = useParams();
-  const router = useRouter();
+  const notesSectionRef = useRef(null);
 
   const [client, setClient] = useState(null);
   const [cases, setCases] = useState([]);
@@ -43,8 +41,13 @@ export default function ClientDetailPage() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
+  const [success, setSuccess] = useState("");
 
-  const [createOpen, setCreateOpen] = useState(false);
+  const [editOpen, setEditOpen] = useState(false);
+  const [selectedTeamIds, setSelectedTeamIds] = useState([]);
+  const [noteModalOpen, setNoteModalOpen] = useState(false);
+  const [noteDraft, setNoteDraft] = useState("");
+
   const [timelineTab, setTimelineTab] = useState("all");
   const [timelineDraft, setTimelineDraft] = useState("");
   const [timelineSearch, setTimelineSearch] = useState("");
@@ -71,20 +74,21 @@ export default function ClientDetailPage() {
     try {
       const clientData = await apiRequest(`/api/v1/clients/${id}`);
       setClient(clientData);
+      setSelectedTeamIds(clientData.assigned_user_ids || []);
 
       const results = await Promise.allSettled([
         apiRequest("/api/v1/cases"),
         apiRequest(`/api/v1/clients/${id}/id-documents`),
         apiRequest("/api/v1/tasks"),
         apiRequest("/api/v1/team"),
-        apiRequest("/api/v1/invoices"),
-        apiRequest("/api/v1/documents"),
+        apiRequest(`/api/v1/invoices?client_id=${id}`),
+        apiRequest(`/api/v1/documents?client_id=${id}`),
       ]);
 
       setCases(results[0].status === "fulfilled" ? (results[0].value || []) : []);
       setIdDocuments(results[1].status === "fulfilled" ? (results[1].value || []) : []);
       setTasks(results[2].status === "fulfilled" ? (results[2].value || []) : []);
-      setTeam(results[3].status === "fulfilled" ? (results[3].value || []) : []);
+      setTeam(results[3].status === "fulfilled" ? (results[3].value || []).filter((user) => user.role !== "client") : []);
       setInvoices(results[4].status === "fulfilled" ? (results[4].value || []) : []);
       setDocuments(results[5].status === "fulfilled" ? (results[5].value || []) : []);
     } catch (err) {
@@ -106,6 +110,7 @@ export default function ClientDetailPage() {
     if (!client) return;
     setSaving(true);
     setError("");
+    setSuccess("");
     try {
       await apiRequest(`/api/v1/clients/${client.id}`, {
         method: "PATCH",
@@ -116,10 +121,52 @@ export default function ClientDetailPage() {
         formData.append("file", idFile);
         await apiUpload(`/api/v1/clients/${client.id}/id-documents`, formData);
       }
-      setCreateOpen(false);
+      setEditOpen(false);
+      setSuccess("Client updated successfully.");
       await load();
     } catch (err) {
       setError(err.message || "Failed to update client");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function saveAssignedTeam() {
+    if (!client) return;
+    setSaving(true);
+    setError("");
+    setSuccess("");
+    try {
+      const updated = await apiRequest(`/api/v1/clients/${client.id}`, {
+        method: "PATCH",
+        body: JSON.stringify({ assigned_user_ids: selectedTeamIds }),
+      });
+      setClient(updated);
+      setSuccess("Assigned team updated.");
+    } catch (err) {
+      setError(err.message || "Failed to update assigned team");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function saveNote() {
+    if (!client || !noteDraft.trim()) return;
+    setSaving(true);
+    setError("");
+    setSuccess("");
+    try {
+      const nextNotes = [String(client.notes || "").trim(), noteDraft.trim()].filter(Boolean).join("\n");
+      const updated = await apiRequest(`/api/v1/clients/${client.id}`, {
+        method: "PATCH",
+        body: JSON.stringify({ notes: nextNotes }),
+      });
+      setClient(updated);
+      setNoteDraft("");
+      setNoteModalOpen(false);
+      setSuccess("Client note added.");
+    } catch (err) {
+      setError(err.message || "Failed to save note");
     } finally {
       setSaving(false);
     }
@@ -135,47 +182,37 @@ export default function ClientDetailPage() {
     [relatedCases],
   );
 
-  const relatedDocuments = useMemo(
-    () => documents.filter((row) => row.case_id && relatedCaseIds.has(Number(row.case_id))),
-    [documents, relatedCaseIds],
-  );
-
   const relatedTasks = useMemo(
     () => tasks.filter((row) => row.case_id && relatedCaseIds.has(Number(row.case_id))),
     [tasks, relatedCaseIds],
   );
 
-  const billingRows = useMemo(
-    () => invoices.filter((row) => Number(row.client_id) === Number(id)),
-    [invoices, id],
+  const assignedUsers = useMemo(
+    () => team.filter((user) => selectedTeamIds.includes(user.id)),
+    [selectedTeamIds, team],
+  );
+
+  const availableTeam = useMemo(
+    () => team.filter((user) => !selectedTeamIds.includes(user.id)),
+    [selectedTeamIds, team],
   );
 
   const overdueAmount = useMemo(
-    () => billingRows.filter((row) => row.status === "overdue").reduce((sum, row) => sum + Number(row.balance_due || 0), 0),
-    [billingRows],
+    () => invoices.filter((row) => row.status === "overdue" || (row.status === "sent" && Number(row.balance_due || 0) > 0)).reduce((sum, row) => sum + Number(row.balance_due || 0), 0),
+    [invoices],
   );
 
-  const teamMap = useMemo(() => {
-    const map = new Map();
-    team.forEach((user) => map.set(Number(user.id), user));
-    return map;
-  }, [team]);
-
-  const assignedTeam = useMemo(() => {
-    const ids = new Set();
-    relatedCases.forEach((row) => {
-      (row.assigned_user_ids || []).forEach((uid) => ids.add(Number(uid)));
-      if (row.lead_user_id) ids.add(Number(row.lead_user_id));
-    });
-    return Array.from(ids).map((uid) => teamMap.get(uid)).filter(Boolean);
-  }, [relatedCases, teamMap]);
+  const noteLines = useMemo(
+    () => String(client?.notes || "").split("\n").map((line) => line.trim()).filter(Boolean),
+    [client?.notes],
+  );
 
   const timelineRows = useMemo(() => {
     const caseRows = relatedCases.map((row) => ({
       id: `case-${row.id}`,
       title: row.title || `Case #${row.id}`,
       priority: row.priority || "medium",
-      filing_date: row.filing_date || row.created_at,
+      filing_date: row.created_at,
       status: row.status || "active",
       type: "cases",
       href: `/dashboard/cases/${row.id}`,
@@ -188,34 +225,30 @@ export default function ClientDetailPage() {
       filing_date: row.due_date || row.created_at,
       status: row.status || "pending",
       type: "notes",
-      href: "/dashboard/tasks",
+      href: `/dashboard/tasks?task_id=${row.id}`,
     }));
 
-    const docsRows = relatedDocuments.map((row) => ({
+    const documentRows = documents.map((row) => ({
       id: `doc-${row.id}`,
       title: row.title || row.file_name || `Document #${row.id}`,
       priority: "low",
-      filing_date: row.created_at,
+      filing_date: row.updated_at || row.created_at,
       status: "active",
       type: "documents",
-      href: "/dashboard/documents",
+      href: `/dashboard/documents`,
     }));
 
-    const notes = String(client?.notes || "")
-      .split("\n")
-      .filter((line) => line.trim() && !line.includes(":"))
-      .slice(0, 4)
-      .map((line, idx) => ({
-        id: `note-${idx}`,
-        title: line,
-        priority: "medium",
-        filing_date: client?.created_at,
-        status: "active",
-        type: "messages",
-        href: "",
-      }));
+    const notesRows = noteLines.map((line, index) => ({
+      id: `note-${index}`,
+      title: line,
+      priority: "medium",
+      filing_date: client?.updated_at || client?.created_at,
+      status: "active",
+      type: "notes",
+      href: "",
+    }));
 
-    let rows = [...caseRows, ...taskRows, ...docsRows, ...notes];
+    let rows = [...caseRows, ...taskRows, ...documentRows, ...notesRows];
 
     if (timelineTab !== "all") rows = rows.filter((row) => row.type === timelineTab);
     if (timelineType !== "all") rows = rows.filter((row) => row.type === timelineType);
@@ -228,14 +261,13 @@ export default function ClientDetailPage() {
     rows.sort((a, b) => {
       const left = new Date(a.filing_date || 0).getTime();
       const right = new Date(b.filing_date || 0).getTime();
-      if (timelineOrder === "oldest") return left - right;
-      return right - left;
+      return timelineOrder === "oldest" ? left - right : right - left;
     });
 
-    return rows.slice(0, 6);
-  }, [relatedCases, relatedTasks, relatedDocuments, client, timelineTab, timelineType, timelineOrder, timelineSearch]);
+    return rows.slice(0, 8);
+  }, [client?.created_at, client?.updated_at, documents, noteLines, relatedCases, relatedTasks, timelineOrder, timelineSearch, timelineTab, timelineType]);
 
-  const filteredDocuments = useMemo(() => {
+  const filteredIdDocuments = useMemo(() => {
     let rows = [...idDocuments];
 
     if (documentSearch.trim()) {
@@ -250,7 +282,7 @@ export default function ClientDetailPage() {
     });
 
     return rows.slice(0, 8);
-  }, [idDocuments, documentSearch, documentOrder]);
+  }, [documentOrder, documentSearch, idDocuments]);
 
   async function removeIdDocument(documentId) {
     setSaving(true);
@@ -282,6 +314,7 @@ export default function ClientDetailPage() {
       setReplaceTarget(null);
       setReplaceFile(null);
       setReplaceNotes("");
+      setSuccess("Document replaced.");
       await load();
     } catch (err) {
       setError(err.message || "Failed to replace document");
@@ -342,6 +375,22 @@ export default function ClientDetailPage() {
     setPreviewDoc(null);
   }
 
+  function toggleTeamMember(userId) {
+    setSelectedTeamIds((current) => (
+      current.includes(userId) ? current.filter((idValue) => idValue !== userId) : [...current, userId]
+    ));
+  }
+
+  function openNoteModal() {
+    setNoteDraft("");
+    setNoteModalOpen(true);
+  }
+
+  function focusNotesSection() {
+    notesSectionRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+    openNoteModal();
+  }
+
   if (loading) {
     return <section className="dashboard-page-stack"><p className="vilo-state vilo-state--loading">Loading client details...</p></section>;
   }
@@ -350,13 +399,7 @@ export default function ClientDetailPage() {
     return <section className="dashboard-page-stack"><p className="vilo-state vilo-state--error">{error}</p></section>;
   }
 
-  const type = clientType(client);
-  const trn = client?.trn_no || readMetaLine(client?.notes, "TRN No") || "-";
-  const created = formatDate(client?.created_at);
-  const dob = formatDate(client?.date_of_birth);
-  const occupation = client?.occupation || "-";
-  const preferredContact = client?.preferred_contact_method || readMetaLine(client?.notes, "Preferred Contact Method") || "-";
-  const billingCurrency = client?.billing_currency || readMetaLine(client?.notes, "Billing Currency") || "USD";
+  const type = client?.client_type === "corporate" ? "Corporate" : "Individual";
   const statusLabel = client?.archived_at ? "Archived" : "Active";
 
   return (
@@ -366,13 +409,13 @@ export default function ClientDetailPage() {
           <h1>Client Details</h1>
           <p><Link href="/dashboard/clients">Clients</Link> &gt; Client Info</p>
         </div>
-        <button type="button" className="vilo-btn vilo-btn--secondary client-create-split-btn" onClick={() => setCreateOpen(true)}>
-          <span>+ Create</span>
-          <span className="client-create-split-caret">⌄</span>
+        <button type="button" className="vilo-btn vilo-btn--secondary" onClick={() => setEditOpen(true)}>
+          Edit
         </button>
       </div>
 
       {error ? <p className="vilo-state vilo-state--error">{error}</p> : null}
+      {success ? <p className="vilo-state">{success}</p> : null}
 
       <article className="dashboard-card client-identity-card">
         <div className="client-identity-main">
@@ -382,7 +425,6 @@ export default function ClientDetailPage() {
             <p>CL-{String(client?.id || "").padStart(4, "0")} · {type} · {statusLabel}</p>
           </div>
         </div>
-        <button type="button" className="vilo-btn vilo-btn--ghost vilo-btn--xs">•••</button>
       </article>
 
       <div className="client-detail-grid">
@@ -426,7 +468,7 @@ export default function ClientDetailPage() {
                 <div className="vilo-table-wrap case-table-wrap">
                   <table className="team-table">
                     <thead>
-                      <tr><th>Timeline</th><th>Priority</th><th>Filling Date</th><th>Status</th><th>Actions</th></tr>
+                      <tr><th>Timeline</th><th>Priority</th><th>Filing Date</th><th>Status</th><th>Actions</th></tr>
                     </thead>
                     <tbody>
                       {timelineRows.map((row) => (
@@ -448,17 +490,65 @@ export default function ClientDetailPage() {
             </div>
           </article>
 
-          <article className="dashboard-card">
-            <div className="dashboard-card__header"><h2>Billing</h2></div>
-            {overdueAmount > 0 ? (
-              <p className="vilo-card-copy">Overdue balance: <strong>${overdueAmount.toLocaleString()}</strong></p>
+          <article className="dashboard-card client-billing-card">
+            <div className="dashboard-card__header">
+              <h2>Invoices &amp; Billing</h2>
+              <Link href={`/dashboard/invoices?create=1&client_id=${id}`} className="vilo-btn vilo-btn--primary vilo-btn--xs">
+                Create Invoice
+              </Link>
+            </div>
+            <div className="client-billing-summary">
+              <div className="client-billing-metric">
+                <span>Overdue Balance</span>
+                <strong>{formatMoney(overdueAmount)}</strong>
+              </div>
+              <div className="client-billing-metric">
+                <span>Invoices</span>
+                <strong>{invoices.length}</strong>
+              </div>
+            </div>
+            {invoices.length ? (
+              <div className="vilo-table-wrap case-table-wrap">
+                <table className="team-table">
+                  <thead><tr><th>Invoice</th><th>Status</th><th>Amount</th><th>Due</th><th>Action</th></tr></thead>
+                  <tbody>
+                    {invoices.slice(0, 6).map((row) => (
+                      <tr key={row.id}>
+                        <td>{row.invoice_number}</td>
+                        <td><span className={`vilo-badge vilo-badge--${row.status}`}>{row.status}</span></td>
+                        <td>{formatMoney(row.total)}</td>
+                        <td>{formatDate(row.due_date)}</td>
+                        <td><Link href={`/dashboard/invoices/${row.id}`}>View</Link></td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
             ) : (
-              <p className="vilo-card-copy">No overdue balance</p>
+              <p className="vilo-card-copy">No invoices yet for this client.</p>
+            )}
+          </article>
+
+          <article ref={notesSectionRef} className="dashboard-card">
+            <div className="dashboard-card__header">
+              <h2>Notes</h2>
+              <button type="button" className="vilo-btn vilo-btn--secondary vilo-btn--xs" onClick={openNoteModal}>
+                Add Note
+              </button>
+            </div>
+            {noteLines.length ? (
+              <div className="client-notes-list">
+                {noteLines.map((line, index) => (
+                  <div key={`${line}-${index}`} className="client-note-row">{line}</div>
+                ))}
+              </div>
+            ) : (
+              <p className="vilo-card-copy">No notes saved for this client yet.</p>
             )}
           </article>
 
           <article className="dashboard-card clients-list-card">
-            <div className="dashboard-card__header"><h2>Documents</h2></div>
+            <div className="dashboard-card__header"><h2>ID Documents</h2></div>
             <div className="clients-toolbar-row client-detail-toolbar-row">
               <input className="case-search-input" placeholder="Search" value={documentDraft} onChange={(e) => setDocumentDraft(e.target.value)} />
               <button className="vilo-btn vilo-btn--primary" type="button" onClick={() => setDocumentSearch(documentDraft)}>Search</button>
@@ -471,12 +561,12 @@ export default function ClientDetailPage() {
             </div>
 
             <div className="case-tab-panel" style={{ paddingTop: "0.5rem" }}>
-              {filteredDocuments.length ? (
+              {filteredIdDocuments.length ? (
                 <div className="vilo-table-wrap case-table-wrap">
                   <table className="team-table">
                     <thead><tr><th>Name</th><th>Size</th><th>Last Modified</th><th>Actions</th></tr></thead>
                     <tbody>
-                      {filteredDocuments.map((row) => (
+                      {filteredIdDocuments.map((row) => (
                         <tr key={row.id}>
                           <td>{row.title || row.file_name || `Document #${row.id}`}</td>
                           <td>{row.file_size ? `${Math.ceil(row.file_size / 1024)} KB` : "-"}</td>
@@ -496,9 +586,8 @@ export default function ClientDetailPage() {
                   </table>
                 </div>
               ) : (
-                <div className="vilo-state-block"><p className="vilo-state">No documents found for this client.</p></div>
+                <div className="vilo-state-block"><p className="vilo-state">No ID documents found for this client.</p></div>
               )}
-              <div className="case-pagination-row"><span>Showing {filteredDocuments.length} document entries</span></div>
             </div>
           </article>
         </div>
@@ -508,58 +597,101 @@ export default function ClientDetailPage() {
             <div className="dashboard-card__header"><h2>Client Overview</h2></div>
             <div className="client-overview-inner">
               <div className="client-overview-avatar">{(client?.name || "C").slice(0, 1).toUpperCase()}</div>
-              <div className="client-overview-row"><span>TRN No:</span><strong>{trn}</strong></div>
+              <div className="client-overview-row"><span>TRN No:</span><strong>{client?.trn_no || "-"}</strong></div>
               <div className="client-overview-row"><span>Status:</span><span className={`vilo-badge ${client?.archived_at ? "vilo-badge--archived" : "vilo-badge--active"}`}>{statusLabel}</span></div>
               <div className="client-overview-row"><span>Type:</span><span className="vilo-badge vilo-badge--priority-medium">{type}</span></div>
-              {type === "Individual" ? <div className="client-overview-row"><span>Occupation:</span><strong>{occupation}</strong></div> : null}
-              <div className="client-overview-row"><span>Preferred Contact:</span><strong>{preferredContact}</strong></div>
-              <div className="client-overview-row"><span>Billing Currency:</span><strong>{billingCurrency}</strong></div>
-              <div className="client-overview-row"><span>Date of Birth:</span><strong>{dob}</strong></div>
+              {type === "Individual" ? <div className="client-overview-row"><span>Occupation:</span><strong>{client?.occupation || "-"}</strong></div> : null}
+              <div className="client-overview-row"><span>Preferred Contact:</span><strong>{formatContactMethod(client?.preferred_contact_method)}</strong></div>
+              <div className="client-overview-row"><span>Billing Currency:</span><strong>{client?.billing_currency || "USD"}</strong></div>
+              <div className="client-overview-row"><span>Date of Birth:</span><strong>{formatDate(client?.date_of_birth)}</strong></div>
               <div className="client-overview-row"><span>Email:</span><strong>{client?.email || "-"}</strong></div>
               <div className="client-overview-row"><span>Phone:</span><strong>{client?.phone || "-"}</strong></div>
-              <div className="client-overview-row"><span>Created:</span><strong>{created}</strong></div>
+              <div className="client-overview-row"><span>Created:</span><strong>{formatDate(client?.created_at)}</strong></div>
             </div>
           </article>
 
           <article className="dashboard-card">
-            <div className="dashboard-card__header"><h2>Assigned Team</h2></div>
-            {assignedTeam.length ? (
-              <div className="client-team-list">
-                {assignedTeam.map((member) => (
-                  <div key={member.id} className="client-team-row">
-                    <span>{member.name}</span>
-                    <span>›</span>
-                  </div>
+            <div className="dashboard-card__header"><h2>Team Members</h2></div>
+            <div className="client-team-panel">
+              <select value="" onChange={(e) => { if (!e.target.value) return; toggleTeamMember(Number(e.target.value)); }}>
+                <option value="">Assign team member</option>
+                {availableTeam.map((member) => (
+                  <option key={member.id} value={member.id}>{member.name} ({member.role})</option>
                 ))}
+              </select>
+
+              <div className="case-assigned-list">
+                {assignedUsers.length ? assignedUsers.map((member) => (
+                  <span key={member.id} className="case-assigned-pill">
+                    {member.name} ({member.role})
+                    <button type="button" onClick={() => toggleTeamMember(member.id)} aria-label={`Remove ${member.name}`}>×</button>
+                  </span>
+                )) : <span className="case-assigned-empty">No team members selected.</span>}
               </div>
-            ) : (
-              <p className="vilo-card-copy">No assigned team members yet.</p>
-            )}
-            <button type="button" className="vilo-btn vilo-btn--ghost vilo-btn--xs">+ Add Member</button>
+
+              {assignedUsers.length ? (
+                <div className="client-team-list">
+                  {assignedUsers.map((member) => (
+                    <div key={member.id} className="client-team-row">
+                      <div>
+                        <strong>{member.name}</strong>
+                        <span>{member.role} · {member.email}</span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              ) : null}
+
+              <button type="button" className="vilo-btn vilo-btn--primary vilo-btn--xs" onClick={saveAssignedTeam} disabled={saving}>
+                {saving ? "Saving..." : "Save Team"}
+              </button>
+            </div>
           </article>
 
           <article className="dashboard-card">
             <div className="dashboard-card__header"><h2>Quick Actions</h2></div>
             <div className="client-quick-actions">
-              <button type="button" className="vilo-btn vilo-btn--secondary" onClick={() => router.push("/dashboard/cases")}>Add Note</button>
-              <button type="button" className="vilo-btn vilo-btn--secondary" onClick={() => router.push("/dashboard/tasks")}>Add Task</button>
-              <button type="button" className="vilo-btn vilo-btn--secondary" onClick={() => router.push("/dashboard/messages")}>Send Message</button>
-              <button type="button" className="vilo-btn vilo-btn--secondary" onClick={() => router.push("/dashboard/cases")}>Create Case</button>
-              <button type="button" className="vilo-btn vilo-btn--secondary" onClick={() => router.push("/dashboard/reports")}>Add Time Entry</button>
+              <Link className="vilo-btn vilo-btn--secondary" href={`/dashboard/invoices?create=1&client_id=${id}`}>Create Invoice</Link>
+              <Link className="vilo-btn vilo-btn--secondary" href={`/dashboard/tasks?create=1&client_id=${id}`}>Add Task</Link>
+              <Link className="vilo-btn vilo-btn--secondary" href={`/dashboard/messages?create=1&client_id=${id}`}>Send Message</Link>
+              <Link className="vilo-btn vilo-btn--secondary" href={`/dashboard/documents?upload=1&client_id=${id}`}>Upload Document</Link>
+              <button type="button" className="vilo-btn vilo-btn--secondary" onClick={focusNotesSection}>Add Note</button>
             </div>
           </article>
         </aside>
       </div>
 
       <ClientIntakeModal
-        open={createOpen}
+        open={editOpen}
         mode="edit"
         client={client}
         saving={saving}
         apiError={error}
-        onClose={() => setCreateOpen(false)}
+        onClose={() => setEditOpen(false)}
         onSubmit={handleEdit}
       />
+
+      {noteModalOpen ? (
+        <div className="vilo-modal-overlay" onClick={() => setNoteModalOpen(false)}>
+          <div className="vilo-modal" onClick={(e) => e.stopPropagation()}>
+            <div className="vilo-modal__header">
+              <h3>Add Note</h3>
+              <button type="button" className="vilo-btn vilo-btn--ghost vilo-btn--xs" onClick={() => setNoteModalOpen(false)}>Close</button>
+            </div>
+            <div className="vilo-modal__body">
+              <div className="vilo-form-grid">
+                <textarea placeholder="Add a client note" value={noteDraft} onChange={(e) => setNoteDraft(e.target.value)} />
+                <div className="vilo-table-actions">
+                  <button type="button" className="vilo-btn vilo-btn--secondary" onClick={() => setNoteModalOpen(false)}>Cancel</button>
+                  <button type="button" className="vilo-btn vilo-btn--primary" onClick={saveNote} disabled={saving || !noteDraft.trim()}>
+                    {saving ? "Saving..." : "Save Note"}
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      ) : null}
 
       {deleteDocumentId ? (
         <div className="vilo-modal-overlay" onClick={() => setDeleteDocumentId(null)}>
