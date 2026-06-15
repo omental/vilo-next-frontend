@@ -61,59 +61,59 @@ export function FirmSnapshot({
 
       <div className="snapshot-layout">
         <div className="snapshot-chart-panel">
-          <div className="snapshot-chart-block">
-            <p className="snapshot-chart-block__label">Case Status</p>
-            <SnapshotDonut percent={caseStatusPercent} counts={caseStatusCounts} />
-          </div>
+          <p className="snapshot-chart-block__label">Case Status</p>
+          <SnapshotDonut percent={caseStatusPercent} counts={caseStatusCounts} />
+        </div>
 
-          <div className="snapshot-breakdown" aria-label="Firm snapshot breakdown">
-            <div className="snapshot-breakdown__header">
-              <p>Status Breakdown</p>
-              <span>{statusItems.reduce((sum, item) => sum + item.value, 0)} cases</span>
-            </div>
+        <div className="snapshot-stats-panel">
+          <div className="snapshot-stats">
+            {snapshotStats.map((item) => {
+              const Icon = item.icon || StackIcon;
 
-            <ul className="snapshot-legend" aria-label="Firm snapshot legend">
-              {statusItems.map((item) => (
-                <li key={item.key} className="snapshot-legend__item">
-                  <span className={`snapshot-legend__dot ${item.tone}`} />
-                  <span className="snapshot-legend__label">{item.label}</span>
-                  <strong className="snapshot-legend__value">{item.value}</strong>
-                </li>
-              ))}
-            </ul>
+              return (
+                <motion.article key={item.label} className="snapshot-stat" variants={itemVariants}>
+                  {item.href ? (
+                    <Link href={item.href} className="snapshot-stat__link">
+                      <div className="snapshot-stat__copy">
+                        <p>{item.label}</p>
+                        <strong>{item.value}</strong>
+                      </div>
+                      <span className={`snapshot-stat__icon ${item.tone}`}>
+                        <Icon />
+                      </span>
+                    </Link>
+                  ) : (
+                    <>
+                      <div className="snapshot-stat__copy">
+                        <p>{item.label}</p>
+                        <strong>{item.value}</strong>
+                      </div>
+                      <span className={`snapshot-stat__icon ${item.tone}`}>
+                        <Icon />
+                      </span>
+                    </>
+                  )}
+                </motion.article>
+              );
+            })}
           </div>
         </div>
 
-        <div className="snapshot-stats">
-          {snapshotStats.map((item) => {
-            const Icon = item.icon || StackIcon;
+        <div className="snapshot-breakdown" aria-label="Firm snapshot breakdown">
+          <div className="snapshot-breakdown__header">
+            <p>Status Breakdown</p>
+            <span>{statusItems.reduce((sum, item) => sum + item.value, 0)} cases</span>
+          </div>
 
-            return (
-              <motion.article key={item.label} className="snapshot-stat" variants={itemVariants}>
-                {item.href ? (
-                  <Link href={item.href} className="snapshot-stat__link">
-                    <div className="snapshot-stat__copy">
-                      <p>{item.label}:</p>
-                      <strong>{item.value}</strong>
-                    </div>
-                    <span className={`snapshot-stat__icon ${item.tone}`}>
-                      <Icon />
-                    </span>
-                  </Link>
-                ) : (
-                  <>
-                    <div className="snapshot-stat__copy">
-                      <p>{item.label}:</p>
-                      <strong>{item.value}</strong>
-                    </div>
-                    <span className={`snapshot-stat__icon ${item.tone}`}>
-                      <Icon />
-                    </span>
-                  </>
-                )}
-              </motion.article>
-            );
-          })}
+          <ul className="snapshot-legend" aria-label="Firm snapshot legend">
+            {statusItems.map((item) => (
+              <li key={item.key} className="snapshot-legend__item">
+                <span className={`snapshot-legend__dot ${item.tone}`} />
+                <span className="snapshot-legend__label">{item.label}</span>
+                <strong className="snapshot-legend__value">{item.value}</strong>
+              </li>
+            ))}
+          </ul>
         </div>
       </div>
     </motion.section>

@@ -534,45 +534,45 @@ button {
 .dashboard-card--snapshot {
   justify-content: space-between;
   padding-bottom: 1.35rem;
+  overflow: hidden;
 }
 
 .snapshot-layout {
   display: grid;
-  grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr);
-  gap: 1.75rem;
+  grid-template-columns: minmax(17rem, 22rem) minmax(0, 1fr);
+  grid-template-areas:
+    "chart stats"
+    "legend stats";
+  gap: 1.35rem 1.5rem;
   flex: 1;
   padding: 1rem 1.35rem 0;
   align-items: start;
 }
 
 .snapshot-chart-panel {
-  display: grid;
-  grid-template-columns: minmax(14rem, 18rem) minmax(0, 1fr);
-  gap: 1.25rem;
-  align-items: center;
-  min-width: 0;
-}
-
-.snapshot-chart-block {
+  grid-area: chart;
   display: flex;
   flex-direction: column;
   align-items: center;
-  justify-content: flex-start;
-  padding: 0.35rem 0 0.3rem;
+  gap: 0.85rem;
+  padding: 0.25rem 0 0;
   min-width: 0;
 }
 
 .snapshot-chart-block__label {
-  margin: 0 0 0.45rem;
-  font-size: 0.9rem;
-  font-weight: 600;
-  color: #5e5a72;
+  width: 100%;
+  margin: 0;
+  font-size: 0.96rem;
+  font-weight: 700;
+  text-align: center;
+  color: #5a566f;
 }
 
 .snapshot-donut {
   position: relative;
-  width: min(100%, 15.5rem);
-  min-width: 13rem;
+  width: min(100%, 16.5rem);
+  max-width: 16.5rem;
+  min-width: 0;
   aspect-ratio: 1;
 }
 
@@ -619,22 +619,25 @@ button {
 }
 
 .snapshot-donut__center span {
-  font-size: 0.94rem;
+  font-size: 0.98rem;
+  font-weight: 500;
   color: #4f4b63;
 }
 
 .snapshot-donut__center strong {
-  font-size: 2.1rem;
+  font-size: clamp(2.2rem, 4vw, 3.2rem);
   line-height: 1.1;
   font-weight: 600;
   color: #49455d;
 }
 
 .snapshot-breakdown {
+  grid-area: legend;
   display: grid;
   gap: 0.9rem;
-  align-content: center;
+  align-content: start;
   min-width: 0;
+  padding-top: 0.15rem;
 }
 
 .snapshot-breakdown__header {
@@ -663,8 +666,8 @@ button {
 .snapshot-legend {
   list-style: none;
   display: grid;
-  grid-template-columns: 1fr;
-  gap: 0.7rem;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.8rem;
   margin: 0;
   padding: 0;
   color: #807b91;
@@ -675,11 +678,11 @@ button {
   grid-template-columns: auto minmax(0, 1fr) auto;
   align-items: center;
   gap: 0.65rem;
-  min-height: 3.25rem;
-  padding: 0.8rem 0.95rem;
+  min-height: 3rem;
+  padding: 0.75rem 0.9rem;
   border: 1px solid rgba(229, 231, 240, 0.92);
   border-radius: 12px;
-  background: #fcfbff;
+  background: linear-gradient(180deg, #fcfbff 0%, #f8f7fd 100%);
   font-size: 0.92rem;
 }
 
@@ -716,35 +719,52 @@ button {
 }
 
 .snapshot-stats {
+  grid-area: stats;
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 0.85rem;
+  gap: 1rem;
   align-content: start;
+}
+
+.snapshot-stats-panel {
+  grid-area: stats;
+  min-width: 0;
 }
 
 .snapshot-stat {
   display: flex;
-  align-items: center;
+  align-items: stretch;
   justify-content: space-between;
   gap: 1rem;
-  min-height: 6.1rem;
-  padding: 1rem 1.05rem 1rem 1.15rem;
+  min-height: 7rem;
+  padding: 0;
   border: 1px solid rgba(225, 227, 236, 0.92);
-  border-radius: 10px;
-  background: #fff;
+  border-radius: 14px;
+  background: linear-gradient(180deg, #ffffff 0%, #fcfbff 100%);
+  overflow: hidden;
 }
 
 .snapshot-stat__link {
   display: flex;
-  align-items: center;
+  align-items: stretch;
   justify-content: space-between;
   gap: 1rem;
   width: 100%;
   min-height: 100%;
+  padding: 1rem 1.05rem 1rem 1.15rem;
   color: inherit;
   text-decoration: none;
   border-radius: inherit;
   transition: transform 0.18s ease, border-color 0.18s ease, box-shadow 0.18s ease;
+}
+
+.snapshot-stat > :not(.snapshot-stat__link) {
+  display: flex;
+  align-items: stretch;
+  justify-content: space-between;
+  gap: 1rem;
+  width: 100%;
+  padding: 1rem 1.05rem 1rem 1.15rem;
 }
 
 .snapshot-stat__link:hover,
@@ -754,13 +774,19 @@ button {
   outline: none;
 }
 
+.snapshot-stat__copy {
+  min-width: 0;
+}
+
 .snapshot-stat__icon {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 3.45rem;
-  height: 3.45rem;
-  border-radius: 10px;
+  flex: none;
+  width: 3.25rem;
+  height: 3.25rem;
+  margin: auto 0;
+  border-radius: 12px;
 }
 
 .snapshot-stat__icon svg {
@@ -2619,8 +2645,21 @@ button {
     grid-template-columns: 1fr;
   }
 
+  .snapshot-layout {
+    grid-template-areas:
+      "chart"
+      "stats"
+      "legend";
+  }
+
   .snapshot-chart-panel {
-    grid-template-columns: minmax(13rem, 16rem) minmax(0, 1fr);
+    justify-self: center;
+    width: 100%;
+    max-width: 22rem;
+  }
+
+  .snapshot-breakdown {
+    padding-top: 0;
   }
 }
 
@@ -2639,11 +2678,10 @@ button {
   }
 
   .snapshot-legend {
+    grid-template-columns: 1fr;
     gap: 0.85rem;
-    justify-content: flex-start;
   }
 
-  .snapshot-chart-panel,
   .snapshot-stats {
     grid-template-columns: 1fr;
   }
