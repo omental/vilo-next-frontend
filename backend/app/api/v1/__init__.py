@@ -1,6 +1,6 @@
 from fastapi import APIRouter
 
-from app.api.v1 import auth, organizations, users, team, clients, cases, tasks, calendar, documents, case_notes, time_entries, expenses, invoices, trust, reports, portal, conversations, portal_messages, admin, notifications, audit_logs
+from app.api.v1 import auth, organizations, users, team, clients, cases, tasks, calendar, documents, precedents, case_notes, time_entries, expenses, invoices, trust, reports, portal, conversations, portal_messages, admin, notifications, audit_logs
 
 api_router = APIRouter(prefix="/api/v1")
 api_router.include_router(auth.router)
@@ -12,6 +12,7 @@ api_router.include_router(cases.router)
 api_router.include_router(tasks.router)
 api_router.include_router(calendar.router)
 api_router.include_router(documents.router)
+api_router.include_router(precedents.router)
 api_router.include_router(case_notes.router)
 api_router.include_router(time_entries.router)
 api_router.include_router(expenses.router)

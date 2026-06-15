@@ -1,106 +1,63 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import { apiDownload, apiRequest, apiUpload } from "../../../lib/api";
+import { getCachedUser } from "../../../lib/auth";
 
-const TAB_OPTIONS = ["All Precedents", "Civil Litigation", "Employment Law", "Family Law", "Criminal Law"];
+const PRACTICE_TABS = [
+  { value: "", label: "All Precedents" },
+  { value: "civil", label: "Civil Litigation" },
+  { value: "employment", label: "Employment Law" },
+  { value: "family", label: "Family Law" },
+  { value: "corporate", label: "Corporate Law" },
+  { value: "criminal", label: "Criminal Law" },
+  { value: "other", label: "Other" },
+];
+
+const DOCUMENT_TYPE_OPTIONS = [
+  { value: "", label: "All Types" },
+  { value: "motion", label: "Motion" },
+  { value: "contract", label: "Contract" },
+  { value: "agreement", label: "Agreement" },
+  { value: "affidavit", label: "Affidavit" },
+  { value: "court_form", label: "Court Form" },
+  { value: "letter", label: "Letter" },
+  { value: "legal_notice", label: "Legal Notice" },
+  { value: "other", label: "Other" },
+];
+
 const SORT_OPTIONS = [
-  { value: "modified_desc", label: "Last Modified" },
-  { value: "modified_asc", label: "Oldest Modified" },
-  { value: "title_asc", label: "Title A-Z" },
+  { value: "updated_at", label: "Last Modified" },
+  { value: "created_at", label: "Created Date" },
+  { value: "name", label: "Title A-Z" },
 ];
 
-const PRECEDENT_ROWS = [
-  {
-    id: "will-template",
-    title: "Simple will template",
-    practiceArea: "Family Law",
-    type: "Court Form",
-    description: "Estate planning template covering guardianship clauses, residuary gifts, and witness execution prompts.",
-    author: "Kevin Brown",
-    modifiedAt: "2026-06-13T10:00:00Z",
-    tone: "violet",
-  },
-  {
-    id: "petition-support",
-    title: "Interim support application",
-    practiceArea: "Family Law",
-    type: "Motion",
-    description: "Short-form application precedent for urgent support relief with affidavit and filing checklist notes.",
-    author: "Alicia Wong",
-    modifiedAt: "2026-06-11T09:30:00Z",
-    tone: "orange",
-  },
-  {
-    id: "employment-warning",
-    title: "Workplace investigation notice",
-    practiceArea: "Employment Law",
-    type: "Letter",
-    description: "Employer notice precedent outlining allegation scope, investigator appointment, and response timing.",
-    author: "Kevin Brown",
-    modifiedAt: "2026-06-12T14:15:00Z",
-    tone: "green",
-  },
-  {
-    id: "wrongful-dismissal",
-    title: "Wrongful dismissal claim outline",
-    practiceArea: "Employment Law",
-    type: "Pleading",
-    description: "Claim structure covering entitlement, mitigation, bonus treatment, and aggravated damages placeholders.",
-    author: "Mia Patel",
-    modifiedAt: "2026-06-08T08:45:00Z",
-    tone: "blue",
-  },
-  {
-    id: "case-management",
-    title: "Case management brief",
-    practiceArea: "Civil Litigation",
-    type: "Brief",
-    description: "Court-ready case conference brief precedent with timetable asks, document disputes, and hearing estimate.",
-    author: "Jordan Clark",
-    modifiedAt: "2026-06-14T16:20:00Z",
-    tone: "red",
-  },
-  {
-    id: "demand-letter",
-    title: "Commercial demand letter",
-    practiceArea: "Civil Litigation",
-    type: "Letter",
-    description: "Pre-suit demand letter template with payment demand options, preservation language, and response deadline.",
-    author: "Sarah Ali",
-    modifiedAt: "2026-06-09T11:10:00Z",
-    tone: "violet",
-  },
-  {
-    id: "bail-variation",
-    title: "Bail variation request",
-    practiceArea: "Criminal Law",
-    type: "Application",
-    description: "Application precedent for release condition changes with proposed surety and supervision terms.",
-    author: "Noah Bennett",
-    modifiedAt: "2026-06-10T13:40:00Z",
-    tone: "orange",
-  },
-  {
-    id: "plea-brief",
-    title: "Sentencing brief starter",
-    practiceArea: "Criminal Law",
-    type: "Brief",
-    description: "Sentencing submission starter including mitigation themes, authorities section, and rehabilitation plan notes.",
-    author: "Kevin Brown",
-    modifiedAt: "2026-06-07T15:25:00Z",
-    tone: "green",
-  },
-  {
-    id: "custody-plan",
-    title: "Parenting plan framework",
-    practiceArea: "Family Law",
-    type: "Agreement",
-    description: "Shared parenting framework with holiday schedule, communication protocol, and variation mechanism.",
-    author: "Emma Reed",
-    modifiedAt: "2026-06-06T12:00:00Z",
-    tone: "blue",
-  },
-];
+const CREATE_INITIAL = {
+  mode: "text",
+  name: "",
+  description: "",
+  practice_area: "",
+  document_type: "",
+  tags: "",
+  content_text: "",
+  file: null,
+};
+
+const EDIT_INITIAL = {
+  name: "",
+  description: "",
+  practice_area: "",
+  document_type: "",
+  tags: "",
+  content_text: "",
+};
+
+const COPY_INITIAL = {
+  case_id: "",
+  name: "",
+  content_text: "",
+  caseSearch: "",
+};
 
 function formatRelativeDate(value) {
   const date = new Date(value);
@@ -119,18 +76,61 @@ function formatRelativeDate(value) {
   return `${months} months ago`;
 }
 
-function getTypeOptions(rows) {
-  return ["All Types", ...Array.from(new Set(rows.map((row) => row.type))).sort()];
+function formatDateTime(value) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "Unknown";
+  return date.toLocaleString();
 }
 
-function getPracticeAreaOptions(rows) {
-  return ["All Practice Areas", ...Array.from(new Set(rows.map((row) => row.practiceArea))).sort()];
+function formatPracticeArea(value) {
+  const map = {
+    civil: "Civil Litigation",
+    employment: "Employment Law",
+    family: "Family Law",
+    corporate: "Corporate Law",
+    criminal: "Criminal Law",
+    other: "Other",
+  };
+  return map[value] || toTitleCase(value || "other");
 }
 
-function compareRows(a, b, sortBy) {
-  if (sortBy === "title_asc") return a.title.localeCompare(b.title);
-  if (sortBy === "modified_asc") return new Date(a.modifiedAt).getTime() - new Date(b.modifiedAt).getTime();
-  return new Date(b.modifiedAt).getTime() - new Date(a.modifiedAt).getTime();
+function formatDocumentType(value) {
+  return toTitleCase(String(value || "").replaceAll("_", " "));
+}
+
+function toTitleCase(value) {
+  return String(value || "")
+    .split(" ")
+    .filter(Boolean)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(" ");
+}
+
+function getTone(practiceArea) {
+  const tones = {
+    family: "violet",
+    employment: "green",
+    civil: "red",
+    criminal: "orange",
+    corporate: "blue",
+    other: "violet",
+  };
+  return tones[practiceArea] || "blue";
+}
+
+function parseTags(value) {
+  return value
+    .split(",")
+    .map((tag) => tag.trim())
+    .filter(Boolean);
+}
+
+function roleCanManage(role) {
+  return role === "partner" || role === "admin";
+}
+
+function roleCanView(role) {
+  return role === "partner" || role === "admin" || role === "lawyer" || role === "paralegal";
 }
 
 function Modal({ title, copy, onClose, children }) {
@@ -186,26 +186,398 @@ function PlusIcon() {
 }
 
 export default function PrecedentsPage() {
-  const [activeTab, setActiveTab] = useState(TAB_OPTIONS[0]);
-  const [practiceArea, setPracticeArea] = useState("All Practice Areas");
-  const [typeFilter, setTypeFilter] = useState("All Types");
-  const [sortBy, setSortBy] = useState("modified_desc");
-  const [previewItem, setPreviewItem] = useState(null);
+  const [currentUser, setCurrentUser] = useState(getCachedUser());
+  const [precedents, setPrecedents] = useState([]);
+  const [total, setTotal] = useState(0);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+  const [success, setSuccess] = useState("");
+  const [activeTab, setActiveTab] = useState("");
+  const [draftSearch, setDraftSearch] = useState("");
+  const [searchQuery, setSearchQuery] = useState("");
+  const [typeFilter, setTypeFilter] = useState("");
+  const [sortBy, setSortBy] = useState("updated_at");
+  const [includeArchived, setIncludeArchived] = useState(false);
+  const [selectedId, setSelectedId] = useState(null);
+  const [detail, setDetail] = useState(null);
+  const [detailLoading, setDetailLoading] = useState(false);
+  const [detailError, setDetailError] = useState("");
   const [createOpen, setCreateOpen] = useState(false);
+  const [createForm, setCreateForm] = useState(CREATE_INITIAL);
+  const [createError, setCreateError] = useState("");
+  const [createSaving, setCreateSaving] = useState(false);
+  const [editOpen, setEditOpen] = useState(false);
+  const [editForm, setEditForm] = useState(EDIT_INITIAL);
+  const [editError, setEditError] = useState("");
+  const [editSaving, setEditSaving] = useState(false);
+  const [copyOpen, setCopyOpen] = useState(false);
+  const [copyForm, setCopyForm] = useState(COPY_INITIAL);
+  const [copyError, setCopyError] = useState("");
+  const [copySaving, setCopySaving] = useState(false);
+  const [cases, setCases] = useState([]);
+  const [casesLoading, setCasesLoading] = useState(false);
+  const [casesError, setCasesError] = useState("");
 
-  const practiceAreaOptions = useMemo(() => getPracticeAreaOptions(PRECEDENT_ROWS), []);
-  const typeOptions = useMemo(() => getTypeOptions(PRECEDENT_ROWS), []);
+  const role = currentUser?.role || "";
+  const canManage = roleCanManage(role);
+  const canView = roleCanView(role);
 
-  const filteredRows = useMemo(() => {
-    const rows = PRECEDENT_ROWS.filter((row) => {
-      if (activeTab !== "All Precedents" && row.practiceArea !== activeTab) return false;
-      if (practiceArea !== "All Practice Areas" && row.practiceArea !== practiceArea) return false;
-      if (typeFilter !== "All Types" && row.type !== typeFilter) return false;
-      return true;
+  useEffect(() => {
+    if (currentUser) return;
+    let cancelled = false;
+
+    async function loadMe() {
+      try {
+        const me = await apiRequest("/api/v1/auth/me");
+        if (!cancelled) setCurrentUser(me);
+      } catch {
+        if (!cancelled) setCurrentUser(null);
+      }
+    }
+
+    loadMe();
+    return () => {
+      cancelled = true;
+    };
+  }, [currentUser]);
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      setSearchQuery(draftSearch.trim());
+    }, 250);
+    return () => window.clearTimeout(timer);
+  }, [draftSearch]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadPrecedents() {
+      if (currentUser && !canView) {
+        setLoading(false);
+        setPrecedents([]);
+        setTotal(0);
+        setError("");
+        return;
+      }
+
+      setLoading(true);
+      setError("");
+      try {
+        const params = new URLSearchParams();
+        if (searchQuery) params.set("q", searchQuery);
+        if (activeTab) params.set("practice_area", activeTab);
+        if (typeFilter) params.set("document_type", typeFilter);
+        if (sortBy) params.set("sort", sortBy);
+        if (includeArchived) params.set("include_archived", "true");
+        params.set("limit", "120");
+        params.set("offset", "0");
+
+        const data = await apiRequest(`/api/v1/precedents?${params.toString()}`);
+        if (cancelled) return;
+        setPrecedents(data.items || []);
+        setTotal(Number(data.total || 0));
+      } catch (err) {
+        if (cancelled) return;
+        setError(err.message || "Failed to load precedents");
+        setPrecedents([]);
+        setTotal(0);
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
+    }
+
+    loadPrecedents();
+    return () => {
+      cancelled = true;
+    };
+  }, [activeTab, canView, currentUser, includeArchived, searchQuery, sortBy, typeFilter]);
+
+  useEffect(() => {
+    if (!selectedId) {
+      setDetail(null);
+      setDetailError("");
+      setEditOpen(false);
+      setCopyOpen(false);
+      return;
+    }
+
+    let cancelled = false;
+
+    async function loadDetail() {
+      setDetailLoading(true);
+      setDetailError("");
+      try {
+        const data = await apiRequest(`/api/v1/precedents/${selectedId}`);
+        if (cancelled) return;
+        setDetail(data);
+      } catch (err) {
+        if (cancelled) return;
+        setDetail(null);
+        setDetailError(err.message || "Failed to load precedent");
+      } finally {
+        if (!cancelled) setDetailLoading(false);
+      }
+    }
+
+    loadDetail();
+    return () => {
+      cancelled = true;
+    };
+  }, [selectedId]);
+
+  useEffect(() => {
+    if (!editOpen || !detail) return;
+    setEditForm({
+      name: detail.name || "",
+      description: detail.description || "",
+      practice_area: detail.practice_area || "",
+      document_type: detail.document_type || "",
+      tags: (detail.tags || []).join(", "),
+      content_text: detail.content_text || "",
+    });
+    setEditError("");
+  }, [detail, editOpen]);
+
+  const filteredCases = useMemo(() => {
+    const query = copyForm.caseSearch.trim().toLowerCase();
+    if (!query) return cases;
+    return cases.filter((row) => {
+      const haystack = [row.title, row.description, row.client_id ? `client ${row.client_id}` : ""]
+        .filter(Boolean)
+        .join(" ")
+        .toLowerCase();
+      return haystack.includes(query);
+    });
+  }, [cases, copyForm.caseSearch]);
+
+  async function refreshList() {
+    const params = new URLSearchParams();
+    if (searchQuery) params.set("q", searchQuery);
+    if (activeTab) params.set("practice_area", activeTab);
+    if (typeFilter) params.set("document_type", typeFilter);
+    if (sortBy) params.set("sort", sortBy);
+    if (includeArchived) params.set("include_archived", "true");
+    params.set("limit", "120");
+    params.set("offset", "0");
+    const data = await apiRequest(`/api/v1/precedents?${params.toString()}`);
+    setPrecedents(data.items || []);
+    setTotal(Number(data.total || 0));
+  }
+
+  async function refreshDetail(precedentId) {
+    const data = await apiRequest(`/api/v1/precedents/${precedentId}`);
+    setDetail(data);
+    return data;
+  }
+
+  function resetFilters() {
+    setActiveTab("");
+    setDraftSearch("");
+    setSearchQuery("");
+    setTypeFilter("");
+    setSortBy("updated_at");
+    setIncludeArchived(false);
+  }
+
+  function closeCreateModal() {
+    setCreateOpen(false);
+    setCreateForm(CREATE_INITIAL);
+    setCreateError("");
+  }
+
+  function closeDetailModal() {
+    setSelectedId(null);
+    setDetail(null);
+    setDetailError("");
+    setEditOpen(false);
+    setCopyOpen(false);
+    setCopyForm(COPY_INITIAL);
+  }
+
+  async function handleCreate(event) {
+    event.preventDefault();
+    setCreateError("");
+    setSuccess("");
+
+    if (!createForm.name.trim() || !createForm.practice_area || !createForm.document_type) {
+      setCreateError("Name, practice area, and document type are required.");
+      return;
+    }
+
+    if (createForm.mode === "upload" && !createForm.file) {
+      setCreateError("Please select a file to upload.");
+      return;
+    }
+
+    setCreateSaving(true);
+    try {
+      if (createForm.mode === "text") {
+        await apiRequest("/api/v1/precedents", {
+          method: "POST",
+          body: JSON.stringify({
+            name: createForm.name.trim(),
+            description: createForm.description.trim() || null,
+            practice_area: createForm.practice_area,
+            document_type: createForm.document_type,
+            tags: parseTags(createForm.tags),
+            content_text: createForm.content_text.trim() || null,
+          }),
+        });
+      } else {
+        const formData = new FormData();
+        formData.append("name", createForm.name.trim());
+        formData.append("practice_area", createForm.practice_area);
+        formData.append("document_type", createForm.document_type);
+        if (createForm.description.trim()) formData.append("description", createForm.description.trim());
+        if (createForm.tags.trim()) formData.append("tags", createForm.tags.trim());
+        if (createForm.content_text.trim()) formData.append("content_text", createForm.content_text.trim());
+        formData.append("file", createForm.file);
+        await apiUpload("/api/v1/precedents/upload", formData);
+      }
+
+      await refreshList();
+      setSuccess("Precedent saved successfully.");
+      closeCreateModal();
+    } catch (err) {
+      setCreateError(err.message || "Failed to save precedent");
+    } finally {
+      setCreateSaving(false);
+    }
+  }
+
+  async function handleDownload() {
+    if (!detail?.has_file) return;
+    try {
+      await apiDownload(`/api/v1/precedents/${detail.id}/download`);
+    } catch (err) {
+      setDetailError(err.message || "Failed to download precedent");
+    }
+  }
+
+  async function handleArchive() {
+    if (!detail) return;
+    const confirmed = window.confirm("Archive this precedent? Existing case copies will not change.");
+    if (!confirmed) return;
+
+    setDetailError("");
+    try {
+      await apiRequest(`/api/v1/precedents/${detail.id}/archive`, { method: "POST" });
+      await refreshList();
+      setSuccess("Precedent archived.");
+      closeDetailModal();
+    } catch (err) {
+      setDetailError(err.message || "Failed to archive precedent");
+    }
+  }
+
+  async function handleEdit(event) {
+    event.preventDefault();
+    if (!detail) return;
+    setEditError("");
+    setSuccess("");
+
+    if (!editForm.name.trim() || !editForm.practice_area || !editForm.document_type) {
+      setEditError("Name, practice area, and document type are required.");
+      return;
+    }
+
+    setEditSaving(true);
+    try {
+      await apiRequest(`/api/v1/precedents/${detail.id}`, {
+        method: "PATCH",
+        body: JSON.stringify({
+          name: editForm.name.trim(),
+          description: editForm.description.trim() || null,
+          practice_area: editForm.practice_area,
+          document_type: editForm.document_type,
+          tags: parseTags(editForm.tags),
+          content_text: editForm.content_text.trim() || null,
+        }),
+      });
+      await refreshList();
+      await refreshDetail(detail.id);
+      setSuccess("Master precedent updated.");
+      setEditOpen(false);
+    } catch (err) {
+      setEditError(err.message || "Failed to update precedent");
+    } finally {
+      setEditSaving(false);
+    }
+  }
+
+  async function openCopyModal() {
+    setCopyOpen(true);
+    setCopyError("");
+    setCopyForm({
+      case_id: "",
+      name: detail?.name || "",
+      content_text: "",
+      caseSearch: "",
     });
 
-    return [...rows].sort((a, b) => compareRows(a, b, sortBy));
-  }, [activeTab, practiceArea, sortBy, typeFilter]);
+    if (cases.length > 0 || casesLoading) return;
+
+    setCasesLoading(true);
+    setCasesError("");
+    try {
+      const rows = await apiRequest("/api/v1/cases");
+      setCases(rows || []);
+    } catch (err) {
+      setCases([]);
+      setCasesError(err.message || "Failed to load cases");
+    } finally {
+      setCasesLoading(false);
+    }
+  }
+
+  async function handleCopy(event) {
+    event.preventDefault();
+    if (!detail) return;
+    setCopyError("");
+    setSuccess("");
+
+    if (!copyForm.case_id) {
+      setCopyError("Please select a case.");
+      return;
+    }
+
+    setCopySaving(true);
+    try {
+      const response = await apiRequest(`/api/v1/precedents/${detail.id}/copy-to-case`, {
+        method: "POST",
+        body: JSON.stringify({
+          case_id: Number(copyForm.case_id),
+          name: copyForm.name.trim() || null,
+          content_text: copyForm.content_text.trim() || null,
+        }),
+      });
+      setSuccess(`Precedent copied to case as document #${response.document.id}.`);
+      setCopyOpen(false);
+      setCopyForm(COPY_INITIAL);
+    } catch (err) {
+      setCopyError(err.message || "Failed to copy precedent to case");
+    } finally {
+      setCopySaving(false);
+    }
+  }
+
+  if (currentUser && !canView) {
+    return (
+      <section className="dashboard-page-stack precedents-page">
+        <div className="precedents-page__topbar">
+          <div className="dashboard-page-heading precedents-page__heading">
+            <h1>Precedents</h1>
+            <p>Standardized legal templates and drafting starters for repeatable firm work.</p>
+          </div>
+        </div>
+        <div className="precedents-shell">
+          <div className="vilo-state-block precedents-empty">
+            <p className="vilo-state vilo-state--error">You do not have access to the precedents library.</p>
+          </div>
+        </div>
+      </section>
+    );
+  }
 
   return (
     <section className="dashboard-page-stack precedents-page">
@@ -215,41 +587,47 @@ export default function PrecedentsPage() {
           <p>Standardized legal templates and drafting starters for repeatable firm work.</p>
         </div>
 
-        <button type="button" className="vilo-btn vilo-btn--primary precedents-page__create" onClick={() => setCreateOpen(true)}>
-          <PlusIcon />
-          <span>New Precedent</span>
-        </button>
+        {canManage ? (
+          <button type="button" className="vilo-btn vilo-btn--primary precedents-page__create" onClick={() => setCreateOpen(true)}>
+            <PlusIcon />
+            <span>New Precedent</span>
+          </button>
+        ) : null}
       </div>
+
+      {success ? <div className="vilo-state-block"><p className="vilo-state">{success}</p></div> : null}
 
       <div className="precedents-shell">
         <div className="precedents-tabs" role="tablist" aria-label="Precedent categories">
-          {TAB_OPTIONS.map((tab) => (
+          {PRACTICE_TABS.map((tab) => (
             <button
-              key={tab}
+              key={tab.label}
               type="button"
               role="tab"
-              aria-selected={activeTab === tab}
-              className={`precedents-tab${activeTab === tab ? " is-active" : ""}`}
-              onClick={() => setActiveTab(tab)}
+              aria-selected={activeTab === tab.value}
+              className={`precedents-tab${activeTab === tab.value ? " is-active" : ""}`}
+              onClick={() => setActiveTab(tab.value)}
             >
-              {tab}
+              {tab.label}
             </button>
           ))}
         </div>
 
-        <div className="precedents-filters">
-          <label className="precedents-filter-field">
-            <span className="sr-only">Practice area</span>
-            <select value={practiceArea} onChange={(event) => setPracticeArea(event.target.value)}>
-              {practiceAreaOptions.map((option) => <option key={option} value={option}>{option}</option>)}
-            </select>
-            <ChevronDownIcon />
+        <div className="precedents-filters precedents-filters--rich">
+          <label className="precedents-search-field">
+            <span className="sr-only">Search precedents</span>
+            <input
+              type="search"
+              value={draftSearch}
+              onChange={(event) => setDraftSearch(event.target.value)}
+              placeholder="Search precedents, descriptions, or text"
+            />
           </label>
 
           <label className="precedents-filter-field">
             <span className="sr-only">Type</span>
             <select value={typeFilter} onChange={(event) => setTypeFilter(event.target.value)}>
-              {typeOptions.map((option) => <option key={option} value={option}>{option}</option>)}
+              {DOCUMENT_TYPE_OPTIONS.map((option) => <option key={option.value || "all"} value={option.value}>{option.label}</option>)}
             </select>
             <ChevronDownIcon />
           </label>
@@ -261,107 +639,345 @@ export default function PrecedentsPage() {
             </select>
             <ChevronDownIcon />
           </label>
+
+          <label className="precedents-toggle">
+            <input type="checkbox" checked={includeArchived} onChange={(event) => setIncludeArchived(event.target.checked)} />
+            <span>Include archived</span>
+          </label>
         </div>
 
-        <div className="precedents-results-head">
-          <h2>{filteredRows.length} {filteredRows.length === 1 ? "Precedent" : "Precedents"}</h2>
+        <div className="precedents-results-head precedents-results-head--between">
+          <h2>{total} {total === 1 ? "Precedent" : "Precedents"}</h2>
+          <button type="button" className="vilo-btn vilo-btn--secondary vilo-btn--xs" onClick={resetFilters}>
+            Reset filters
+          </button>
         </div>
 
-        {!filteredRows.length ? (
+        {loading ? (
+          <div className="vilo-state-block precedents-empty">
+            <p className="vilo-state vilo-state--loading">Loading precedents...</p>
+          </div>
+        ) : null}
+
+        {!loading && error ? (
+          <div className="vilo-state-block precedents-empty">
+            <p className="vilo-state vilo-state--error">{error}</p>
+          </div>
+        ) : null}
+
+        {!loading && !error && precedents.length === 0 ? (
           <div className="vilo-state-block precedents-empty">
             <p className="vilo-state">No precedents matched the selected filters.</p>
-            <button
-              type="button"
-              className="vilo-btn vilo-btn--secondary vilo-btn--xs"
-              onClick={() => {
-                setActiveTab("All Precedents");
-                setPracticeArea("All Practice Areas");
-                setTypeFilter("All Types");
-                setSortBy("modified_desc");
-              }}
-            >
-              Reset filters
-            </button>
           </div>
-        ) : (
+        ) : null}
+
+        {!loading && !error && precedents.length > 0 ? (
           <div className="precedents-grid">
-            {filteredRows.map((row) => (
-              <button
-                key={row.id}
-                type="button"
-                className="precedent-card"
-                onClick={() => setPreviewItem(row)}
-                aria-label={`Preview ${row.title}`}
-              >
-                <div className="precedent-card__body">
-                  <div className="precedent-card__title-row">
-                    <span className="precedent-card__icon">
-                      <FileIcon />
-                    </span>
-                    <div>
-                      <h3>{row.title}</h3>
+            {precedents.map((row) => {
+              const tone = getTone(row.practice_area);
+              return (
+                <button
+                  key={row.id}
+                  type="button"
+                  className={`precedent-card${row.is_archived ? " is-archived" : ""}`}
+                  onClick={() => setSelectedId(row.id)}
+                  aria-label={`Preview ${row.name}`}
+                >
+                  <div className="precedent-card__body">
+                    <div className="precedent-card__title-row">
+                      <span className="precedent-card__icon">
+                        <FileIcon />
+                      </span>
+                      <div>
+                        <h3>{row.name}</h3>
+                        {row.has_file ? <span className="precedent-card__subtle">{row.file_name}</span> : <span className="precedent-card__subtle">Text precedent</span>}
+                      </div>
                     </div>
+
+                    <div className={`precedent-card__chip precedent-card__chip--${tone}`}>
+                      <ChipIcon />
+                      <span>{formatPracticeArea(row.practice_area)}</span>
+                      <span className="precedent-card__chip-dot" />
+                      <span>{formatDocumentType(row.document_type)}</span>
+                    </div>
+
+                    <p>{row.description || "No description added yet."}</p>
+
+                    {row.tags?.length ? (
+                      <div className="precedent-card__tags">
+                        {row.tags.slice(0, 3).map((tag) => (
+                          <span key={tag} className="precedent-card__tag">{tag}</span>
+                        ))}
+                      </div>
+                    ) : null}
                   </div>
 
-                  <div className={`precedent-card__chip precedent-card__chip--${row.tone}`}>
-                    <ChipIcon />
-                    <span>{row.practiceArea}</span>
-                    <span className="precedent-card__chip-dot" />
-                    <span>{row.type}</span>
+                  <div className="precedent-card__footer">
+                    <span>Modified {formatRelativeDate(row.updated_at || row.created_at)}</span>
+                    <span className="precedent-card__footer-dot" />
+                    <span>by {row.updated_by_name || row.created_by_name || "Unknown"}</span>
                   </div>
-
-                  <p>{row.description}</p>
-                </div>
-
-                <div className="precedent-card__footer">
-                  <span>Modified {formatRelativeDate(row.modifiedAt)}</span>
-                  <span className="precedent-card__footer-dot" />
-                  <span>by {row.author}</span>
-                </div>
-              </button>
-            ))}
+                </button>
+              );
+            })}
           </div>
-        )}
+        ) : null}
       </div>
 
-      {previewItem ? (
+      {selectedId ? (
         <Modal
-          title={previewItem.title}
-          copy="Preview is frontend-only for now. Editing, versioning, and persistence are not configured in this phase."
-          onClose={() => setPreviewItem(null)}
+          title={detail?.name || "Precedent preview"}
+          copy="This is the reusable master precedent. Editing it changes future use only and does not update existing copied case documents."
+          onClose={closeDetailModal}
         >
-          <div className="precedents-modal__stack">
-            <div className={`precedent-card__chip precedent-card__chip--${previewItem.tone}`}>
-              <ChipIcon />
-              <span>{previewItem.practiceArea}</span>
-              <span className="precedent-card__chip-dot" />
-              <span>{previewItem.type}</span>
+          {detailLoading ? <p className="vilo-state vilo-state--loading">Loading precedent...</p> : null}
+          {detailError ? <p className="vilo-state vilo-state--error">{detailError}</p> : null}
+
+          {!detailLoading && !detailError && detail ? (
+            <div className="precedents-modal__stack">
+              <div className={`precedent-card__chip precedent-card__chip--${getTone(detail.practice_area)}`}>
+                <ChipIcon />
+                <span>{formatPracticeArea(detail.practice_area)}</span>
+                <span className="precedent-card__chip-dot" />
+                <span>{formatDocumentType(detail.document_type)}</span>
+              </div>
+
+              {detail.description ? <p className="precedents-modal__description">{detail.description}</p> : null}
+
+              {detail.tags?.length ? (
+                <div className="precedents-modal__tag-list">
+                  {detail.tags.map((tag) => <span key={tag} className="precedent-card__tag">{tag}</span>)}
+                </div>
+              ) : null}
+
+              {detail.content_text ? (
+                <div className="precedents-detail-panel">
+                  <h4>Master Text</h4>
+                  <pre className="precedents-detail-panel__content">{detail.content_text}</pre>
+                </div>
+              ) : null}
+
+              {detail.has_file ? (
+                <div className="precedents-detail-panel">
+                  <h4>File</h4>
+                  <p className="precedents-detail-panel__meta">
+                    {detail.file_name} {detail.file_type ? `· ${detail.file_type}` : ""} {detail.file_size ? `· ${detail.file_size} bytes` : ""}
+                  </p>
+                </div>
+              ) : null}
+
+              <div className="precedents-modal__meta">
+                <span>Created {formatDateTime(detail.created_at)} by {detail.created_by_name || "Unknown"}</span>
+                <span>Updated {formatDateTime(detail.updated_at)}{detail.updated_by_name ? ` by ${detail.updated_by_name}` : ""}</span>
+                {detail.is_archived ? <span>Status: Archived</span> : null}
+              </div>
+
+              {!editOpen && !copyOpen ? (
+                <div className="precedents-modal__actions precedents-modal__actions--split">
+                  <div className="precedents-modal__actions-group">
+                    {detail.has_file ? <button type="button" className="vilo-btn vilo-btn--secondary" onClick={handleDownload}>Download</button> : null}
+                    <button type="button" className="vilo-btn vilo-btn--primary" onClick={openCopyModal}>Use for Case</button>
+                  </div>
+                  {canManage ? (
+                    <div className="precedents-modal__actions-group">
+                      <button type="button" className="vilo-btn vilo-btn--secondary" onClick={() => setEditOpen(true)}>Edit Master</button>
+                      {!detail.is_archived ? <button type="button" className="vilo-btn vilo-btn--danger" onClick={handleArchive}>Archive</button> : null}
+                    </div>
+                  ) : null}
+                </div>
+              ) : null}
+
+              {editOpen ? (
+                <form className="vilo-form-grid precedents-form-grid" onSubmit={handleEdit}>
+                  <div className="precedents-detail-panel">
+                    <h4>Edit Master</h4>
+                    <p className="precedents-detail-panel__meta">Changes here affect future copies only.</p>
+                  </div>
+                  <input
+                    placeholder="Name"
+                    value={editForm.name}
+                    onChange={(event) => setEditForm((current) => ({ ...current, name: event.target.value }))}
+                    required
+                  />
+                  <textarea
+                    placeholder="Description"
+                    value={editForm.description}
+                    onChange={(event) => setEditForm((current) => ({ ...current, description: event.target.value }))}
+                  />
+                  <div className="vilo-form-row-two">
+                    <select
+                      value={editForm.practice_area}
+                      onChange={(event) => setEditForm((current) => ({ ...current, practice_area: event.target.value }))}
+                      required
+                    >
+                      <option value="">Select practice area</option>
+                      {PRACTICE_TABS.filter((tab) => tab.value).map((tab) => <option key={tab.value} value={tab.value}>{tab.label}</option>)}
+                    </select>
+                    <select
+                      value={editForm.document_type}
+                      onChange={(event) => setEditForm((current) => ({ ...current, document_type: event.target.value }))}
+                      required
+                    >
+                      <option value="">Select document type</option>
+                      {DOCUMENT_TYPE_OPTIONS.filter((option) => option.value).map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+                    </select>
+                  </div>
+                  <input
+                    placeholder="Tags separated by commas"
+                    value={editForm.tags}
+                    onChange={(event) => setEditForm((current) => ({ ...current, tags: event.target.value }))}
+                  />
+                  <textarea
+                    placeholder="Master content"
+                    value={editForm.content_text}
+                    onChange={(event) => setEditForm((current) => ({ ...current, content_text: event.target.value }))}
+                  />
+                  {editError ? <p className="vilo-state vilo-state--error">{editError}</p> : null}
+                  <div className="precedents-modal__actions precedents-modal__actions--split">
+                    <button type="button" className="vilo-btn vilo-btn--secondary" onClick={() => setEditOpen(false)}>Cancel</button>
+                    <button type="submit" className="vilo-btn vilo-btn--primary" disabled={editSaving}>{editSaving ? "Saving..." : "Save Master"}</button>
+                  </div>
+                </form>
+              ) : null}
+
+              {copyOpen ? (
+                <form className="vilo-form-grid precedents-form-grid" onSubmit={handleCopy}>
+                  <div className="precedents-detail-panel">
+                    <h4>Copy to Case</h4>
+                    <p className="precedents-detail-panel__meta">This creates an independent case document. Editing the copy does not change the master precedent.</p>
+                  </div>
+
+                  <input
+                    type="search"
+                    placeholder="Search accessible cases"
+                    value={copyForm.caseSearch}
+                    onChange={(event) => setCopyForm((current) => ({ ...current, caseSearch: event.target.value }))}
+                  />
+
+                  <select
+                    value={copyForm.case_id}
+                    onChange={(event) => setCopyForm((current) => ({ ...current, case_id: event.target.value }))}
+                    required
+                  >
+                    <option value="">Select case</option>
+                    {filteredCases.map((row) => <option key={row.id} value={row.id}>{row.title}</option>)}
+                  </select>
+
+                  <input
+                    placeholder="Case document name"
+                    value={copyForm.name}
+                    onChange={(event) => setCopyForm((current) => ({ ...current, name: event.target.value }))}
+                  />
+
+                  <textarea
+                    placeholder="Optional content override"
+                    value={copyForm.content_text}
+                    onChange={(event) => setCopyForm((current) => ({ ...current, content_text: event.target.value }))}
+                  />
+
+                  {casesLoading ? <p className="vilo-state vilo-state--loading">Loading cases...</p> : null}
+                  {casesError ? <p className="vilo-state vilo-state--error">{casesError}</p> : null}
+                  {copyError ? <p className="vilo-state vilo-state--error">{copyError}</p> : null}
+
+                  <div className="precedents-modal__actions precedents-modal__actions--split">
+                    <button type="button" className="vilo-btn vilo-btn--secondary" onClick={() => setCopyOpen(false)}>Cancel</button>
+                    <button type="submit" className="vilo-btn vilo-btn--primary" disabled={copySaving}>{copySaving ? "Copying..." : "Create Case Copy"}</button>
+                  </div>
+                </form>
+              ) : null}
             </div>
-            <p className="precedents-modal__description">{previewItem.description}</p>
-            <div className="precedents-modal__meta">
-              <span>Modified {formatRelativeDate(previewItem.modifiedAt)}</span>
-              <span>Author: {previewItem.author}</span>
-            </div>
-          </div>
+          ) : null}
         </Modal>
       ) : null}
 
       {createOpen ? (
         <Modal
           title="New precedent"
-          copy="Precedent creation is not configured in the current app yet. This placeholder preserves the route and avoids implying saved data."
-          onClose={() => setCreateOpen(false)}
+          copy="Create a reusable master precedent as text or upload a file-backed template."
+          onClose={closeCreateModal}
         >
-          <div className="precedents-modal__stack">
-            <p className="precedents-modal__description">
-              Wire this action to an existing create flow or precedent API once the backend model and permissions are available.
-            </p>
-            <div className="precedents-modal__actions">
-              <button type="button" className="vilo-btn vilo-btn--secondary" onClick={() => setCreateOpen(false)}>
-                Close
+          <form className="vilo-form-grid precedents-form-grid" onSubmit={handleCreate}>
+            <div className="precedents-mode-switch">
+              <button
+                type="button"
+                className={`precedents-mode-switch__item${createForm.mode === "text" ? " is-active" : ""}`}
+                onClick={() => setCreateForm((current) => ({ ...current, mode: "text", file: null }))}
+              >
+                Text Precedent
+              </button>
+              <button
+                type="button"
+                className={`precedents-mode-switch__item${createForm.mode === "upload" ? " is-active" : ""}`}
+                onClick={() => setCreateForm((current) => ({ ...current, mode: "upload" }))}
+              >
+                Upload File
               </button>
             </div>
-          </div>
+
+            <input
+              placeholder="Name"
+              value={createForm.name}
+              onChange={(event) => setCreateForm((current) => ({ ...current, name: event.target.value }))}
+              required
+            />
+
+            <textarea
+              placeholder="Description"
+              value={createForm.description}
+              onChange={(event) => setCreateForm((current) => ({ ...current, description: event.target.value }))}
+            />
+
+            <div className="vilo-form-row-two">
+              <select
+                value={createForm.practice_area}
+                onChange={(event) => setCreateForm((current) => ({ ...current, practice_area: event.target.value }))}
+                required
+              >
+                <option value="">Select practice area</option>
+                {PRACTICE_TABS.filter((tab) => tab.value).map((tab) => <option key={tab.value} value={tab.value}>{tab.label}</option>)}
+              </select>
+
+              <select
+                value={createForm.document_type}
+                onChange={(event) => setCreateForm((current) => ({ ...current, document_type: event.target.value }))}
+                required
+              >
+                <option value="">Select document type</option>
+                {DOCUMENT_TYPE_OPTIONS.filter((option) => option.value).map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+              </select>
+            </div>
+
+            <input
+              placeholder="Tags separated by commas"
+              value={createForm.tags}
+              onChange={(event) => setCreateForm((current) => ({ ...current, tags: event.target.value }))}
+            />
+
+            <textarea
+              placeholder="Master content"
+              value={createForm.content_text}
+              onChange={(event) => setCreateForm((current) => ({ ...current, content_text: event.target.value }))}
+            />
+
+            {createForm.mode === "upload" ? (
+              <label className="precedents-upload-field">
+                <span>Template file</span>
+                <input
+                  type="file"
+                  onChange={(event) => setCreateForm((current) => ({ ...current, file: event.target.files?.[0] || null }))}
+                  required={createForm.mode === "upload"}
+                />
+                <small>{createForm.file ? createForm.file.name : "PDF, Word, image, or text file"}</small>
+              </label>
+            ) : null}
+
+            {createError ? <p className="vilo-state vilo-state--error">{createError}</p> : null}
+
+            <div className="precedents-modal__actions precedents-modal__actions--split">
+              <button type="button" className="vilo-btn vilo-btn--secondary" onClick={closeCreateModal}>Cancel</button>
+              <button type="submit" className="vilo-btn vilo-btn--primary" disabled={createSaving}>{createSaving ? "Saving..." : "Save Precedent"}</button>
+            </div>
+          </form>
         </Modal>
       ) : null}
     </section>

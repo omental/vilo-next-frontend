@@ -7,6 +7,10 @@ from app.schemas.task import TaskCreate, TaskUpdate, TaskResponse
 from app.schemas.calendar_event import CalendarEventCreate, CalendarEventUpdate, CalendarEventResponse
 from app.schemas.timeline import CaseTimelineResponse, TimelineEventCreate, TimelineEventUpdate
 from app.schemas.document import DocumentResponse, DocumentUpdate
+from app.schemas.precedent import (
+    PrecedentCreate, PrecedentUpdate, PrecedentSummaryResponse, PrecedentResponse,
+    PrecedentListResponse, PrecedentCopyToCaseRequest, PrecedentCopyToCaseResponse,
+)
 from app.schemas.case_note import CaseNoteCreate, CaseNoteUpdate, CaseNoteResponse
 from app.schemas.time_entry import TimeEntryCreate, TimeEntryUpdate, TimeEntryResponse, TimeEntryListResponse
 from app.schemas.expense import ExpenseCreate, ExpenseUpdate, ExpenseResponse
@@ -43,6 +47,8 @@ __all__ = [
     "FirmSnapshot","TodayOverview","PriorityTimelineItem",
     "CalendarOverview","CalendarEventItem","FinancialOverview",
     "BillingOverview","ActiveCaseRow","DashboardWidgetsResponse",
+    "PrecedentCreate","PrecedentUpdate","PrecedentSummaryResponse","PrecedentResponse",
+    "PrecedentListResponse","PrecedentCopyToCaseRequest","PrecedentCopyToCaseResponse",
 ]
 
 from app.schemas.conversation import (

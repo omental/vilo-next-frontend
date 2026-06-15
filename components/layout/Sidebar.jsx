@@ -4,7 +4,7 @@ import Link from "next/link";
 import { motion, useReducedMotion } from "framer-motion";
 import Image from "next/image";
 import { usePathname, useRouter } from "next/navigation";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { apiRequest } from "../../lib/api";
 import { motionEase, createHoverLift, createItemVariants } from "../motion";
 
@@ -55,7 +55,7 @@ function hasActiveChild(pathname, children = []) {
   return children.some((child) => isPathMatch(pathname, child.href));
 }
 
-export function Sidebar({ isMobileOpen = false, onClose = () => {} }) {
+export function Sidebar({ isMobileOpen = false, onClose = () => {}, user = null }) {
   const router = useRouter();
   const pathname = usePathname();
   const [createOpen, setCreateOpen] = useState(true);
@@ -89,6 +89,11 @@ export function Sidebar({ isMobileOpen = false, onClose = () => {} }) {
         boxShadow: "0 10px 24px rgba(67, 44, 241, 0.35)",
         transition: { duration: 0.18 },
       };
+
+  const visibleNavigationItems = useMemo(() => {
+    if (user?.role !== "client") return navigationItems;
+    return navigationItems.filter((item) => item.label !== "Precedents");
+  }, [user?.role]);
 
   useEffect(() => {
     let cancelled = false;
@@ -151,7 +156,7 @@ export function Sidebar({ isMobileOpen = false, onClose = () => {} }) {
           <p className="vilo-sidebar__eyebrow">APPS &amp; PAGES</p>
 
           <nav className="vilo-sidebar__nav" aria-label="Sidebar navigation">
-            {navigationItems.map((item) => {
+            {visibleNavigationItems.map((item) => {
               const Icon = item.icon;
               const active = item.children ? hasActiveChild(pathname, item.children) : isPathMatch(pathname, item.href);
 

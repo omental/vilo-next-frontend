@@ -1,7 +1,5 @@
-import os
 from datetime import datetime, timezone
 from pathlib import Path
-from uuid import uuid4
 
 from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, Request, UploadFile, status
 from fastapi.responses import FileResponse
@@ -17,6 +15,7 @@ from app.models.document_version import DocumentVersion
 from app.models.user import User
 from app.schemas.document import DocumentResponse, DocumentUpdate, DocumentVersionResponse
 from app.services.audit import log_audit_event
+from app.services.document_storage import MAX_UPLOAD_BYTES, persist_file, safe_original_name
 from app.services.email import build_document_shared_email
 from app.services.jobs import enqueue_email
 from app.services.notifications import create_notification
@@ -24,9 +23,7 @@ from app.services.timeline import create_case_timeline_event
 
 router = APIRouter(prefix="/documents", tags=["documents"])
 ALLOWED_STAFF = ["partner", "admin", "lawyer", "paralegal"]
-ALLOWED_EXTENSIONS = {"pdf", "doc", "docx", "jpg", "jpeg", "png", "txt"}
 VALID_VISIBILITY = {"internal", "client_visible"}
-MAX_UPLOAD_BYTES = 10 * 1024 * 1024
 STORAGE_ROOT = Path("backend/storage/documents")
 
 
@@ -83,33 +80,6 @@ async def validate_client(db: AsyncSession, organization_id: int, client_id: int
     return client
 
 
-def safe_original_name(original: str) -> str:
-    name = os.path.basename((original or "").strip())
-    if not name or name in {".", ".."}:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid file name")
-    return name
-
-
-def validate_extension(file_name: str) -> str:
-    parts = file_name.rsplit(".", 1)
-    if len(parts) != 2:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="File extension is required")
-    ext = parts[1].lower()
-    if ext not in ALLOWED_EXTENSIONS:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Unsupported file type")
-    return ext
-
-
-def persist_file(organization_id: int, original_name: str, data: bytes) -> tuple[str, str]:
-    ext = validate_extension(original_name)
-    org_dir = STORAGE_ROOT / str(organization_id)
-    org_dir.mkdir(parents=True, exist_ok=True)
-    stored_name = f"{uuid4().hex}.{ext}"
-    file_path = org_dir / stored_name
-    file_path.write_bytes(data)
-    return str(file_path), stored_name
-
-
 @router.post("/upload", response_model=DocumentResponse)
 async def upload_document(
     title: str = Form(...),
@@ -139,7 +109,7 @@ async def upload_document(
     if len(data) > MAX_UPLOAD_BYTES:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="File exceeds upload size limit")
 
-    file_path, _stored_name = persist_file(current_user.organization_id, original_name, data)
+    file_path, _stored_name = persist_file(STORAGE_ROOT, current_user.organization_id, original_name, data)
 
     now = datetime.now(timezone.utc)
     document = Document(
@@ -334,7 +304,7 @@ async def replace_document(
     if len(data) > MAX_UPLOAD_BYTES:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="File exceeds upload size limit")
 
-    file_path, _stored_name = persist_file(current_user.organization_id, original_name, data)
+    file_path, _stored_name = persist_file(STORAGE_ROOT, current_user.organization_id, original_name, data)
     now = datetime.now(timezone.utc)
 
     version_row = DocumentVersion(

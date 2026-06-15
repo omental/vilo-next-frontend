@@ -42,7 +42,7 @@ export default function DashboardShell({ children }) {
         onClick={() => setIsMobileSidebarOpen(false)}
         aria-hidden="true"
       />
-      <Sidebar isMobileOpen={isMobileSidebarOpen} onClose={() => setIsMobileSidebarOpen(false)} />
+      <Sidebar user={user} isMobileOpen={isMobileSidebarOpen} onClose={() => setIsMobileSidebarOpen(false)} />
       <main className="dashboard-main">
         <div className="dashboard-content-container">
           <Navbar onMenuClick={() => setIsMobileSidebarOpen(true)} user={user} onLogout={logout} />
