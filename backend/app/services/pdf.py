@@ -44,6 +44,10 @@ def _safe_text(value: str | None) -> str:
     return (value or "-").replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
 
 
+def _time_entry_date_expr():
+    return func.date(func.coalesce(TimeEntry.start_time, TimeEntry.created_at))
+
+
 def build_firm_details(org: Organization | None) -> list[str]:
     details = [getattr(org, "name", None) or "VILO"]
     for attr in ("address", "email", "phone"):
@@ -208,22 +212,24 @@ async def generate_report_pdf(report_type: str, filters: dict | None = None, *, 
         inv_filters = [Invoice.organization_id == organization_id]
         exp_filters = [Expense.organization_id == organization_id]
         te_filters = [TimeEntry.organization_id == organization_id]
+        te_date = _time_entry_date_expr()
         date_from = filters.get("date_from")
         date_to = filters.get("date_to")
         if isinstance(date_from, date):
             inv_filters.append(Invoice.issue_date >= date_from)
             exp_filters.append(Expense.expense_date >= date_from)
-            te_filters.append(TimeEntry.entry_date >= date_from)
+            te_filters.append(te_date >= date_from)
         if isinstance(date_to, date):
             inv_filters.append(Invoice.issue_date <= date_to)
             exp_filters.append(Expense.expense_date <= date_to)
-            te_filters.append(TimeEntry.entry_date <= date_to)
+            te_filters.append(te_date <= date_to)
 
         invoice_totals = Decimal(str((await db.scalar(select(func.coalesce(func.sum(Invoice.total), 0)).where(and_(*inv_filters)))) or 0))
         paid_totals = Decimal(str((await db.scalar(select(func.coalesce(func.sum(Invoice.paid_amount), 0)).where(and_(*inv_filters)))) or 0))
         outstanding_totals = Decimal(str((await db.scalar(select(func.coalesce(func.sum(Invoice.balance_due), 0)).where(and_(*inv_filters)))) or 0))
         expense_totals = Decimal(str((await db.scalar(select(func.coalesce(func.sum(Expense.amount), 0)).where(and_(*exp_filters)))) or 0))
-        billable_hours_total = Decimal(str((await db.scalar(select(func.coalesce(func.sum(TimeEntry.hours), 0)).where(and_(*te_filters), TimeEntry.billable == True))) or 0))
+        billable_minutes_total = Decimal(str((await db.scalar(select(func.coalesce(func.sum(TimeEntry.duration_minutes), 0)).where(and_(*te_filters), TimeEntry.status.in_(["billable", "invoiced"])))) or 0))
+        billable_hours_total = (billable_minutes_total / Decimal("60")).quantize(Decimal("0.01")) if billable_minutes_total else Decimal("0.00")
 
         metrics = Table([
             ["Metric", "Value"],

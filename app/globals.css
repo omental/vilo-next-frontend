@@ -3787,6 +3787,320 @@ button {
   width: min(900px, 100%);
 }
 
+.time-entries-page {
+  gap: 1.25rem;
+}
+
+.time-entries-page__top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.time-entries-page__add {
+  min-width: 190px;
+}
+
+.time-entries-shell {
+  padding: 1.7rem;
+}
+
+.time-entries-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-bottom: 1.35rem;
+}
+
+.time-entries-search {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.85rem;
+  min-width: min(100%, 410px);
+  padding: 0.9rem 1rem;
+  border: 1px solid rgba(227, 229, 239, 0.98);
+  border-radius: 12px;
+  background: #fff;
+  box-shadow: 0 6px 18px rgba(47, 43, 61, 0.06);
+}
+
+.time-entries-search span {
+  font-size: 1.4rem;
+  color: #707090;
+}
+
+.time-entries-search input {
+  width: 100%;
+  border: 0;
+  outline: none;
+  background: transparent;
+  color: #4b4760;
+}
+
+.time-entries-filters {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  flex-wrap: wrap;
+}
+
+.time-entries-filters label {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.65rem;
+  color: #5d5872;
+  font-weight: 600;
+}
+
+.time-entries-filters select {
+  min-width: 132px;
+  padding: 0.75rem 2.5rem 0.75rem 0.85rem;
+  border: 1px solid rgba(226, 229, 238, 0.98);
+  border-radius: 10px;
+  background: #fff;
+  color: #6d6882;
+}
+
+.time-entries-card {
+  border: 1px solid rgba(229, 231, 240, 0.98);
+  border-radius: 16px;
+  overflow: visible;
+}
+
+.time-entries-table-wrap {
+  overflow: visible;
+}
+
+.time-entry-case-cell {
+  display: grid;
+  gap: 0.18rem;
+}
+
+.time-entry-case-cell strong {
+  font-size: 0.95rem;
+  color: #4d4960;
+}
+
+.time-entry-case-cell span {
+  color: #908ca3;
+  font-size: 0.82rem;
+}
+
+.time-entry-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0.38rem 0.7rem;
+  border-radius: 8px;
+  font-size: 0.82rem;
+  font-weight: 600;
+  text-transform: capitalize;
+}
+
+.time-entry-badge--professional_fee {
+  background: #dff7e9;
+  color: #19a85a;
+}
+
+.time-entry-badge--disbursement {
+  background: #fff0df;
+  color: #e48a1f;
+}
+
+.time-entry-badge--non_billable {
+  background: #efeff4;
+  color: #76708a;
+}
+
+.time-entry-badge--no_charge {
+  background: #ece7ff;
+  color: #5f53ef;
+}
+
+.time-entry-badge--invoiced {
+  background: #ffe6e8;
+  color: #df4c64;
+}
+
+.time-entry-actions {
+  position: relative;
+  justify-content: flex-end;
+}
+
+.time-entry-actions__trigger {
+  border: 0;
+  background: transparent;
+  color: #938ea4;
+  font-size: 1.2rem;
+  line-height: 1;
+}
+
+.time-entry-actions__menu {
+  right: 0;
+  top: calc(100% + 0.35rem);
+}
+
+.time-entries-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 1.5rem 1.45rem;
+  border-top: 1px solid rgba(232, 233, 242, 0.95);
+}
+
+.time-entries-footer p {
+  margin: 0;
+  color: #8d88a0;
+}
+
+.time-entries-pagination {
+  display: flex;
+  align-items: center;
+  gap: 0.7rem;
+}
+
+.time-entries-pagination__nav,
+.time-entries-pagination__page,
+.time-entries-pagination__next {
+  min-width: 3rem;
+  min-height: 3rem;
+  border: 1px solid rgba(226, 229, 238, 0.98);
+  border-radius: 12px;
+  background: #fff;
+  color: #57526a;
+}
+
+.time-entries-pagination__page.is-active {
+  border-color: #7367f0;
+  color: #7367f0;
+}
+
+.time-entries-pagination__next {
+  padding: 0 1.25rem;
+}
+
+.time-entry-modal {
+  width: min(660px, calc(100vw - 2rem));
+}
+
+.time-entry-modal__close {
+  width: 2.75rem;
+  height: 2.75rem;
+  border: 1px solid rgba(226, 229, 238, 0.98);
+  border-radius: 12px;
+  background: #fff;
+  font-size: 1.8rem;
+  color: #4f4b63;
+}
+
+.time-entry-modal__body {
+  gap: 1rem;
+}
+
+.time-entry-modal__body label {
+  display: block;
+  margin-bottom: 0.5rem;
+  color: #4f4b63;
+  font-weight: 600;
+}
+
+.time-entry-modal__body input,
+.time-entry-modal__body textarea,
+.time-entry-modal__body select {
+  width: 100%;
+  padding: 0.88rem 0.95rem;
+  border: 1px solid rgba(226, 229, 238, 0.98);
+  border-radius: 10px;
+  color: #4d4960;
+}
+
+.time-entry-modal__body textarea {
+  min-height: 112px;
+  resize: vertical;
+}
+
+.time-entry-modal__timer {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.8rem;
+}
+
+.time-entry-modal__summary {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  color: #6f6a82;
+  font-weight: 600;
+}
+
+.time-entry-modal__case-search {
+  margin-bottom: 0.8rem;
+}
+
+.time-entry-case-list {
+  display: grid;
+  gap: 0.7rem;
+  max-height: 248px;
+  overflow: auto;
+}
+
+.time-entry-case-picker {
+  width: 100%;
+  display: grid;
+  gap: 0.25rem;
+  padding: 0.95rem 1rem;
+  border: 1px solid rgba(226, 229, 238, 0.98);
+  border-radius: 12px;
+  background: #fff;
+  text-align: left;
+}
+
+.time-entry-case-picker strong {
+  font-size: 0.95rem;
+  color: #47435d;
+}
+
+.time-entry-case-picker span {
+  color: #8c879c;
+  font-size: 0.84rem;
+}
+
+.time-entry-case-picker.is-active,
+.time-entry-case-picker.is-selected {
+  border-color: rgba(115, 103, 240, 0.42);
+  box-shadow: 0 8px 20px rgba(115, 103, 240, 0.12);
+}
+
+.time-entry-billing-options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1rem;
+}
+
+.time-entry-billing-options label {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  margin: 0;
+  font-weight: 500;
+}
+
+.time-entry-billing-options input {
+  width: auto;
+  margin: 0;
+}
+
+.time-entry-modal__actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.75rem;
+  padding-top: 0.25rem;
+}
+
 .client-doc-preview-image {
   display: block;
   width: 100%;

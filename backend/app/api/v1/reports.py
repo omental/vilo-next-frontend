@@ -36,6 +36,10 @@ def d(value):
     return Decimal(str(value))
 
 
+def _time_entry_date_expr():
+    return func.date(func.coalesce(TimeEntry.start_time, TimeEntry.created_at))
+
+
 def _month_bounds(now: datetime) -> tuple[date, date]:
     month_start = date(now.year, now.month, 1)
     if now.month == 12:
@@ -310,21 +314,23 @@ async def financial_report(date_from: date | None = None, date_to: date | None =
     inv_filters = [Invoice.organization_id == org_id]
     exp_filters = [Expense.organization_id == org_id]
     te_filters = [TimeEntry.organization_id == org_id]
+    te_date = _time_entry_date_expr()
     if date_from:
         inv_filters.append(Invoice.issue_date >= date_from)
         exp_filters.append(Expense.expense_date >= date_from)
-        te_filters.append(TimeEntry.entry_date >= date_from)
+        te_filters.append(te_date >= date_from)
     if date_to:
         inv_filters.append(Invoice.issue_date <= date_to)
         exp_filters.append(Expense.expense_date <= date_to)
-        te_filters.append(TimeEntry.entry_date <= date_to)
+        te_filters.append(te_date <= date_to)
 
     invoice_totals = d(await db.scalar(select(func.coalesce(func.sum(Invoice.total), 0)).where(and_(*inv_filters))))
     paid_totals = d(await db.scalar(select(func.coalesce(func.sum(Invoice.paid_amount), 0)).where(and_(*inv_filters))))
     outstanding_totals = d(await db.scalar(select(func.coalesce(func.sum(Invoice.balance_due), 0)).where(and_(*inv_filters))))
     expense_totals = d(await db.scalar(select(func.coalesce(func.sum(Expense.amount), 0)).where(and_(*exp_filters))))
-    billable_hours_total = d(await db.scalar(select(func.coalesce(func.sum(TimeEntry.hours), 0)).where(and_(*te_filters), TimeEntry.billable == True)))
-    billable_time_total = d(await db.scalar(select(func.coalesce(func.sum(TimeEntry.hours * TimeEntry.rate), 0)).where(and_(*te_filters), TimeEntry.billable == True)))
+    billable_minutes_total = d(await db.scalar(select(func.coalesce(func.sum(TimeEntry.duration_minutes), 0)).where(and_(*te_filters), TimeEntry.status.in_(["billable", "invoiced"]))))
+    billable_hours_total = (billable_minutes_total / Decimal("60")).quantize(Decimal("0.01")) if billable_minutes_total else Decimal("0.00")
+    billable_time_total = d(await db.scalar(select(func.coalesce(func.sum(TimeEntry.amount), 0)).where(and_(*te_filters), TimeEntry.status.in_(["billable", "invoiced"]))))
 
     month_rows = (await db.execute(
         select(func.date_trunc("month", Invoice.issue_date).label("month"), func.coalesce(func.sum(Invoice.total), 0).label("amount"))

@@ -8,7 +8,7 @@ from app.schemas.calendar_event import CalendarEventCreate, CalendarEventUpdate,
 from app.schemas.timeline import CaseTimelineResponse, TimelineEventCreate, TimelineEventUpdate
 from app.schemas.document import DocumentResponse, DocumentUpdate
 from app.schemas.case_note import CaseNoteCreate, CaseNoteUpdate, CaseNoteResponse
-from app.schemas.time_entry import TimeEntryCreate, TimeEntryUpdate, TimeEntryResponse
+from app.schemas.time_entry import TimeEntryCreate, TimeEntryUpdate, TimeEntryResponse, TimeEntryListResponse
 from app.schemas.expense import ExpenseCreate, ExpenseUpdate, ExpenseResponse
 from app.schemas.invoice import InvoiceCreate, InvoiceUpdate, InvoiceResponse, InvoiceLineItemResponse, InvoiceSummaryResponse
 from app.schemas.trust import (
@@ -29,7 +29,7 @@ __all__ = [
     "TaskCreate","TaskUpdate","TaskResponse",
     "CalendarEventCreate","CalendarEventUpdate","CalendarEventResponse",
     "CaseTimelineResponse","TimelineEventCreate","TimelineEventUpdate","DocumentResponse","DocumentUpdate","CaseNoteCreate","CaseNoteUpdate","CaseNoteResponse",
-    "TimeEntryCreate","TimeEntryUpdate","TimeEntryResponse","ExpenseCreate","ExpenseUpdate","ExpenseResponse",
+    "TimeEntryCreate","TimeEntryUpdate","TimeEntryResponse","TimeEntryListResponse","ExpenseCreate","ExpenseUpdate","ExpenseResponse",
     "InvoiceCreate","InvoiceUpdate","InvoiceResponse","InvoiceLineItemResponse","InvoiceSummaryResponse",
     "TrustAccountCreate","TrustAccountResponse","TrustAdjustmentCreate","TrustApplyToInvoiceCreate",
     "TrustLedgerResponse","TrustReceiptResponse","TrustReconciliationSummary","TrustTransactionResponse","TrustTxnCreate",

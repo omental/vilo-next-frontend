@@ -123,6 +123,12 @@ def recalc(invoice: Invoice):
     invoice.balance_due = max(Decimal("0"), invoice.total - invoice.paid_amount)
 
 
+def _round_quantity(duration_minutes: int | None) -> Decimal:
+    if not duration_minutes:
+        return Decimal("0.00")
+    return (Decimal(duration_minutes) / Decimal("60")).quantize(Decimal("0.01"))
+
+
 @router.post("", response_model=InvoiceResponse)
 async def create_invoice(payload: InvoiceCreate, db: AsyncSession = Depends(get_db), current_user: User = Depends(role_guard(ALLOWED))):
     _, case = await validate_client_case(db, current_user.organization_id, payload.client_id, payload.case_id)
@@ -166,12 +172,23 @@ async def generate_from_case(case_id: int, db: AsyncSession = Depends(get_db), c
     )
     db.add(inv); await db.flush()
 
-    tes = (await db.scalars(select(TimeEntry).where(TimeEntry.organization_id == current_user.organization_id, TimeEntry.case_id == case.id, TimeEntry.billable == True, TimeEntry.billed == False))).all()
+    tes = (await db.scalars(
+        select(TimeEntry).where(
+            TimeEntry.organization_id == current_user.organization_id,
+            TimeEntry.case_id == case.id,
+            TimeEntry.status == "billable",
+            TimeEntry.invoice_id.is_(None),
+        )
+    )).all()
     exs = (await db.scalars(select(Expense).where(Expense.organization_id == current_user.organization_id, Expense.case_id == case.id, Expense.billable == True, Expense.billed == False))).all()
 
     for te in tes:
-        amt = (te.hours or Decimal("0")) * (te.rate or Decimal("0"))
-        db.add(InvoiceLineItem(organization_id=current_user.organization_id, invoice_id=inv.id, line_type="time", description=te.description, quantity=te.hours, unit_price=te.rate, amount=amt, time_entry_id=te.id, expense_id=None, created_at=now))
+        qty = _round_quantity(te.duration_minutes)
+        amt = te.amount or Decimal("0")
+        db.add(InvoiceLineItem(organization_id=current_user.organization_id, invoice_id=inv.id, line_type="time", description=te.description or "Time entry", quantity=qty, unit_price=te.hourly_rate or Decimal("0"), amount=amt, time_entry_id=te.id, expense_id=None, created_at=now))
+        te.invoice_id = inv.id
+        te.status = "invoiced"
+        te.billing_type = "invoiced"
     for ex in exs:
         db.add(InvoiceLineItem(organization_id=current_user.organization_id, invoice_id=inv.id, line_type="expense", description=ex.description, quantity=Decimal("1"), unit_price=ex.amount, amount=ex.amount, time_entry_id=None, expense_id=ex.id, created_at=now))
 
@@ -244,7 +261,10 @@ async def mark_sent(invoice_id: int, request: Request, background_tasks: Backgro
     linked_ex_ids = [li.expense_id for li in inv.line_items if li.expense_id]
     if linked_te_ids:
         entries = (await db.scalars(select(TimeEntry).where(TimeEntry.organization_id == current_user.organization_id, TimeEntry.id.in_(linked_te_ids)))).all()
-        for e in entries: e.billed = True
+        for e in entries:
+            e.invoice_id = inv.id
+            e.status = "invoiced"
+            e.billing_type = "invoiced"
     if linked_ex_ids:
         expenses = (await db.scalars(select(Expense).where(Expense.organization_id == current_user.organization_id, Expense.id.in_(linked_ex_ids)))).all()
         for e in expenses: e.billed = True
