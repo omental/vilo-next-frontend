@@ -21,6 +21,7 @@ export function TodaysOverview({ stats = fallbackStatItems, timelineRows = fallb
   const cardVariants = createCardVariants(shouldReduceMotion);
   const itemVariants = createItemVariants(shouldReduceMotion, "y", 10);
   const hoverLift = createHoverLift(shouldReduceMotion);
+  const showActions = timelineRows.some((row) => row.href);
 
   return (
     <motion.section
@@ -35,7 +36,7 @@ export function TodaysOverview({ stats = fallbackStatItems, timelineRows = fallb
 
       <div className="overview-stats">
         {stats.map((item) => (
-          <motion.article key={item.label} variants={itemVariants}>
+          <motion.article key={item.label} className="overview-stats__item" variants={itemVariants}>
             {item.href ? (
               <Link href={item.href} className="overview-stat overview-stat--link">
                 <p>{item.label}</p>
@@ -60,6 +61,7 @@ export function TodaysOverview({ stats = fallbackStatItems, timelineRows = fallb
               <tr>
                 <th>Timeline</th>
                 <th>Priority</th>
+                {showActions ? <th>Actions</th> : null}
               </tr>
             </thead>
             <tbody>
@@ -82,6 +84,23 @@ export function TodaysOverview({ stats = fallbackStatItems, timelineRows = fallb
                       {row.priority}
                     </motion.span>
                   </td>
+                  {showActions ? (
+                    <td className="overview-table__actions">
+                      {row.href ? (
+                        <Link
+                          href={row.href}
+                          className="overview-table__action-link"
+                          aria-label={`Open ${row.label}`}
+                        >
+                          <span aria-hidden="true">•••</span>
+                        </Link>
+                      ) : (
+                        <span className="overview-table__action-link is-static" aria-hidden="true">
+                          •••
+                        </span>
+                      )}
+                    </td>
+                  ) : null}
                 </motion.tr>
               ))}
             </tbody>

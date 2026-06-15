@@ -6,7 +6,7 @@ import { createCardVariants, createHoverLift, createItemVariants } from "../moti
 
 const fallbackSnapshotStats = [
   {
-    label: "Total Files",
+    label: "Total Cases",
     value: 100,
     tone: "is-violet",
     icon: StackIcon
@@ -24,7 +24,7 @@ const fallbackSnapshotStats = [
     icon: CheckCircleIcon
   },
   {
-    label: "Stalled Files",
+    label: "Stalled Cases",
     value: 10,
     tone: "is-red",
     icon: AlertTriangleIcon
@@ -61,8 +61,15 @@ export function FirmSnapshot({
 
       <div className="snapshot-layout">
         <div className="snapshot-chart-panel">
-          <p className="snapshot-chart-block__label">Case Status</p>
           <SnapshotDonut percent={caseStatusPercent} counts={caseStatusCounts} />
+          <ul className="snapshot-legend" aria-label="Firm snapshot legend">
+            {statusItems.map((item) => (
+              <li key={item.key} className="snapshot-legend__item">
+                <span className={`snapshot-legend__dot ${item.tone}`} />
+                <span className="snapshot-legend__label">{item.label}</span>
+              </li>
+            ))}
+          </ul>
         </div>
 
         <div className="snapshot-stats-panel">
@@ -75,7 +82,7 @@ export function FirmSnapshot({
                   {item.href ? (
                     <Link href={item.href} className="snapshot-stat__link">
                       <div className="snapshot-stat__copy">
-                        <p>{item.label}</p>
+                        <p>{item.label}:</p>
                         <strong>{item.value}</strong>
                       </div>
                       <span className={`snapshot-stat__icon ${item.tone}`}>
@@ -85,7 +92,7 @@ export function FirmSnapshot({
                   ) : (
                     <>
                       <div className="snapshot-stat__copy">
-                        <p>{item.label}</p>
+                        <p>{item.label}:</p>
                         <strong>{item.value}</strong>
                       </div>
                       <span className={`snapshot-stat__icon ${item.tone}`}>
@@ -98,23 +105,6 @@ export function FirmSnapshot({
             })}
           </div>
         </div>
-
-        <div className="snapshot-breakdown" aria-label="Firm snapshot breakdown">
-          <div className="snapshot-breakdown__header">
-            <p>Status Breakdown</p>
-            <span>{statusItems.reduce((sum, item) => sum + item.value, 0)} cases</span>
-          </div>
-
-          <ul className="snapshot-legend" aria-label="Firm snapshot legend">
-            {statusItems.map((item) => (
-              <li key={item.key} className="snapshot-legend__item">
-                <span className={`snapshot-legend__dot ${item.tone}`} />
-                <span className="snapshot-legend__label">{item.label}</span>
-                <strong className="snapshot-legend__value">{item.value}</strong>
-              </li>
-            ))}
-          </ul>
-        </div>
       </div>
     </motion.section>
   );
@@ -124,10 +114,10 @@ function SnapshotDonut({ percent = 72, counts = { active: 0, court: 0, closed: 0
   const shouldReduceMotion = useReducedMotion();
   const segments = buildSegments(counts);
   const safePercent = Number.isFinite(Number(percent)) ? Math.max(0, Math.min(100, Math.round(Number(percent)))) : 0;
-  const circumference = 2 * Math.PI * 84;
-  const svgSize = 248;
+  const circumference = 2 * Math.PI * 90;
+  const svgSize = 264;
   const center = svgSize / 2;
-  const radius = 84;
+  const radius = 90;
 
   return (
     <div className="snapshot-donut" aria-label={`Case Status ${safePercent} percent`}>
@@ -150,7 +140,7 @@ function SnapshotDonut({ percent = 72, counts = { active: 0, court: 0, closed: 0
       </svg>
 
       <div className="snapshot-donut__center">
-        <span>Open workload</span>
+        <span>Case Status</span>
         <strong>{safePercent}%</strong>
       </div>
     </div>
@@ -165,7 +155,7 @@ function buildSegments(counts) {
     { key: "pending", tone: "is-pending", value: Number(counts.pending || 0) },
   ];
   const total = ordered.reduce((sum, item) => sum + item.value, 0);
-  const circumference = 2 * Math.PI * 84;
+  const circumference = 2 * Math.PI * 90;
   let offset = circumference * 0.25;
 
   return ordered
