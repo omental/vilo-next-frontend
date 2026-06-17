@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { Suspense, useEffect, useMemo, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
+import { getCachedUser, setCachedUser } from "../../../lib/auth";
 import { apiDownload, apiRequest } from "../../../lib/api";
 
 const initialForm = {
@@ -24,6 +25,10 @@ function formatDate(value) {
   return date.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
 }
 
+function roleCanManagePayments(role) {
+  return role === "partner" || role === "admin";
+}
+
 export default function InvoicesPage() {
   return (
     <Suspense fallback={<section className="dashboard-page-stack"><div className="vilo-state-block"><p className="vilo-state vilo-state--loading">Loading invoices...</p></div></section>}>
@@ -35,6 +40,7 @@ export default function InvoicesPage() {
 function InvoicesPageContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
+  const [currentUser, setCurrentUser] = useState(getCachedUser());
   const [items, setItems] = useState([]);
   const [clients, setClients] = useState([]);
   const [cases, setCases] = useState([]);
@@ -70,6 +76,24 @@ function InvoicesPageContent() {
   }, []);
 
   useEffect(() => {
+    if (currentUser) return;
+    let cancelled = false;
+    apiRequest("/api/v1/auth/me")
+      .then((me) => {
+        if (cancelled) return;
+        setCurrentUser(me);
+        setCachedUser(me);
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setCurrentUser(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [currentUser]);
+
+  useEffect(() => {
     if (searchParams.get("create") === "1") {
       setCreateOpen(true);
     }
@@ -93,8 +117,9 @@ function InvoicesPageContent() {
   const totals = useMemo(() => ({
     balance: items.reduce((sum, row) => sum + Number(row.balance_due || 0), 0),
     drafts: items.filter((row) => row.status === "draft").length,
-    sent: items.filter((row) => row.status === "sent").length,
+    sent: items.filter((row) => row.status === "sent" || row.status === "partially_paid").length,
   }), [items]);
+  const canManagePayments = roleCanManagePayments(currentUser?.role || "");
 
   function openCreateModal() {
     setCreateError("");
@@ -169,7 +194,7 @@ function InvoicesPageContent() {
       <div className="invoice-page-top-row">
         <div className="dashboard-page-heading">
           <h1>Invoices</h1>
-          <p className="invoice-page-intro">Create, review, and export firm invoices from one place.</p>
+          <p className="invoice-page-intro">Create, review, and collect earned-fee invoices while keeping trust funds separate until applied.</p>
         </div>
         <div className="invoice-page-actions">
           <Link className="vilo-btn vilo-btn--secondary" href="/dashboard/billing">Billing Hub</Link>
@@ -189,7 +214,7 @@ function InvoicesPageContent() {
           <strong>{totals.drafts}</strong>
         </article>
         <article className="dashboard-card invoice-summary-card">
-          <span>Sent</span>
+          <span>Sent / Partial</span>
           <strong>{totals.sent}</strong>
         </article>
         <article className="dashboard-card invoice-summary-card">
@@ -244,7 +269,7 @@ function InvoicesPageContent() {
                         <Link className="vilo-btn vilo-btn--secondary vilo-btn--xs" href={`/dashboard/invoices/${row.id}`}>View</Link>
                         <button className="vilo-btn vilo-btn--ghost vilo-btn--xs" type="button" onClick={() => apiDownload(`/api/v1/invoices/${row.id}/pdf`)}>PDF</button>
                         {row.status === "draft" ? <button className="vilo-btn vilo-btn--secondary vilo-btn--xs" type="button" onClick={() => markSent(row.id)}>Mark sent</button> : null}
-                        {row.status !== "paid" ? <button className="vilo-btn vilo-btn--primary vilo-btn--xs" type="button" onClick={() => markPaid(row.id)}>Mark paid</button> : null}
+                        {canManagePayments && row.status !== "paid" ? <button className="vilo-btn vilo-btn--primary vilo-btn--xs" type="button" onClick={() => markPaid(row.id)}>Record direct payment</button> : null}
                       </div>
                     </td>
                   </tr>

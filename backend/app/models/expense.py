@@ -28,3 +28,4 @@ class Expense(Base):
     client = relationship("Client", back_populates="expenses")
     creator = relationship("User", back_populates="created_expenses")
     invoice_line_items = relationship("InvoiceLineItem", back_populates="expense")
+    operating_transactions = relationship("OperatingTransaction", back_populates="expense")

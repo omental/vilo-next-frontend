@@ -6481,6 +6481,326 @@ button {
   vertical-align: top;
 }
 
+.trust-finance-page {
+  gap: 1rem;
+}
+
+.trust-summary-grid--three {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.trust-stat-card__meta {
+  color: #7e7895;
+  font-size: 0.82rem;
+  font-weight: 600;
+}
+
+.trust-compliance-banner {
+  display: grid;
+  gap: 0.35rem;
+  padding: 1rem 1.15rem;
+  border: 1px solid rgba(115, 103, 240, 0.18);
+  background: linear-gradient(135deg, rgba(115, 103, 240, 0.08), rgba(255, 255, 255, 0.92));
+}
+
+.trust-compliance-banner strong {
+  color: #4f42f0;
+}
+
+.trust-compliance-banner span {
+  color: #5f5a74;
+  line-height: 1.55;
+}
+
+.trust-toolbar--finance {
+  align-items: flex-start;
+}
+
+.trust-tab-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.65rem;
+}
+
+.trust-tab {
+  border: 1px solid #e5e0f3;
+  border-radius: 999px;
+  background: #f8f6fd;
+  color: #665f7f;
+  padding: 0.7rem 1rem;
+  font-weight: 600;
+  text-transform: capitalize;
+}
+
+.trust-tab.is-active {
+  border-color: #6f63f6;
+  background: #6f63f6;
+  color: #fff;
+}
+
+.trust-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.55rem;
+  min-height: 3.25rem;
+  border: 1px solid #e8e4f3;
+  border-radius: 12px;
+  background: #fff;
+  padding: 0 0.9rem;
+  color: #5e5972;
+  font-weight: 600;
+}
+
+.trust-toggle input {
+  margin: 0;
+}
+
+.trust-ledger-table__row--voided {
+  background: rgba(255, 76, 81, 0.03);
+}
+
+.trust-ledger-table__row--reversal {
+  background: rgba(255, 159, 67, 0.06);
+}
+
+.trust-ledger-table__type-cell {
+  text-transform: capitalize;
+}
+
+.trust-money-pill {
+  display: inline-flex;
+  align-items: center;
+  border-radius: 999px;
+  padding: 0.32rem 0.7rem;
+  font-size: 0.78rem;
+  font-weight: 700;
+}
+
+.trust-money-pill--inflow {
+  background: rgba(40, 199, 111, 0.12);
+  color: #158a55;
+}
+
+.trust-money-pill--outflow {
+  background: rgba(255, 159, 67, 0.14);
+  color: #b86a04;
+}
+
+.trust-amount {
+  font-weight: 700;
+}
+
+.trust-amount--inflow {
+  color: #15965a;
+}
+
+.trust-amount--outflow {
+  color: #d14b52;
+}
+
+.trust-status-badge--active {
+  background: #eef9f3;
+  color: #16965b;
+}
+
+.trust-status-badge--voided {
+  background: #fff1f2;
+  color: #d14b52;
+}
+
+.trust-status-badge--reversal {
+  background: #fff5df;
+  color: #ad7a0a;
+}
+
+.trust-history-actions {
+  justify-content: flex-start;
+}
+
+.trust-placeholder-card {
+  margin: 1.2rem 1.45rem 1.45rem;
+  border: 1px dashed #dcd5f1;
+  border-radius: 14px;
+  background: #fbfaff;
+  padding: 1rem 1.05rem;
+}
+
+.trust-placeholder-card strong {
+  display: block;
+  color: #4c475f;
+}
+
+.trust-placeholder-card p {
+  margin: 0.45rem 0 0;
+  color: #756f8b;
+  line-height: 1.6;
+}
+
+.trust-form-warning {
+  margin: -0.1rem 0 0;
+  color: #8a6411;
+  background: #fff6e2;
+  border: 1px solid #f4e0af;
+  border-radius: 12px;
+  padding: 0.8rem 0.9rem;
+  line-height: 1.5;
+}
+
+.trust-form-actions {
+  justify-content: flex-end;
+}
+
+.trust-review-card {
+  display: grid;
+  gap: 0.28rem;
+  border: 1px solid #ece8f6;
+  border-radius: 14px;
+  background: #fbfaff;
+  padding: 0.95rem 1rem;
+}
+
+.trust-review-card strong {
+  color: #4b465d;
+}
+
+.trust-review-card span {
+  color: #7a768f;
+}
+
+.trust-receipt-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.8rem 1rem;
+}
+
+.trust-receipt-grid p {
+  margin: 0;
+  color: #5b566f;
+}
+
+.trust-modal--wide {
+  width: min(840px, calc(100vw - 2rem));
+}
+
+.invoice-finance-page {
+  gap: 1rem;
+}
+
+.invoice-trust-banner {
+  display: grid;
+  grid-template-columns: auto auto 1fr;
+  align-items: center;
+  gap: 0.8rem 1rem;
+  padding: 1rem 1.15rem;
+  border: 1px solid rgba(115, 103, 240, 0.16);
+  background: linear-gradient(135deg, rgba(115, 103, 240, 0.07), rgba(255, 255, 255, 0.92));
+}
+
+.invoice-trust-banner strong {
+  color: #4f42f0;
+}
+
+.invoice-trust-banner span {
+  font-size: 1.15rem;
+  font-weight: 700;
+  color: #4c475f;
+}
+
+.invoice-trust-banner p {
+  margin: 0;
+  color: #726d87;
+  line-height: 1.55;
+}
+
+.invoice-finance-modal {
+  width: min(760px, calc(100vw - 2rem));
+}
+
+.invoice-action-review {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.4rem 1rem;
+  border: 1px solid #ece8f6;
+  border-radius: 14px;
+  background: #fbfaff;
+  padding: 0.95rem 1rem;
+}
+
+.invoice-action-review span {
+  color: #7a768f;
+}
+
+.invoice-action-review strong {
+  color: #4a465e;
+}
+
+.invoice-payment-row--voided {
+  background: rgba(255, 76, 81, 0.03);
+}
+
+.invoice-payment-links {
+  display: grid;
+  gap: 0.25rem;
+  color: #7a768f;
+  font-size: 0.82rem;
+}
+
+.invoice-payment-note {
+  margin-top: 0.35rem;
+  color: #8a859c;
+  font-size: 0.78rem;
+}
+
+.billing-finance-page {
+  gap: 1rem;
+}
+
+.billing-finance-links {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.billing-currency-stack {
+  display: grid;
+  gap: 1rem;
+}
+
+.billing-currency-card {
+  padding: 1rem 1.1rem;
+}
+
+.billing-currency-card__header {
+  align-items: flex-start;
+}
+
+.billing-currency-card__header p {
+  margin: 0.3rem 0 0;
+  color: #7a768f;
+  font-size: 0.9rem;
+}
+
+.trust-summary-strip__chip {
+  display: inline-flex;
+  align-items: center;
+  min-height: 2.2rem;
+  border-radius: 999px;
+  background: #eef9f3;
+  color: #16965b;
+  padding: 0.4rem 0.8rem;
+  font-size: 0.82rem;
+  font-weight: 700;
+}
+
+.billing-summary-grid {
+  margin-top: 0.8rem;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.invoice-summary-card--financial {
+  border: 1px solid #eeeaf7;
+  border-radius: 14px;
+  background: #fcfbff;
+}
+
 @media (max-width: 1200px) {
   .case-summary-grid {
     grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -6510,6 +6830,15 @@ button {
   .trust-page__actions,
   .trust-filter-group {
     justify-content: flex-start;
+  }
+
+  .trust-summary-grid--three,
+  .billing-summary-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .invoice-trust-banner {
+    grid-template-columns: 1fr;
   }
 
   .trust-search-group {
@@ -6545,6 +6874,13 @@ button {
     grid-template-columns: 1fr;
   }
 
+  .billing-finance-links,
+  .billing-summary-grid,
+  .trust-receipt-grid,
+  .trust-summary-grid--three {
+    grid-template-columns: 1fr;
+  }
+
   .trust-search-group {
     grid-template-columns: 1fr;
   }
@@ -6564,6 +6900,10 @@ button {
 
   .trust-table-footer {
     align-items: flex-start;
+  }
+
+  .invoice-action-review {
+    grid-template-columns: 1fr;
   }
 
   .documents-folders__list {

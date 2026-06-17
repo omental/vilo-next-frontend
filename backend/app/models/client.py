@@ -33,6 +33,7 @@ class Client(Base):
     invoices = relationship("Invoice", back_populates="client")
     trust_ledgers = relationship("TrustLedger", back_populates="client")
     trust_transactions = relationship("TrustTransaction", back_populates="client")
+    trust_receipts = relationship("TrustReceipt", back_populates="client")
     intakes = relationship("ClientIntake", back_populates="client", cascade="all, delete-orphan")
     documents = relationship("Document", back_populates="client")
     assignments = relationship("ClientAssignment", back_populates="client", cascade="all, delete-orphan")

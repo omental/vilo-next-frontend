@@ -1,6 +1,6 @@
 from datetime import datetime
 from decimal import Decimal
-from sqlalchemy import DateTime, ForeignKey, Numeric, String, Text
+from sqlalchemy import CheckConstraint, DateTime, ForeignKey, Numeric, String, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base
@@ -8,6 +8,12 @@ from app.db.base import Base
 
 class InvoiceLineItem(Base):
     __tablename__ = "invoice_line_items"
+    __table_args__ = (
+        CheckConstraint(
+            "line_type NOT IN ('trust_deposit', 'retainer_deposit', 'client_funds')",
+            name="ck_invoice_line_items_no_trust_categories",
+        ),
+    )
 
     id: Mapped[int] = mapped_column(primary_key=True, index=True)
     organization_id: Mapped[int] = mapped_column(ForeignKey("organizations.id", ondelete="CASCADE"), index=True, nullable=False)

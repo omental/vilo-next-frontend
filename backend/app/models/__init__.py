@@ -12,10 +12,15 @@ from app.models.case_note import CaseNote
 from app.models.time_entry import TimeEntry
 from app.models.expense import Expense
 from app.models.invoice import Invoice
+from app.models.invoice_payment import InvoicePayment
 from app.models.invoice_line_item import InvoiceLineItem
 from app.models.trust_account import TrustAccount
 from app.models.trust_ledger import TrustLedger
 from app.models.trust_transaction import TrustTransaction
+from app.models.trust_receipt import TrustReceipt
+from app.models.trust_reconciliation import TrustReconciliation
+from app.models.operating_account import OperatingAccount
+from app.models.operating_transaction import OperatingTransaction
 from app.models.client_intake import ClientIntake
 from app.models.conversation import Conversation, ConversationParticipant, Message
 from app.models.message_case_reference import MessageCaseReference
@@ -25,6 +30,6 @@ from app.models.audit_log import AuditLog
 
 __all__ = [
     "Organization","User","Client","ClientAssignment","Case","CaseAssignment","Task","CalendarEvent","CaseTimelineEvent",
-    "Document","DocumentVersion","Precedent","CaseNote","TimeEntry","Expense","Invoice","InvoiceLineItem",
-    "TrustAccount","TrustLedger","TrustTransaction","ClientIntake","Conversation","ConversationParticipant","Message","MessageCaseReference","UserInvite","Notification","AuditLog",
+    "Document","DocumentVersion","Precedent","CaseNote","TimeEntry","Expense","Invoice","InvoicePayment","InvoiceLineItem",
+    "TrustAccount","TrustLedger","TrustTransaction","TrustReceipt","TrustReconciliation","OperatingAccount","OperatingTransaction","ClientIntake","Conversation","ConversationParticipant","Message","MessageCaseReference","UserInvite","Notification","AuditLog",
 ]

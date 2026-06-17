@@ -15,13 +15,18 @@ def test_partner_admin_can_manage_trust_endpoints(client_for_user, role):
         json={
             "trust_account_id": 1,
             "client_id": 1,
-            "case_id": None,
+            "case_id": 1,
             "amount": "100.00",
             "description": "seed",
+            "currency": "USD",
             "transaction_date": "2026-05-04",
         },
     )
-    assert res.status_code in (200, 400, 404)
+    assert res.status_code in (200, 400, 404, 422)
+    apply_res = client.post("/api/v1/invoices/1/apply-trust", json={"amount": "50.00"})
+    assert apply_res.status_code in (200, 400, 404, 422)
+    void_res = client.post("/api/v1/invoices/1/payments/1/void", json={"void_reason": "bad"})
+    assert void_res.status_code in (200, 400, 404, 409, 422)
 
 
 @pytest.mark.parametrize("role", ["lawyer", "paralegal"])
@@ -33,13 +38,18 @@ def test_lawyer_paralegal_view_only_trust(client_for_user, role):
         json={
             "trust_account_id": 1,
             "client_id": 1,
-            "case_id": None,
+            "case_id": 1,
             "amount": "100.00",
             "description": "seed",
+            "currency": "USD",
             "transaction_date": "2026-05-04",
         },
     )
     assert post_res.status_code == 403
+    apply_res = client.post("/api/v1/invoices/1/apply-trust", json={"amount": "50.00"})
+    assert apply_res.status_code == 403
+    void_res = client.post("/api/v1/invoices/1/payments/1/void", json={"void_reason": "bad"})
+    assert void_res.status_code == 403
 
 
 @pytest.mark.parametrize("role,expected", [

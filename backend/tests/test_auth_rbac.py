@@ -31,4 +31,5 @@ def test_staff_endpoints_block_client_role(client_for_user, role):
     assert client.get("/api/v1/documents").status_code == 403
     assert client.get("/api/v1/invoices").status_code == 403
     assert client.get("/api/v1/trust/accounts").status_code == 403
+    assert client.get("/api/v1/accounting/summary").status_code == 403
     assert client.get("/api/v1/reports/dashboard-summary").status_code == 403

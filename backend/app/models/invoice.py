@@ -33,3 +33,5 @@ class Invoice(Base):
     creator = relationship("User", back_populates="created_invoices")
     line_items = relationship("InvoiceLineItem", back_populates="invoice", cascade="all, delete-orphan")
     trust_transactions = relationship("TrustTransaction", back_populates="invoice")
+    operating_transactions = relationship("OperatingTransaction", back_populates="invoice")
+    payments = relationship("InvoicePayment", back_populates="invoice", cascade="all, delete-orphan")

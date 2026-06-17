@@ -21,15 +21,29 @@ from app.models.time_entry import TimeEntry
 from app.models.user import User
 from app.schemas.invoice import (
     InvoiceClientSummary,
+    InvoiceApplyTrustRequest,
     InvoiceCreate,
     InvoiceLineItemResponse,
+    InvoicePaymentResponse,
+    InvoicePaymentSummaryResponse,
+    InvoicePaymentVoidRequest,
+    InvoicePaymentVoidResponse,
     InvoiceOrganizationSummary,
     InvoiceResponse,
     InvoiceSummaryResponse,
+    InvoiceTrustApplyResponse,
     InvoiceUpdate,
 )
 from app.services.audit import log_audit_event
 from app.services.email import build_invoice_email
+from app.services.finance import (
+    apply_trust_to_invoice,
+    create_invoice_payment_operating_transaction,
+    get_invoice_currency,
+    get_matter_trust_balance,
+    void_invoice_payment,
+    validate_invoice_line_type,
+)
 from app.services.jobs import enqueue_email
 from app.services.notifications import create_notification
 from app.services.pdf import generate_invoice_pdf
@@ -37,12 +51,32 @@ from app.services.timeline import create_case_timeline_event
 
 router = APIRouter(prefix="/invoices", tags=["invoices"])
 ALLOWED = ["partner", "admin", "lawyer", "paralegal"]
-ALLOWED_PAY = ["partner", "admin", "lawyer"]
-VALID_STATUS = {"draft", "sent", "paid", "overdue", "cancelled"}
+ALLOWED_PAY = ["partner", "admin"]
+VALID_STATUS = {"draft", "sent", "partially_paid", "paid", "overdue", "cancelled"}
 
 
 def line_ser(li: InvoiceLineItem) -> InvoiceLineItemResponse:
     return InvoiceLineItemResponse(**{c: getattr(li, c) for c in InvoiceLineItemResponse.model_fields.keys()})
+
+
+def payment_ser(payment) -> InvoicePaymentResponse:
+    return InvoicePaymentResponse(
+        id=payment.id,
+        amount=payment.amount,
+        currency=payment.currency,
+        payment_method=getattr(payment, "payment_method", None),
+        payment_source=payment.payment_source,
+        paid_at=payment.paid_at,
+        reference_number=getattr(payment, "reference_number", None),
+        description=getattr(payment, "description", None),
+        linked_trust_transaction_id=getattr(payment, "linked_trust_transaction_id", None),
+        linked_operating_transaction_id=getattr(payment, "linked_operating_transaction_id", None),
+        created_by_id=payment.created_by_id,
+        created_at=payment.created_at,
+        voided_at=getattr(payment, "voided_at", None),
+        voided_by_id=getattr(payment, "voided_by_id", None),
+        void_reason=getattr(payment, "void_reason", None),
+    )
 
 
 def org_ser(org: Organization | None) -> InvoiceOrganizationSummary:
@@ -68,17 +102,20 @@ def client_ser(client: Client | None, fallback_id: int) -> InvoiceClientSummary:
     )
 
 
-def inv_ser(i: Invoice) -> InvoiceResponse:
+def inv_ser(i: Invoice, *, trust_balance_available: Decimal | None = None) -> InvoiceResponse:
     base = {
         c: getattr(i, c)
         for c in InvoiceResponse.model_fields.keys()
-        if c not in {"line_items", "organization", "client"}
+        if c not in {"line_items", "organization", "client", "payments", "trust_balance_available", "can_apply_trust"}
     }
     return InvoiceResponse(
         **base,
         organization=org_ser(getattr(i, "organization", None)),
         client=client_ser(getattr(i, "client", None), i.client_id),
         line_items=[line_ser(x) for x in i.line_items],
+        payments=[payment_ser(x) for x in getattr(i, "payments", [])],
+        trust_balance_available=trust_balance_available,
+        can_apply_trust=bool(i.case_id and i.balance_due > 0 and i.status not in {"paid", "cancelled"}),
     )
 
 
@@ -90,6 +127,7 @@ async def get_invoice_or_404(db: AsyncSession, org_id: int, invoice_id: int) -> 
             selectinload(Invoice.line_items),
             selectinload(Invoice.client),
             selectinload(Invoice.organization),
+            selectinload(Invoice.payments),
         )
     )
     if not inv: raise HTTPException(status_code=404, detail="Invoice not found")
@@ -185,12 +223,12 @@ async def generate_from_case(case_id: int, db: AsyncSession = Depends(get_db), c
     for te in tes:
         qty = _round_quantity(te.duration_minutes)
         amt = te.amount or Decimal("0")
-        db.add(InvoiceLineItem(organization_id=current_user.organization_id, invoice_id=inv.id, line_type="time", description=te.description or "Time entry", quantity=qty, unit_price=te.hourly_rate or Decimal("0"), amount=amt, time_entry_id=te.id, expense_id=None, created_at=now))
+        db.add(InvoiceLineItem(organization_id=current_user.organization_id, invoice_id=inv.id, line_type=validate_invoice_line_type("legal_fee"), description=te.description or "Time entry", quantity=qty, unit_price=te.hourly_rate or Decimal("0"), amount=amt, time_entry_id=te.id, expense_id=None, created_at=now))
         te.invoice_id = inv.id
         te.status = "invoiced"
         te.billing_type = "invoiced"
     for ex in exs:
-        db.add(InvoiceLineItem(organization_id=current_user.organization_id, invoice_id=inv.id, line_type="expense", description=ex.description, quantity=Decimal("1"), unit_price=ex.amount, amount=ex.amount, time_entry_id=None, expense_id=ex.id, created_at=now))
+        db.add(InvoiceLineItem(organization_id=current_user.organization_id, invoice_id=inv.id, line_type=validate_invoice_line_type("expense"), description=ex.description, quantity=Decimal("1"), unit_price=ex.amount, amount=ex.amount, time_entry_id=None, expense_id=ex.id, created_at=now))
 
     await db.flush(); inv = await get_invoice_or_404(db, current_user.organization_id, inv.id)
     recalc(inv); inv.updated_at = now
@@ -214,6 +252,7 @@ async def list_invoices(
             selectinload(Invoice.line_items),
             selectinload(Invoice.client),
             selectinload(Invoice.organization),
+            selectinload(Invoice.payments),
         )
         .order_by(Invoice.created_at.desc())
     )
@@ -222,7 +261,11 @@ async def list_invoices(
 
 @router.get("/{invoice_id}", response_model=InvoiceResponse)
 async def get_invoice(invoice_id: int, db: AsyncSession = Depends(get_db), current_user: User = Depends(role_guard(ALLOWED))):
-    return inv_ser(await get_invoice_or_404(db, current_user.organization_id, invoice_id))
+    inv = await get_invoice_or_404(db, current_user.organization_id, invoice_id)
+    trust_balance = Decimal("0.00")
+    if inv.case_id is not None:
+        trust_balance = await get_matter_trust_balance(db, current_user.organization_id, inv.case_id, await get_invoice_currency(db, current_user.organization_id, inv))
+    return inv_ser(inv, trust_balance_available=trust_balance)
 
 
 @router.get("/{invoice_id}/pdf")
@@ -313,10 +356,13 @@ async def mark_sent(invoice_id: int, request: Request, background_tasks: Backgro
 @router.patch("/{invoice_id}/mark-paid", response_model=InvoiceResponse)
 async def mark_paid(invoice_id: int, request: Request, db: AsyncSession = Depends(get_db), current_user: User = Depends(role_guard(ALLOWED_PAY))):
     inv = await get_invoice_or_404(db, current_user.organization_id, invoice_id)
-    inv.status = "paid"
-    inv.paid_amount = inv.total
-    inv.balance_due = Decimal("0")
-    inv.updated_at = datetime.now(timezone.utc)
+    operating_txn, payment = await create_invoice_payment_operating_transaction(
+        db,
+        organization_id=current_user.organization_id,
+        invoice=inv,
+        created_by_id=current_user.id,
+        transaction_date=date.today(),
+    )
     if inv.case_id:
         await create_case_timeline_event(db, organization_id=current_user.organization_id, case_id=inv.case_id, actor_id=current_user.id, event_type="invoice_paid", title=f"Invoice paid: {inv.invoice_number}", metadata_json={"invoice_id": inv.id})
     await log_audit_event(
@@ -327,12 +373,105 @@ async def mark_paid(invoice_id: int, request: Request, db: AsyncSession = Depend
         entity_type="invoice",
         entity_id=str(inv.id),
         description=f"Invoice paid: {inv.invoice_number}",
-        metadata_json={"case_id": inv.case_id, "client_id": inv.client_id},
+        metadata_json={"case_id": inv.case_id, "client_id": inv.client_id, "payment_id": payment.id, "operating_transaction_id": operating_txn.id},
         ip_address=request.client.host if request.client else None,
         user_agent=request.headers.get("user-agent"),
     )
     await db.commit(); inv = await get_invoice_or_404(db, current_user.organization_id, invoice_id)
     return inv_ser(inv)
+
+
+@router.post("/{invoice_id}/apply-trust", response_model=InvoiceTrustApplyResponse)
+async def apply_trust(
+    invoice_id: int,
+    payload: InvoiceApplyTrustRequest,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(role_guard(ALLOWED_PAY)),
+):
+    inv = await get_invoice_or_404(db, current_user.organization_id, invoice_id)
+    inv, payment, trust_txn, operating_txn = await apply_trust_to_invoice(
+        db,
+        organization_id=current_user.organization_id,
+        invoice=inv,
+        amount=payload.amount,
+        created_by_id=current_user.id,
+        trust_account_id=payload.trust_account_id,
+        currency=payload.currency,
+        description=payload.description,
+        reference_number=payload.reference_number,
+        payment_date=payload.payment_date,
+        audit_request={
+            "ip_address": request.client.host if request.client else None,
+            "user_agent": request.headers.get("user-agent"),
+        },
+    )
+    await db.commit()
+    inv = await get_invoice_or_404(db, current_user.organization_id, invoice_id)
+    trust_balance = Decimal("0.00")
+    if inv.case_id is not None:
+        trust_balance = await get_matter_trust_balance(db, current_user.organization_id, inv.case_id, await get_invoice_currency(db, current_user.organization_id, inv, payload.currency))
+    return InvoiceTrustApplyResponse(
+        invoice=inv_ser(inv, trust_balance_available=trust_balance),
+        payment=payment_ser(payment),
+        trust_transaction_id=trust_txn.id,
+        operating_transaction_id=operating_txn.id,
+    )
+
+
+@router.post("/{invoice_id}/payments/{payment_id}/void", response_model=InvoicePaymentVoidResponse)
+async def void_payment(
+    invoice_id: int,
+    payment_id: int,
+    payload: InvoicePaymentVoidRequest,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(role_guard(ALLOWED_PAY)),
+):
+    inv = await get_invoice_or_404(db, current_user.organization_id, invoice_id)
+    payment, reversal_operating_txn, reversal_trust_txn = await void_invoice_payment(
+        db,
+        organization_id=current_user.organization_id,
+        invoice=inv,
+        payment_id=payment_id,
+        void_reason=payload.void_reason,
+        voided_by_id=current_user.id,
+        void_date=payload.void_date,
+        description=payload.description,
+        audit_request={
+            "ip_address": request.client.host if request.client else None,
+            "user_agent": request.headers.get("user-agent"),
+        },
+    )
+    await db.commit()
+    inv = await get_invoice_or_404(db, current_user.organization_id, invoice_id)
+    trust_balance = Decimal("0.00")
+    if inv.case_id is not None:
+        trust_balance = await get_matter_trust_balance(db, current_user.organization_id, inv.case_id, await get_invoice_currency(db, current_user.organization_id, inv, payment.currency))
+    return InvoicePaymentVoidResponse(
+        invoice=inv_ser(inv, trust_balance_available=trust_balance),
+        payment=payment_ser(payment),
+        reversal_operating_transaction_id=reversal_operating_txn.id,
+        reversal_trust_transaction_id=reversal_trust_txn.id if reversal_trust_txn else None,
+    )
+
+
+@router.get("/{invoice_id}/payment-summary", response_model=InvoicePaymentSummaryResponse)
+async def payment_summary(invoice_id: int, db: AsyncSession = Depends(get_db), current_user: User = Depends(role_guard(ALLOWED))):
+    inv = await get_invoice_or_404(db, current_user.organization_id, invoice_id)
+    trust_balance = Decimal("0.00")
+    if inv.case_id is not None:
+        trust_balance = await get_matter_trust_balance(db, current_user.organization_id, inv.case_id, await get_invoice_currency(db, current_user.organization_id, inv))
+    return InvoicePaymentSummaryResponse(
+        invoice_id=inv.id,
+        invoice_number=inv.invoice_number,
+        total=inv.total,
+        paid_amount=inv.paid_amount,
+        balance_due=inv.balance_due,
+        trust_balance_available=trust_balance,
+        can_apply_trust=bool(inv.case_id and inv.balance_due > 0 and inv.status not in {"paid", "cancelled"}),
+        payments=[payment_ser(x) for x in getattr(inv, "payments", [])],
+    )
 
 
 @router.get("/{invoice_id}/summary", response_model=InvoiceSummaryResponse)

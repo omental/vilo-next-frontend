@@ -1,249 +1,334 @@
 from datetime import date, datetime, timezone
-from decimal import Decimal
 
-from fastapi import APIRouter, Depends, HTTPException, Request
-from sqlalchemy import func, select
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import role_guard
 from app.db.session import get_db
-from app.models.case import Case
-from app.models.client import Client
-from app.models.invoice import Invoice
 from app.models.trust_account import TrustAccount
-from app.models.trust_ledger import TrustLedger
+from app.models.trust_receipt import TrustReceipt
 from app.models.trust_transaction import TrustTransaction
 from app.models.user import User
 from app.schemas.trust import (
-    TrustAccountCreate, TrustAccountResponse, TrustAdjustmentCreate,
-    TrustApplyToInvoiceCreate, TrustLedgerResponse, TrustReceiptResponse,
-    TrustReconciliationSummary, TrustTransactionResponse, TrustTxnCreate,
+    TrustAccountCreate,
+    TrustAccountResponse,
+    TrustBalanceResponse,
+    TrustClientLedgerRow,
+    TrustMatterLedgerRow,
+    TrustReceiptResponse,
+    TrustTransactionCreate,
+    TrustTransactionResponse,
+    TrustTransactionVoidRequest,
+    TrustVoidResponse,
 )
-from app.services.audit import log_audit_event
-from app.services.notifications import create_notification
-from app.services.timeline import create_case_timeline_event
+from app.services.finance import (
+    apply_transaction_filters,
+    create_trust_transaction,
+    get_client_ledgers,
+    get_client_trust_balance,
+    get_matter_ledgers,
+    get_matter_trust_balance,
+    get_or_create_default_trust_account,
+    get_trust_account_balance,
+    log_finance_guardrail_event,
+    money,
+    normalize_currency,
+    void_trust_transaction,
+)
 
 router = APIRouter(prefix="/trust", tags=["trust"])
 MANAGE = ["partner", "admin"]
 VIEW = ["partner", "admin", "lawyer", "paralegal"]
-VALID_TXN_TYPES = {"deposit", "withdrawal", "refund", "disbursement", "adjustment", "applied_to_invoice"}
 
 
-def acc_ser(a: TrustAccount) -> TrustAccountResponse:
-    return TrustAccountResponse(**{k: getattr(a, k) for k in TrustAccountResponse.model_fields.keys()})
+def serialize_account(account: TrustAccount) -> TrustAccountResponse:
+    return TrustAccountResponse(**{field: getattr(account, field) for field in TrustAccountResponse.model_fields.keys()})
 
 
-def led_ser(l: TrustLedger) -> TrustLedgerResponse:
-    return TrustLedgerResponse(**{k: getattr(l, k) for k in TrustLedgerResponse.model_fields.keys()})
+def serialize_transaction(transaction: TrustTransaction) -> TrustTransactionResponse:
+    payload = {field: getattr(transaction, field) for field in TrustTransactionResponse.model_fields.keys() if field != "receipt_id"}
+    payload["receipt_id"] = getattr(transaction.__dict__.get("receipt"), "id", None)
+    return TrustTransactionResponse(**payload)
 
 
-def txn_ser(t: TrustTransaction) -> TrustTransactionResponse:
-    return TrustTransactionResponse(**{k: getattr(t, k) for k in TrustTransactionResponse.model_fields.keys()})
-
-
-async def validate_links(db: AsyncSession, org_id: int, account_id: int, client_id: int, case_id: int | None, invoice_id: int | None = None):
-    account = await db.scalar(select(TrustAccount).where(TrustAccount.id == account_id, TrustAccount.organization_id == org_id))
-    if not account: raise HTTPException(status_code=400, detail="Trust account not found")
-    client = await db.scalar(select(Client).where(Client.id == client_id, Client.organization_id == org_id))
-    if not client: raise HTTPException(status_code=400, detail="Client not found")
-    case = None
-    if case_id is not None:
-        case = await db.scalar(select(Case).where(Case.id == case_id, Case.organization_id == org_id))
-        if not case: raise HTTPException(status_code=400, detail="Case not found")
-        if case.client_id != client_id: raise HTTPException(status_code=400, detail="Case/client mismatch")
-    invoice = None
-    if invoice_id is not None:
-        invoice = await db.scalar(select(Invoice).where(Invoice.id == invoice_id, Invoice.organization_id == org_id))
-        if not invoice: raise HTTPException(status_code=400, detail="Invoice not found")
-        if invoice.client_id != client_id: raise HTTPException(status_code=400, detail="Invoice/client mismatch")
-    return account, client, case, invoice
-
-
-async def get_or_create_ledger(db: AsyncSession, org_id: int, account_id: int, client_id: int, case_id: int | None):
-    ledger = await db.scalar(select(TrustLedger).where(
-        TrustLedger.organization_id == org_id,
-        TrustLedger.trust_account_id == account_id,
-        TrustLedger.client_id == client_id,
-        TrustLedger.case_id == case_id,
-    ))
-    if ledger:
-        return ledger
-    now = datetime.now(timezone.utc)
-    ledger = TrustLedger(organization_id=org_id, trust_account_id=account_id, client_id=client_id, case_id=case_id, current_balance=Decimal("0"), created_at=now, updated_at=now)
-    db.add(ledger); await db.flush()
-    return ledger
-
-
-async def create_transaction(db: AsyncSession, *, org_id: int, account_id: int, client_id: int, case_id: int | None, invoice_id: int | None, tx_type: str, amount: Decimal, description: str | None, tx_date: date, actor_id: int):
-    if amount == 0:
-        raise HTTPException(status_code=400, detail="Amount must be greater than zero")
-    if tx_type not in VALID_TXN_TYPES:
-        raise HTTPException(status_code=400, detail="Invalid transaction type")
-
-    _, _, case, invoice = await validate_links(db, org_id, account_id, client_id, case_id, invoice_id)
-    ledger = await get_or_create_ledger(db, org_id, account_id, client_id, case_id)
-
-    delta = amount
-    if tx_type in {"withdrawal", "refund", "disbursement", "applied_to_invoice"}:
-        delta = -abs(amount)
-    elif tx_type == "adjustment":
-        delta = amount
-    else:
-        delta = abs(amount)
-    if ledger.current_balance + delta < 0:
-        raise HTTPException(status_code=400, detail="Insufficient trust balance")
-
-    ledger.current_balance = ledger.current_balance + delta
-    ledger.updated_at = datetime.now(timezone.utc)
-
-    tx = TrustTransaction(
-        organization_id=org_id, trust_account_id=account_id, ledger_id=ledger.id, client_id=client_id,
-        case_id=case_id, invoice_id=invoice_id, transaction_type=tx_type, amount=amount,
-        description=description, transaction_date=tx_date, created_by=actor_id, created_at=datetime.now(timezone.utc),
+def serialize_receipt(receipt: TrustReceipt) -> TrustReceiptResponse:
+    return TrustReceiptResponse(
+        id=receipt.id,
+        receipt_number=receipt.receipt_number,
+        trust_transaction_id=receipt.trust_transaction_id,
+        client_id=receipt.client_id,
+        case_id=receipt.case_id,
+        amount=receipt.amount,
+        currency=receipt.currency,
+        payment_method=receipt.payment_method,
+        description=receipt.description,
+        issued_at=receipt.issued_at,
+        issued_by_id=receipt.issued_by_id,
+        pdf_available=bool(receipt.pdf_path),
+        voided_at=receipt.voided_at,
+        voided_by_id=receipt.voided_by_id,
+        void_reason=receipt.void_reason,
     )
-    db.add(tx); await db.flush()
 
-    if invoice is not None and tx_type == "applied_to_invoice":
-        invoice.paid_amount = (invoice.paid_amount or Decimal("0")) + amount
-        if invoice.paid_amount >= invoice.total:
-            invoice.paid_amount = invoice.total
-            invoice.balance_due = Decimal("0")
-            invoice.status = "paid"
-        else:
-            invoice.balance_due = max(Decimal("0"), invoice.total - invoice.paid_amount)
 
-    if case is not None:
-        event_map = {
-            "deposit": "trust_deposit_received",
-            "refund": "trust_refund_issued",
-            "disbursement": "trust_disbursement_recorded",
-            "adjustment": "trust_adjustment_recorded",
-            "applied_to_invoice": "trust_applied_to_invoice",
-        }
-        if tx_type in event_map:
-            await create_case_timeline_event(
-                db,
-                organization_id=org_id,
-                case_id=case.id,
-                actor_id=actor_id,
-                event_type=event_map[tx_type],
-                title=f"Trust {tx_type} recorded",
-                metadata_json={"trust_transaction_id": tx.id, "amount": str(amount), "invoice_id": invoice_id},
-            )
-
-    return tx
+def _audit_request(request: Request) -> dict:
+    return {
+        "ip_address": request.client.host if request.client else None,
+        "user_agent": request.headers.get("user-agent"),
+    }
 
 
 @router.get("/accounts", response_model=list[TrustAccountResponse])
-async def list_accounts(db: AsyncSession = Depends(get_db), current_user: User = Depends(role_guard(VIEW))):
-    rows = await db.scalars(select(TrustAccount).where(TrustAccount.organization_id == current_user.organization_id).order_by(TrustAccount.created_at.desc()))
-    return [acc_ser(x) for x in rows.all()]
+async def list_accounts(
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(role_guard(VIEW)),
+):
+    rows = await db.scalars(
+        select(TrustAccount)
+        .where(TrustAccount.organization_id == current_user.organization_id)
+        .order_by(TrustAccount.currency.asc(), TrustAccount.name.asc())
+    )
+    return [serialize_account(row) for row in rows.all()]
 
 
 @router.post("/accounts", response_model=TrustAccountResponse)
-async def create_account(payload: TrustAccountCreate, db: AsyncSession = Depends(get_db), current_user: User = Depends(role_guard(MANAGE))):
+async def create_account(
+    payload: TrustAccountCreate,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(role_guard(MANAGE)),
+):
     now = datetime.now(timezone.utc)
-    obj = TrustAccount(organization_id=current_user.organization_id, created_at=now, updated_at=now, **payload.model_dump())
-    db.add(obj); await db.commit(); await db.refresh(obj)
-    return acc_ser(obj)
+    account = TrustAccount(
+        organization_id=current_user.organization_id,
+        name=payload.name,
+        currency=payload.currency,
+        account_type=payload.account_type,
+        is_default=payload.is_default,
+        opening_balance=money(payload.opening_balance),
+        current_balance=money(payload.opening_balance),
+        is_active=True,
+        bank_name=payload.bank_name,
+        account_number_last4=payload.account_number_last4,
+        status="active",
+        created_at=now,
+        updated_at=now,
+    )
+    db.add(account)
+    await db.commit()
+    await db.refresh(account)
+    return serialize_account(account)
 
 
-@router.get("/ledgers", response_model=list[TrustLedgerResponse])
-async def list_ledgers(db: AsyncSession = Depends(get_db), current_user: User = Depends(role_guard(VIEW))):
-    rows = await db.scalars(select(TrustLedger).where(TrustLedger.organization_id == current_user.organization_id).order_by(TrustLedger.updated_at.desc()))
-    return [led_ser(x) for x in rows.all()]
+@router.get("/balances", response_model=TrustBalanceResponse)
+async def get_balances(
+    client_id: int | None = Query(default=None),
+    case_id: int | None = Query(default=None),
+    currency: str = Query(default="USD"),
+    trust_account_id: int | None = Query(default=None),
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(role_guard(VIEW)),
+):
+    resolved_currency = normalize_currency(currency)
+    return TrustBalanceResponse(
+        trust_account_id=trust_account_id,
+        client_id=client_id,
+        case_id=case_id,
+        trust_account_balance=(
+            await get_trust_account_balance(db, current_user.organization_id, trust_account_id, resolved_currency)
+            if trust_account_id is not None
+            else None
+        ),
+        client_balance=(
+            await get_client_trust_balance(db, current_user.organization_id, client_id, resolved_currency)
+            if client_id is not None
+            else None
+        ),
+        matter_balance=(
+            await get_matter_trust_balance(db, current_user.organization_id, case_id, resolved_currency)
+            if case_id is not None
+            else None
+        ),
+        currency=resolved_currency,
+        as_of=datetime.now(timezone.utc),
+    )
+
+
+@router.get("/client-ledgers", response_model=list[TrustClientLedgerRow])
+async def client_ledgers(
+    currency: str | None = Query(default=None),
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(role_guard(VIEW)),
+):
+    return [TrustClientLedgerRow(**row) for row in await get_client_ledgers(db, current_user.organization_id, currency)]
+
+
+@router.get("/matter-ledgers", response_model=list[TrustMatterLedgerRow])
+async def matter_ledgers(
+    currency: str | None = Query(default=None),
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(role_guard(VIEW)),
+):
+    return [TrustMatterLedgerRow(**row) for row in await get_matter_ledgers(db, current_user.organization_id, currency)]
 
 
 @router.get("/transactions", response_model=list[TrustTransactionResponse])
-async def list_transactions(db: AsyncSession = Depends(get_db), current_user: User = Depends(role_guard(VIEW))):
-    rows = await db.scalars(select(TrustTransaction).where(TrustTransaction.organization_id == current_user.organization_id).order_by(TrustTransaction.created_at.desc()))
-    return [txn_ser(x) for x in rows.all()]
+async def list_transactions(
+    client_id: int | None = Query(default=None),
+    case_id: int | None = Query(default=None),
+    trust_account_id: int | None = Query(default=None),
+    transaction_type: str | None = Query(default=None),
+    currency: str | None = Query(default=None),
+    date_from: date | None = Query(default=None),
+    date_to: date | None = Query(default=None),
+    include_voided: bool = Query(default=False),
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(role_guard(VIEW)),
+):
+    query = select(TrustTransaction).where(TrustTransaction.organization_id == current_user.organization_id)
+    query = apply_transaction_filters(
+        query,
+        model=TrustTransaction,
+        filters={
+            "client_id": client_id,
+            "case_id": case_id,
+            "trust_account_id": trust_account_id,
+            "transaction_type": transaction_type,
+            "currency": currency,
+            "date_from": date_from,
+            "date_to": date_to,
+            "include_voided": include_voided,
+        },
+    )
+    rows = await db.scalars(query.order_by(TrustTransaction.created_at.desc(), TrustTransaction.id.desc()))
+    return [serialize_transaction(row) for row in rows.all()]
+
+
+@router.post("/transactions", response_model=TrustTransactionResponse)
+async def create_transaction(
+    payload: TrustTransactionCreate,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(role_guard(MANAGE)),
+):
+    if payload.transaction_type == "transfer_to_operating":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="transfer_to_operating is reserved for Phase C invoice-linked workflow",
+        )
+    try:
+        txn, _, _ = await create_trust_transaction(
+            db,
+            organization_id=current_user.organization_id,
+            trust_account_id=payload.trust_account_id,
+            client_id=payload.client_id,
+            case_id=payload.case_id,
+            transaction_type=payload.transaction_type,
+            amount=payload.amount,
+            currency=payload.currency,
+            transaction_date=payload.transaction_date,
+            created_by_id=current_user.id,
+            description=payload.description,
+            payee_name=payload.payee_name,
+            payee_type=payload.payee_type,
+            payment_method=payload.payment_method,
+            reference_number=payload.reference_number,
+            adjustment_direction=payload.adjustment_direction,
+            adjustment_reason=payload.adjustment_reason,
+            audit_request=_audit_request(request),
+        )
+    except HTTPException as exc:
+        if exc.detail in {"Insufficient matter trust balance", "Insufficient client trust balance"}:
+            await log_finance_guardrail_event(
+                db,
+                organization_id=current_user.organization_id,
+                user_id=current_user.id,
+                action="trust_negative_balance_blocked",
+                detail="Blocked trust outflow due to insufficient balance",
+                client_id=payload.client_id,
+                case_id=payload.case_id,
+            )
+            await db.commit()
+        raise
+    await db.commit()
+    await db.refresh(txn)
+    return serialize_transaction(txn)
+
+
+@router.post("/transactions/{transaction_id}/void", response_model=TrustVoidResponse)
+async def void_transaction(
+    transaction_id: int,
+    payload: TrustTransactionVoidRequest,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(role_guard(MANAGE)),
+):
+    try:
+        original, reversal = await void_trust_transaction(
+            db,
+            organization_id=current_user.organization_id,
+            transaction_id=transaction_id,
+            void_reason=payload.void_reason,
+            voided_by_id=current_user.id,
+            audit_request=_audit_request(request),
+        )
+    except HTTPException as exc:
+        if exc.detail in {"Insufficient matter trust balance", "Insufficient client trust balance"}:
+            await log_finance_guardrail_event(
+                db,
+                organization_id=current_user.organization_id,
+                user_id=current_user.id,
+                action="trust_void_negative_balance_blocked",
+                detail="Blocked trust void because reversal would create negative balance",
+                client_id=None,
+                case_id=None,
+            )
+            await db.commit()
+        raise
+    await db.commit()
+    await db.refresh(original)
+    await db.refresh(reversal)
+    return TrustVoidResponse(
+        original_transaction=serialize_transaction(original),
+        reversal_transaction=serialize_transaction(reversal),
+    )
+
+
+@router.get("/receipts/{receipt_id}", response_model=TrustReceiptResponse)
+async def get_receipt(
+    receipt_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(role_guard(VIEW)),
+):
+    receipt = await db.scalar(
+        select(TrustReceipt).where(
+            TrustReceipt.id == receipt_id,
+            TrustReceipt.organization_id == current_user.organization_id,
+        )
+    )
+    if not receipt:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Trust receipt not found")
+    return serialize_receipt(receipt)
 
 
 @router.post("/deposit", response_model=TrustTransactionResponse)
-async def deposit(payload: TrustTxnCreate, request: Request, db: AsyncSession = Depends(get_db), current_user: User = Depends(role_guard(MANAGE))):
-    tx = await create_transaction(db, org_id=current_user.organization_id, account_id=payload.trust_account_id, client_id=payload.client_id, case_id=payload.case_id, invoice_id=None, tx_type="deposit", amount=payload.amount, description=payload.description, tx_date=payload.transaction_date, actor_id=current_user.id)
-    await log_audit_event(
-        db, organization_id=current_user.organization_id, user_id=current_user.id, action="trust_deposit",
-        entity_type="trust_transaction", entity_id=str(tx.id), description="Trust deposit recorded",
-        metadata_json={"client_id": tx.client_id, "case_id": tx.case_id, "amount": str(tx.amount)},
-        ip_address=request.client.host if request.client else None, user_agent=request.headers.get("user-agent"),
-    )
-    await db.commit(); await db.refresh(tx)
-    return txn_ser(tx)
+async def legacy_deposit(
+    payload: TrustTransactionCreate,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(role_guard(MANAGE)),
+):
+    deposit_payload = payload.model_copy(update={"transaction_type": "deposit"})
+    return await create_transaction(deposit_payload, request=request, db=db, current_user=current_user)
 
 
-@router.post("/refund", response_model=TrustTransactionResponse)
-async def refund(payload: TrustTxnCreate, request: Request, db: AsyncSession = Depends(get_db), current_user: User = Depends(role_guard(MANAGE))):
-    tx = await create_transaction(db, org_id=current_user.organization_id, account_id=payload.trust_account_id, client_id=payload.client_id, case_id=payload.case_id, invoice_id=None, tx_type="refund", amount=payload.amount, description=payload.description, tx_date=payload.transaction_date, actor_id=current_user.id)
-    await log_audit_event(
-        db, organization_id=current_user.organization_id, user_id=current_user.id, action="trust_refund",
-        entity_type="trust_transaction", entity_id=str(tx.id), description="Trust refund recorded",
-        metadata_json={"client_id": tx.client_id, "case_id": tx.case_id, "amount": str(tx.amount)},
-        ip_address=request.client.host if request.client else None, user_agent=request.headers.get("user-agent"),
-    )
-    await db.commit(); await db.refresh(tx)
-    return txn_ser(tx)
-
-
-@router.post("/disbursement", response_model=TrustTransactionResponse)
-async def disbursement(payload: TrustTxnCreate, request: Request, db: AsyncSession = Depends(get_db), current_user: User = Depends(role_guard(MANAGE))):
-    tx = await create_transaction(db, org_id=current_user.organization_id, account_id=payload.trust_account_id, client_id=payload.client_id, case_id=payload.case_id, invoice_id=None, tx_type="disbursement", amount=payload.amount, description=payload.description, tx_date=payload.transaction_date, actor_id=current_user.id)
-    await log_audit_event(
-        db, organization_id=current_user.organization_id, user_id=current_user.id, action="trust_disbursement",
-        entity_type="trust_transaction", entity_id=str(tx.id), description="Trust disbursement recorded",
-        metadata_json={"client_id": tx.client_id, "case_id": tx.case_id, "amount": str(tx.amount)},
-        ip_address=request.client.host if request.client else None, user_agent=request.headers.get("user-agent"),
-    )
-    await db.commit(); await db.refresh(tx)
-    return txn_ser(tx)
-
-
-@router.post("/adjustment", response_model=TrustTransactionResponse)
-async def adjustment(payload: TrustAdjustmentCreate, db: AsyncSession = Depends(get_db), current_user: User = Depends(role_guard(MANAGE))):
-    direction = payload.direction.lower()
-    if direction not in {"increase", "decrease"}:
-        raise HTTPException(status_code=400, detail="direction must be increase or decrease")
-    amount = payload.amount if direction == "increase" else -payload.amount
-    tx = await create_transaction(db, org_id=current_user.organization_id, account_id=payload.trust_account_id, client_id=payload.client_id, case_id=payload.case_id, invoice_id=None, tx_type="adjustment", amount=amount, description=payload.description, tx_date=payload.transaction_date, actor_id=current_user.id)
-    await db.commit(); await db.refresh(tx)
-    return txn_ser(tx)
-
-
-@router.post("/apply-to-invoice", response_model=TrustTransactionResponse)
-async def apply_to_invoice(payload: TrustApplyToInvoiceCreate, request: Request, db: AsyncSession = Depends(get_db), current_user: User = Depends(role_guard(MANAGE))):
-    tx = await create_transaction(db, org_id=current_user.organization_id, account_id=payload.trust_account_id, client_id=payload.client_id, case_id=payload.case_id, invoice_id=payload.invoice_id, tx_type="applied_to_invoice", amount=payload.amount, description=payload.description, tx_date=date.today(), actor_id=current_user.id)
-    invoice = await db.scalar(select(Invoice).where(Invoice.id == payload.invoice_id, Invoice.organization_id == current_user.organization_id))
-    if invoice and invoice.created_by != current_user.id:
-        await create_notification(
-            db,
-            organization_id=current_user.organization_id,
-            user_id=invoice.created_by,
-            type="trust_applied",
-            title=f"Trust applied to invoice {invoice.invoice_number}",
-            body=f"{payload.amount} was applied from trust to this invoice.",
-            metadata_json={"invoice_id": invoice.id, "trust_transaction_id": tx.id},
-        )
-    await log_audit_event(
-        db, organization_id=current_user.organization_id, user_id=current_user.id, action="trust_applied",
-        entity_type="trust_transaction", entity_id=str(tx.id), description="Trust applied to invoice",
-        metadata_json={"invoice_id": payload.invoice_id, "client_id": payload.client_id, "amount": str(payload.amount)},
-        ip_address=request.client.host if request.client else None, user_agent=request.headers.get("user-agent"),
-    )
-    await db.commit(); await db.refresh(tx)
-    return txn_ser(tx)
-
-
-@router.get("/transactions/{transaction_id}/receipt", response_model=TrustReceiptResponse)
-async def receipt(transaction_id: int, db: AsyncSession = Depends(get_db), current_user: User = Depends(role_guard(VIEW))):
-    tx = await db.scalar(select(TrustTransaction).where(TrustTransaction.id == transaction_id, TrustTransaction.organization_id == current_user.organization_id))
-    if not tx: raise HTTPException(status_code=404, detail="Transaction not found")
-    return TrustReceiptResponse(receipt_number=f"TR-{datetime.now().year}-{tx.id:06d}", client=tx.client_id, case=tx.case_id, amount=tx.amount, date=tx.transaction_date, description=tx.description, trust_account=tx.trust_account_id)
-
-
-@router.get("/reconciliation-summary", response_model=TrustReconciliationSummary)
-async def reconcile_summary(db: AsyncSession = Depends(get_db), current_user: User = Depends(role_guard(VIEW))):
-    total_bal = Decimal(str((await db.scalar(select(func.coalesce(func.sum(TrustLedger.current_balance), 0)).where(TrustLedger.organization_id == current_user.organization_id))) or 0))
-    client_bal = Decimal(str((await db.scalar(select(func.coalesce(func.sum(TrustLedger.current_balance), 0)).where(TrustLedger.organization_id == current_user.organization_id))) or 0))
-    case_bal = Decimal(str((await db.scalar(select(func.coalesce(func.sum(TrustLedger.current_balance), 0)).where(TrustLedger.organization_id == current_user.organization_id, TrustLedger.case_id.is_not(None)))) or 0))
-    return TrustReconciliationSummary(total_trust_account_balance=total_bal, total_client_ledger_balances=client_bal, total_matter_case_balances=case_bal, matches=(total_bal == client_bal))
+@router.post("/accounts/default/{currency}", response_model=TrustAccountResponse)
+async def create_or_get_default_account(
+    currency: str,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(role_guard(MANAGE)),
+):
+    account = await get_or_create_default_trust_account(db, current_user.organization_id, currency)
+    await db.commit()
+    await db.refresh(account)
+    return serialize_account(account)

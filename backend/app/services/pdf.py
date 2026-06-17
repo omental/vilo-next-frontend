@@ -108,8 +108,8 @@ async def generate_invoice_pdf(invoice_id: int, *, db: AsyncSession, organizatio
     trust_applied = Decimal(str((await db.scalar(
         select(func.coalesce(func.sum(TrustTransaction.amount), 0)).where(
             TrustTransaction.organization_id == organization_id,
-            TrustTransaction.invoice_id == inv.id,
-            TrustTransaction.transaction_type == "applied_to_invoice",
+            TrustTransaction.linked_invoice_id == inv.id,
+            TrustTransaction.transaction_type.in_(["applied_to_invoice", "transfer_to_operating"]),
         )
     )) or 0))
 

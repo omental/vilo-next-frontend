@@ -47,6 +47,7 @@ class Case(Base):
     invoices = relationship("Invoice", back_populates="case")
     trust_ledgers = relationship("TrustLedger", back_populates="case")
     trust_transactions = relationship("TrustTransaction", back_populates="case")
+    trust_receipts = relationship("TrustReceipt", back_populates="case")
     conversations = relationship("Conversation", back_populates="case")
 
 
