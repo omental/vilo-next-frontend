@@ -1,6 +1,6 @@
 from datetime import datetime
 from decimal import Decimal
-from sqlalchemy import DateTime, ForeignKey, Integer, Numeric, String, Text
+from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, Numeric, String, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base
@@ -20,7 +20,9 @@ class TimeEntry(Base):
     end_time: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     duration_minutes: Mapped[int | None] = mapped_column(Integer, nullable=True)
     billing_type: Mapped[str] = mapped_column(String(30), nullable=False, default="professional_fee")
+    currency: Mapped[str] = mapped_column(String(10), nullable=False, default="USD")
     hourly_rate: Mapped[Decimal | None] = mapped_column(Numeric(12, 2), nullable=True)
+    rate_is_manual: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     amount: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False, default=0)
     status: Mapped[str] = mapped_column(String(30), nullable=False, default="billable")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)

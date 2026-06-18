@@ -15,6 +15,8 @@ from app.models.invoice_line_item import InvoiceLineItem
 from app.models.time_entry import TimeEntry
 from app.models.user import User
 from app.schemas.time_entry import TimeEntryCreate, TimeEntryListResponse, TimeEntryResponse, TimeEntryUpdate
+from app.services.billing import get_effective_hourly_rate
+from app.services.finance import money, normalize_currency
 from app.services.timeline import create_case_timeline_event
 
 router = APIRouter(prefix="/time-entries", tags=["time-entries"])
@@ -48,6 +50,44 @@ def _normalize_billing_type(billing_type: str, invoice_id: int | None) -> str:
     return billing_type
 
 
+async def _resolve_rate_inputs(
+    db: AsyncSession,
+    *,
+    current_user: User,
+    entry_user_id: int,
+    currency: str,
+    billing_type: str,
+    provided_hourly_rate: Decimal | None,
+    provided_rate_is_manual: bool | None,
+    existing_rate_is_manual: bool = False,
+    existing_hourly_rate: Decimal | None = None,
+    user_changed: bool = False,
+) -> tuple[Decimal | None, bool]:
+    normalized_currency = normalize_currency(currency)
+    if billing_type in {"non_billable", "no_charge"}:
+        if provided_hourly_rate is not None:
+            return money(provided_hourly_rate), bool(provided_rate_is_manual)
+        return existing_hourly_rate, existing_rate_is_manual
+
+    effective_rate = await get_effective_hourly_rate(db, current_user.organization_id, entry_user_id, normalized_currency)
+    can_override = current_user.role.value in {"partner", "admin"}
+
+    if provided_hourly_rate is not None:
+        rounded_rate = money(provided_hourly_rate)
+        if not can_override and effective_rate.hourly_rate == ZERO:
+            return rounded_rate, False
+        if not can_override and rounded_rate != effective_rate.hourly_rate:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Only partner/admin can override hourly rate")
+        if can_override and (provided_rate_is_manual is True or rounded_rate != effective_rate.hourly_rate):
+            return rounded_rate, True
+        return effective_rate.hourly_rate, False
+
+    if existing_rate_is_manual and not user_changed:
+        return existing_hourly_rate, True
+
+    return effective_rate.hourly_rate, False
+
+
 def _serialize(entry: TimeEntry) -> TimeEntryResponse:
     case = getattr(entry, "case", None)
     client = getattr(entry, "client", None) or getattr(case, "client", None)
@@ -65,7 +105,9 @@ def _serialize(entry: TimeEntry) -> TimeEntryResponse:
         end_time=entry.end_time,
         duration_minutes=entry.duration_minutes,
         billing_type=entry.billing_type,
+        currency=getattr(entry, "currency", "USD"),
         hourly_rate=entry.hourly_rate,
+        rate_is_manual=getattr(entry, "rate_is_manual", False),
         amount=entry.amount,
         status=entry.status,
         created_at=entry.created_at,
@@ -274,12 +316,22 @@ async def create_time_entry(
         invoice_id=payload.invoice_id,
     )
     billing_type = _normalize_billing_type(payload.billing_type, payload.invoice_id)
+    currency = normalize_currency(payload.currency)
+    resolved_rate, rate_is_manual = await _resolve_rate_inputs(
+        db,
+        current_user=current_user,
+        entry_user_id=user_id,
+        currency=currency,
+        billing_type=billing_type,
+        provided_hourly_rate=payload.hourly_rate,
+        provided_rate_is_manual=payload.rate_is_manual,
+    )
     duration_minutes, hourly_rate, amount = _resolve_duration_and_amount(
         start_time=payload.start_time,
         end_time=payload.end_time,
         duration_minutes=payload.duration_minutes,
         billing_type=billing_type,
-        hourly_rate=payload.hourly_rate,
+        hourly_rate=resolved_rate,
     )
     now = datetime.now(timezone.utc)
     entry = TimeEntry(
@@ -293,7 +345,9 @@ async def create_time_entry(
         end_time=payload.end_time,
         duration_minutes=duration_minutes,
         billing_type=billing_type,
+        currency=currency,
         hourly_rate=hourly_rate,
+        rate_is_manual=rate_is_manual,
         amount=amount,
         status=_normalize_status(billing_type, invoice.id if invoice else None, payload.status),
         created_at=now,
@@ -350,12 +404,25 @@ async def update_time_entry(
         invoice_id=resolved_invoice_id,
     )
     billing_type = _normalize_billing_type(updates.get("billing_type", entry.billing_type), resolved_invoice_id)
+    resolved_currency = normalize_currency(updates.get("currency", entry.currency))
+    resolved_rate, rate_is_manual = await _resolve_rate_inputs(
+        db,
+        current_user=current_user,
+        entry_user_id=resolved_user_id,
+        currency=resolved_currency,
+        billing_type=billing_type,
+        provided_hourly_rate=updates.get("hourly_rate"),
+        provided_rate_is_manual=updates.get("rate_is_manual"),
+        existing_rate_is_manual=entry.rate_is_manual,
+        existing_hourly_rate=entry.hourly_rate,
+        user_changed=resolved_user_id != entry.user_id,
+    )
     duration_minutes, hourly_rate, amount = _resolve_duration_and_amount(
         start_time=updates.get("start_time", entry.start_time),
         end_time=updates.get("end_time", entry.end_time),
         duration_minutes=updates.get("duration_minutes", entry.duration_minutes),
         billing_type=billing_type,
-        hourly_rate=updates.get("hourly_rate", entry.hourly_rate),
+        hourly_rate=resolved_rate,
     )
 
     entry.case_id = case.id if case else None
@@ -367,7 +434,9 @@ async def update_time_entry(
     entry.end_time = updates.get("end_time", entry.end_time)
     entry.duration_minutes = duration_minutes
     entry.billing_type = billing_type
+    entry.currency = resolved_currency
     entry.hourly_rate = hourly_rate
+    entry.rate_is_manual = rate_is_manual
     entry.amount = amount
     entry.status = _normalize_status(billing_type, entry.invoice_id, updates.get("status", entry.status))
     entry.updated_at = datetime.now(timezone.utc)

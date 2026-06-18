@@ -25,6 +25,7 @@ from app.schemas.invoice import (
     InvoiceCreate,
     InvoiceLineItemCreate,
     InvoiceLineItemResponse,
+    InvoicePaymentAccountSummary,
     InvoicePaymentResponse,
     InvoicePaymentSummaryResponse,
     InvoicePaymentVoidRequest,
@@ -36,6 +37,7 @@ from app.schemas.invoice import (
     InvoiceUpdate,
 )
 from app.services.audit import log_audit_event
+from app.services.billing import resolve_invoice_payment_account, validate_time_entry_invoice_link
 from app.services.email import build_invoice_email
 from app.services.finance import (
     apply_trust_to_invoice,
@@ -44,6 +46,8 @@ from app.services.finance import (
     get_invoice_currency,
     get_matter_trust_balance,
     summarize_invoice_payment_method,
+    money,
+    normalize_currency,
     void_invoice_payment,
     validate_invoice_line_type,
 )
@@ -59,7 +63,7 @@ VALID_STATUS = {"draft", "sent", "partially_paid", "paid", "overdue", "cancelled
 
 
 def line_ser(li: InvoiceLineItem) -> InvoiceLineItemResponse:
-    return InvoiceLineItemResponse(**{c: getattr(li, c) for c in InvoiceLineItemResponse.model_fields.keys()})
+    return InvoiceLineItemResponse(**{c: getattr(li, c, None) for c in InvoiceLineItemResponse.model_fields.keys()})
 
 
 def payment_ser(payment) -> InvoicePaymentResponse:
@@ -79,6 +83,21 @@ def payment_ser(payment) -> InvoicePaymentResponse:
         voided_at=getattr(payment, "voided_at", None),
         voided_by_id=getattr(payment, "voided_by_id", None),
         void_reason=getattr(payment, "void_reason", None),
+    )
+
+
+def payment_account_ser(account) -> InvoicePaymentAccountSummary | None:
+    if not account:
+        return None
+    return InvoicePaymentAccountSummary(
+        id=account.id,
+        account_name=account.account_name,
+        bank_name=account.bank_name,
+        account_number=account.account_number,
+        currency=account.currency,
+        swift_routing=getattr(account, "swift_routing", None),
+        notes=getattr(account, "notes", None),
+        payment_instructions=getattr(account, "payment_instructions", None),
     )
 
 
@@ -108,9 +127,9 @@ def client_ser(client: Client | None, fallback_id: int) -> InvoiceClientSummary:
 def inv_ser(i: Invoice, *, trust_balance_available: Decimal | None = None) -> InvoiceResponse:
     display_status = derive_invoice_status(i)
     base = {
-        c: getattr(i, c)
+        c: getattr(i, c, None)
         for c in InvoiceResponse.model_fields.keys()
-        if c not in {"line_items", "organization", "client", "payments", "trust_balance_available", "can_apply_trust", "display_status", "payment_method_summary", "matter_title"}
+        if c not in {"line_items", "organization", "client", "payments", "payment_account", "trust_balance_available", "can_apply_trust", "display_status", "payment_method_summary", "matter_title"}
     }
     return InvoiceResponse(
         **base,
@@ -118,6 +137,7 @@ def inv_ser(i: Invoice, *, trust_balance_available: Decimal | None = None) -> In
         payment_method_summary=summarize_invoice_payment_method(i),
         organization=org_ser(getattr(i, "organization", None)),
         client=client_ser(getattr(i, "client", None), i.client_id),
+        payment_account=payment_account_ser(getattr(i, "payment_account", None)),
         matter_title=getattr(getattr(i, "case", None), "title", None),
         line_items=[line_ser(x) for x in i.line_items],
         payments=[payment_ser(x) for x in getattr(i, "payments", [])],
@@ -131,10 +151,12 @@ async def get_invoice_or_404(db: AsyncSession, org_id: int, invoice_id: int) -> 
         select(Invoice)
         .where(Invoice.id == invoice_id, Invoice.organization_id == org_id)
         .options(
-            selectinload(Invoice.line_items),
+            selectinload(Invoice.line_items).selectinload(InvoiceLineItem.time_entry).selectinload(TimeEntry.user),
+            selectinload(Invoice.line_items).selectinload(InvoiceLineItem.staff_user),
             selectinload(Invoice.client),
             selectinload(Invoice.organization),
             selectinload(Invoice.case),
+            selectinload(Invoice.payment_account),
             selectinload(Invoice.payments),
         )
     )
@@ -188,23 +210,68 @@ async def sync_invoice_line_items(
     line_items: list[InvoiceLineItemCreate],
     created_at: datetime,
 ) -> None:
+    previous_time_entries = (
+        await db.scalars(
+            select(TimeEntry).where(
+                TimeEntry.organization_id == organization_id,
+                TimeEntry.invoice_id == invoice.id,
+            )
+        )
+    ).all()
+    for time_entry in previous_time_entries:
+        time_entry.invoice_id = None
+        if time_entry.status == "invoiced":
+            time_entry.status = "billable"
+        if time_entry.billing_type == "invoiced":
+            time_entry.billing_type = "professional_fee"
+
     invoice.line_items.clear()
     await db.flush()
     for item in line_items:
-        quantity = Decimal(str(item.quantity))
-        unit_price = Decimal(str(item.unit_price))
+        quantity = Decimal(str(item.quantity or 0))
+        unit_price = Decimal(str(item.unit_price or 0))
         amount = Decimal(str(item.amount)) if item.amount is not None else (quantity * unit_price)
+        time_entry_id = None
+        staff_user_id = item.staff_user_id
+        hours = Decimal(str(item.hours or 0)) if item.hours is not None else None
+        rate = Decimal(str(item.rate or 0)) if item.rate is not None else None
+        description = item.description.strip()
+        line_type = validate_invoice_line_type(item.line_type)
+
+        if item.time_entry_id is not None:
+            time_entry = await validate_time_entry_invoice_link(
+                db,
+                organization_id=organization_id,
+                invoice=invoice,
+                time_entry_id=item.time_entry_id,
+            )
+            quantity = _round_quantity(time_entry.duration_minutes)
+            unit_price = money(time_entry.hourly_rate)
+            amount = money(quantity * unit_price)
+            hours = quantity
+            rate = unit_price
+            staff_user_id = time_entry.user_id
+            description = item.description.strip() or time_entry.description or "Time entry"
+            line_type = validate_invoice_line_type(item.line_type if item.line_type else "hourly_work")
+            time_entry_id = time_entry.id
+            time_entry.invoice_id = invoice.id
+            time_entry.status = "invoiced"
+            time_entry.billing_type = "invoiced"
+
         invoice.line_items.append(
             InvoiceLineItem(
                 organization_id=organization_id,
                 invoice_id=invoice.id,
-                line_type=validate_invoice_line_type(item.line_type),
-                description=item.description.strip(),
+                line_type=line_type,
+                description=description,
                 quantity=quantity,
                 unit_price=unit_price,
-                amount=amount.quantize(Decimal("0.01")),
-                time_entry_id=None,
+                amount=money(amount),
+                hours=hours,
+                rate=rate,
+                time_entry_id=time_entry_id,
                 expense_id=None,
+                staff_user_id=staff_user_id,
                 created_at=created_at,
             )
         )
@@ -219,13 +286,20 @@ def _round_quantity(duration_minutes: int | None) -> Decimal:
 @router.post("", response_model=InvoiceResponse)
 async def create_invoice(payload: InvoiceCreate, db: AsyncSession = Depends(get_db), current_user: User = Depends(role_guard(ALLOWED))):
     _, case = await validate_client_case(db, current_user.organization_id, payload.client_id, payload.case_id)
+    currency = normalize_currency(payload.currency)
+    payment_account = await resolve_invoice_payment_account(
+        db,
+        organization_id=current_user.organization_id,
+        currency=currency,
+        payment_account_id=payload.payment_account_id,
+    )
     now = datetime.now(timezone.utc)
     inv = Invoice(
         organization_id=current_user.organization_id,
         client_id=payload.client_id,
         case_id=payload.case_id,
         invoice_number=await resolve_invoice_number(db, current_user.organization_id, payload.invoice_number),
-        currency=payload.currency,
+        currency=currency,
         status="draft",
         issue_date=payload.issue_date,
         due_date=payload.due_date,
@@ -235,7 +309,8 @@ async def create_invoice(payload: InvoiceCreate, db: AsyncSession = Depends(get_
         paid_amount=Decimal("0"),
         balance_due=Decimal("0"),
         notes=payload.notes,
-        payment_instructions=payload.payment_instructions,
+        payment_instructions=payload.payment_instructions or payment_account.payment_instructions,
+        payment_account_id=payment_account.id,
         created_by=current_user.id,
         created_at=now,
         updated_at=now,
@@ -260,11 +335,17 @@ async def generate_from_case(case_id: int, db: AsyncSession = Depends(get_db), c
     case = await db.scalar(select(Case).where(Case.id == case_id, Case.organization_id == current_user.organization_id))
     if not case: raise HTTPException(status_code=404, detail="Case not found")
     now = datetime.now(timezone.utc)
+    payment_account = await resolve_invoice_payment_account(
+        db,
+        organization_id=current_user.organization_id,
+        currency="USD",
+        payment_account_id=None,
+    )
     inv = Invoice(
         organization_id=current_user.organization_id, client_id=case.client_id, case_id=case.id,
         invoice_number=await next_invoice_number(db, current_user.organization_id), currency="USD", status="draft",
         issue_date=date.today(), due_date=None, subtotal=Decimal("0"), tax_amount=Decimal("0"), total=Decimal("0"),
-        paid_amount=Decimal("0"), balance_due=Decimal("0"), notes="Generated from case", payment_instructions=None, created_by=current_user.id, created_at=now, updated_at=now,
+        paid_amount=Decimal("0"), balance_due=Decimal("0"), notes="Generated from case", payment_instructions=payment_account.payment_instructions, payment_account_id=payment_account.id, created_by=current_user.id, created_at=now, updated_at=now,
     )
     db.add(inv); await db.flush()
 
@@ -281,7 +362,7 @@ async def generate_from_case(case_id: int, db: AsyncSession = Depends(get_db), c
     for te in tes:
         qty = _round_quantity(te.duration_minutes)
         amt = te.amount or Decimal("0")
-        db.add(InvoiceLineItem(organization_id=current_user.organization_id, invoice_id=inv.id, line_type=validate_invoice_line_type("legal_fee"), description=te.description or "Time entry", quantity=qty, unit_price=te.hourly_rate or Decimal("0"), amount=amt, time_entry_id=te.id, expense_id=None, created_at=now))
+        db.add(InvoiceLineItem(organization_id=current_user.organization_id, invoice_id=inv.id, line_type=validate_invoice_line_type("legal_fee"), description=te.description or "Time entry", quantity=qty, unit_price=te.hourly_rate or Decimal("0"), amount=amt, hours=qty, rate=te.hourly_rate or Decimal("0"), time_entry_id=te.id, expense_id=None, staff_user_id=te.user_id, created_at=now))
         te.invoice_id = inv.id
         te.status = "invoiced"
         te.billing_type = "invoiced"
@@ -310,10 +391,12 @@ async def list_invoices(
     rows = await db.scalars(
         query
         .options(
-            selectinload(Invoice.line_items),
+            selectinload(Invoice.line_items).selectinload(InvoiceLineItem.time_entry).selectinload(TimeEntry.user),
+            selectinload(Invoice.line_items).selectinload(InvoiceLineItem.staff_user),
             selectinload(Invoice.client),
             selectinload(Invoice.organization),
             selectinload(Invoice.case),
+            selectinload(Invoice.payment_account),
             selectinload(Invoice.payments),
         )
         .order_by(Invoice.created_at.desc())
@@ -360,15 +443,27 @@ async def update_invoice(invoice_id: int, payload: InvoiceUpdate, db: AsyncSessi
     if st and st not in VALID_STATUS: raise HTTPException(status_code=400, detail="Invalid invoice status")
     next_client_id = updates["client_id"] if "client_id" in updates else inv.client_id
     next_case_id = updates["case_id"] if "case_id" in updates else inv.case_id
+    next_currency = normalize_currency(updates["currency"]) if "currency" in updates and updates["currency"] is not None else inv.currency
     if next_case_id is None:
         raise HTTPException(status_code=400, detail="Invoice must be linked to a matter")
     await validate_client_case(db, current_user.organization_id, next_client_id, next_case_id)
+    payment_account = await resolve_invoice_payment_account(
+        db,
+        organization_id=current_user.organization_id,
+        currency=next_currency,
+        payment_account_id=updates.get("payment_account_id", inv.payment_account_id),
+    )
     if "invoice_number" in updates:
         inv.invoice_number = await resolve_invoice_number(db, current_user.organization_id, updates["invoice_number"], exclude_invoice_id=inv.id)
     for k, v in updates.items():
         if k in {"invoice_number", "line_items"}:
             continue
         setattr(inv, k, v)
+    account_changed = payment_account.id != inv.payment_account_id or next_currency != inv.currency
+    inv.currency = next_currency
+    inv.payment_account_id = payment_account.id
+    if "payment_instructions" not in updates and account_changed and not inv.payment_instructions:
+        inv.payment_instructions = payment_account.payment_instructions
     if "line_items" in updates and updates["line_items"] is not None:
         await sync_invoice_line_items(
             db,

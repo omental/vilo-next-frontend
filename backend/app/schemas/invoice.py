@@ -1,7 +1,7 @@
 from datetime import date, datetime
 from decimal import Decimal
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 
 def _normalize_currency(value: str) -> str:
@@ -14,9 +14,30 @@ def _normalize_currency(value: str) -> str:
 class InvoiceLineItemCreate(BaseModel):
     line_type: str
     description: str = Field(min_length=1)
-    quantity: Decimal = Field(gt=Decimal("0"))
-    unit_price: Decimal = Field(ge=Decimal("0"))
+    quantity: Decimal | None = Field(default=None, gt=Decimal("0"))
+    unit_price: Decimal | None = Field(default=None, ge=Decimal("0"))
     amount: Decimal | None = Field(default=None, ge=Decimal("0"))
+    time_entry_id: int | None = None
+    staff_user_id: int | None = None
+    hours: Decimal | None = Field(default=None, ge=Decimal("0"))
+    rate: Decimal | None = Field(default=None, ge=Decimal("0"))
+
+    @model_validator(mode="after")
+    def validate_pricing_fields(self):
+        if self.time_entry_id is None and (self.quantity is None or self.unit_price is None):
+            raise ValueError("quantity and unit_price are required when time_entry_id is not supplied")
+        return self
+
+
+class InvoicePaymentAccountSummary(BaseModel):
+    id: int
+    account_name: str
+    bank_name: str
+    account_number: str
+    currency: str
+    swift_routing: str | None = None
+    notes: str | None = None
+    payment_instructions: str | None = None
 
 
 class InvoiceOrganizationSummary(BaseModel):
@@ -48,6 +69,7 @@ class InvoiceCreate(BaseModel):
     tax_amount: Decimal = Field(default=Decimal("0.00"), ge=Decimal("0"))
     notes: str | None = None
     payment_instructions: str | None = None
+    payment_account_id: int | None = None
     line_items: list[InvoiceLineItemCreate] = []
 
     @field_validator("currency")
@@ -67,6 +89,7 @@ class InvoiceUpdate(BaseModel):
     tax_amount: Decimal | None = None
     notes: str | None = None
     payment_instructions: str | None = None
+    payment_account_id: int | None = None
     line_items: list[InvoiceLineItemCreate] | None = None
 
     @field_validator("currency")
@@ -101,8 +124,11 @@ class InvoiceLineItemResponse(BaseModel):
     quantity: Decimal
     unit_price: Decimal
     amount: Decimal
+    hours: Decimal | None
+    rate: Decimal | None
     time_entry_id: int | None
     expense_id: int | None
+    staff_user_id: int | None
     created_at: datetime
 
 
@@ -146,6 +172,8 @@ class InvoiceResponse(BaseModel):
     created_at: datetime
     updated_at: datetime
     payment_instructions: str | None
+    payment_account_id: int | None
+    payment_account: InvoicePaymentAccountSummary | None = None
     organization: InvoiceOrganizationSummary
     client: InvoiceClientSummary
     matter_title: str | None = None

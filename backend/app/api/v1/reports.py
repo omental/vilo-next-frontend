@@ -22,7 +22,9 @@ from app.models.time_entry import TimeEntry
 from app.models.trust_ledger import TrustLedger
 from app.models.trust_transaction import TrustTransaction
 from app.models.user import User
+from app.schemas.billing import RevenueByStaffRow, TimeByStaffRow
 from app.schemas.dashboard import DashboardWidgetsResponse
+from app.services.billing import build_revenue_by_staff_report, build_time_by_staff_report
 from app.services.finance import derive_invoice_status, summarize_invoice_payment_method
 from app.services.pdf import generate_report_pdf
 
@@ -513,6 +515,44 @@ async def invoice_reports(
             "totals": {key: d(value) for key, value in payment_method_totals.items()},
         },
     }
+
+
+@router.get("/billing/revenue-by-staff", response_model=list[RevenueByStaffRow])
+async def revenue_by_staff_report(
+    date_from: date | None = None,
+    date_to: date | None = None,
+    staff_user_id: int | None = None,
+    currency: str | None = None,
+    db: AsyncSession = Depends(get_db),
+    current_user=Depends(role_guard(OPER_REPORTS)),
+):
+    return [RevenueByStaffRow(**row) for row in await build_revenue_by_staff_report(
+        db,
+        organization_id=current_user.organization_id,
+        date_from=date_from,
+        date_to=date_to,
+        staff_user_id=staff_user_id,
+        currency=currency,
+    )]
+
+
+@router.get("/billing/time-by-staff", response_model=list[TimeByStaffRow])
+async def time_by_staff_report(
+    date_from: date | None = None,
+    date_to: date | None = None,
+    staff_user_id: int | None = None,
+    currency: str | None = None,
+    db: AsyncSession = Depends(get_db),
+    current_user=Depends(role_guard(OPER_REPORTS)),
+):
+    return [TimeByStaffRow(**row) for row in await build_time_by_staff_report(
+        db,
+        organization_id=current_user.organization_id,
+        date_from=date_from,
+        date_to=date_to,
+        staff_user_id=staff_user_id,
+        currency=currency,
+    )]
 
 
 @router.get("/trust")

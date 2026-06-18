@@ -53,7 +53,9 @@ def time_entry_obj(
     end_time: datetime | None = None,
     duration_minutes: int = 90,
     billing_type: str = "professional_fee",
+    currency: str = "USD",
     hourly_rate: Decimal | None = Decimal("250.00"),
+    rate_is_manual: bool = False,
     amount: Decimal = Decimal("375.00"),
     status: str = "billable",
 ):
@@ -73,7 +75,9 @@ def time_entry_obj(
         end_time=end_time or datetime(2026, 6, 15, 10, 30, tzinfo=timezone.utc),
         duration_minutes=duration_minutes,
         billing_type=billing_type,
+        currency=currency,
         hourly_rate=hourly_rate,
+        rate_is_manual=rate_is_manual,
         amount=amount,
         status=status,
         created_at=now,
@@ -90,16 +94,20 @@ class TimeEntryDBStub:
         self.case_obj = case_obj()
         self.client_obj = client_obj()
         self.user_obj = staff_obj()
+        self.user_obj.name = "Jordan Hale"
         self.invoice_obj = None
         self.time_entry_obj = time_entry_obj(case=self.case_obj, client=self.client_obj, staff=self.user_obj)
         self.time_entry_rows = [self.time_entry_obj]
         self.total = 1
         self.linked_line_item_id = None
+        self.user_override_rate = None
+        self.role_rate = None
         self.added = []
         self.deleted = []
 
     async def scalar(self, query, *args, **kwargs):
         q = str(query)
+        params = query.compile().params
         if "count(time_entries.id)" in q.lower():
             assert "organization_id" in q
             return self.total
@@ -112,6 +120,10 @@ class TimeEntryDBStub:
             return self.client_obj
         if "FROM users" in q:
             return self.user_obj
+        if "FROM billing_rates" in q:
+            if params.get("rate_type_1") == "user_override":
+                return self.user_override_rate
+            return self.role_rate
         if "FROM invoices" in q:
             return self.invoice_obj
         if "FROM invoice_line_items" in q:
@@ -148,7 +160,9 @@ class TimeEntryDBStub:
                 end_time=obj.end_time,
                 duration_minutes=obj.duration_minutes,
                 billing_type=obj.billing_type,
+                currency=getattr(obj, "currency", "USD"),
                 hourly_rate=obj.hourly_rate,
+                rate_is_manual=getattr(obj, "rate_is_manual", False),
                 amount=obj.amount,
                 status=obj.status,
             )
@@ -326,3 +340,81 @@ def test_client_role_cannot_access_internal_time_entry_management():
         assert res.status_code == 403
     finally:
         cleanup(client)
+
+
+def test_time_entry_auto_populates_role_rate_and_amount():
+    db = TimeEntryDBStub()
+    db.role_rate = SimpleNamespace(id=41, hourly_rate=Decimal("225.00"))
+    client = build_client("lawyer", db)
+    try:
+        res = client.post("/api/v1/time-entries", json={
+            "case_id": 21,
+            "description": "Role rated work",
+            "duration_minutes": 120,
+            "billing_type": "professional_fee",
+            "currency": "USD",
+        })
+        assert res.status_code == 200
+        body = res.json()
+        assert body["hourly_rate"] == "225.00"
+        assert body["amount"] == "450.00"
+        assert body["rate_is_manual"] is False
+    finally:
+        cleanup(client)
+
+
+def test_time_entry_user_override_beats_role_rate():
+    db = TimeEntryDBStub()
+    db.role_rate = SimpleNamespace(id=41, hourly_rate=Decimal("225.00"))
+    db.user_override_rate = SimpleNamespace(id=42, hourly_rate=Decimal("300.00"))
+    client = build_client("lawyer", db)
+    try:
+        res = client.post("/api/v1/time-entries", json={
+            "case_id": 21,
+            "description": "Override rated work",
+            "duration_minutes": 60,
+            "billing_type": "professional_fee",
+            "currency": "USD",
+        })
+        assert res.status_code == 200
+        body = res.json()
+        assert body["hourly_rate"] == "300.00"
+        assert body["amount"] == "300.00"
+    finally:
+        cleanup(client)
+
+
+def test_lawyer_cannot_override_auto_rate_but_partner_can():
+    db = TimeEntryDBStub()
+    db.role_rate = SimpleNamespace(id=41, hourly_rate=Decimal("225.00"))
+    lawyer_client = build_client("lawyer", db)
+    try:
+        blocked = lawyer_client.post("/api/v1/time-entries", json={
+            "case_id": 21,
+            "description": "Blocked override",
+            "duration_minutes": 60,
+            "billing_type": "professional_fee",
+            "currency": "USD",
+            "hourly_rate": "400.00",
+        })
+        assert blocked.status_code == 403
+    finally:
+        cleanup(lawyer_client)
+
+    partner_client = build_client("partner", db)
+    try:
+        allowed = partner_client.post("/api/v1/time-entries", json={
+            "case_id": 21,
+            "description": "Allowed override",
+            "duration_minutes": 60,
+            "billing_type": "professional_fee",
+            "currency": "USD",
+            "hourly_rate": "400.00",
+            "rate_is_manual": True,
+        })
+        assert allowed.status_code == 200
+        body = allowed.json()
+        assert body["hourly_rate"] == "400.00"
+        assert body["rate_is_manual"] is True
+    finally:
+        cleanup(partner_client)

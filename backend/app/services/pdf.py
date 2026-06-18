@@ -98,7 +98,7 @@ async def generate_invoice_pdf(invoice_id: int, *, db: AsyncSession, organizatio
     inv = await db.scalar(
         select(Invoice)
         .where(Invoice.id == invoice_id, Invoice.organization_id == organization_id)
-        .options(selectinload(Invoice.line_items))
+        .options(selectinload(Invoice.line_items), selectinload(Invoice.payment_account))
     )
     if not inv:
         raise HTTPException(status_code=404, detail="Invoice not found")
@@ -185,6 +185,20 @@ async def generate_invoice_pdf(invoice_id: int, *, db: AsyncSession, organizatio
         ("ALIGN", (1, 0), (1, -1), "RIGHT"),
     ]))
     story.append(totals)
+    if getattr(inv, "payment_account", None):
+        account = inv.payment_account
+        details = [
+            f"Bank: {_safe_text(account.bank_name)}",
+            f"Account Name: {_safe_text(account.account_name)}",
+            f"Account Number: {_safe_text(account.account_number)}",
+        ]
+        if getattr(account, "swift_routing", None):
+            details.append(f"SWIFT/Routing: {_safe_text(account.swift_routing)}")
+        if getattr(account, "payment_instructions", None):
+            details.append(f"Instructions: {_safe_text(account.payment_instructions)}")
+        if getattr(account, "notes", None):
+            details.append(f"Notes: {_safe_text(account.notes)}")
+        story.extend([Spacer(1, 12), Paragraph("Payment Account", styles["ViloH2"]), Paragraph("<br/>".join(details), styles["ViloBody"])])
     if inv.notes:
         story.extend([Spacer(1, 12), Paragraph("Notes", styles["ViloH2"]), Paragraph(_safe_text(inv.notes), styles["ViloBody"])])
 

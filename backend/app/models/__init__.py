@@ -14,6 +14,8 @@ from app.models.expense import Expense
 from app.models.invoice import Invoice
 from app.models.invoice_payment import InvoicePayment
 from app.models.invoice_line_item import InvoiceLineItem
+from app.models.firm_payment_account import FirmPaymentAccount
+from app.models.billing_rate import BillingRate
 from app.models.trust_account import TrustAccount
 from app.models.trust_ledger import TrustLedger
 from app.models.trust_transaction import TrustTransaction
@@ -30,6 +32,6 @@ from app.models.audit_log import AuditLog
 
 __all__ = [
     "Organization","User","Client","ClientAssignment","Case","CaseAssignment","Task","CalendarEvent","CaseTimelineEvent",
-    "Document","DocumentVersion","Precedent","CaseNote","TimeEntry","Expense","Invoice","InvoicePayment","InvoiceLineItem",
+    "Document","DocumentVersion","Precedent","CaseNote","TimeEntry","Expense","Invoice","InvoicePayment","InvoiceLineItem","FirmPaymentAccount","BillingRate",
     "TrustAccount","TrustLedger","TrustTransaction","TrustReceipt","TrustReconciliation","OperatingAccount","OperatingTransaction","ClientIntake","Conversation","ConversationParticipant","Message","MessageCaseReference","UserInvite","Notification","AuditLog",
 ]

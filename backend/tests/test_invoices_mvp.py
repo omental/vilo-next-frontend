@@ -57,6 +57,17 @@ class InvoiceDBStub:
             balance_due=Decimal("0.00"),
             notes="Draft invoice",
             payment_instructions="Pay by bank transfer",
+            payment_account_id=901,
+            payment_account=SimpleNamespace(
+                id=901,
+                account_name="USD Operating",
+                bank_name="National Bank",
+                account_number="1234567890",
+                currency="USD",
+                swift_routing="NATBUS33",
+                notes="Primary settlement account",
+                payment_instructions="Wire to National Bank",
+            ),
             created_by=1,
             created_at=now,
             updated_at=now,
@@ -93,6 +104,8 @@ class InvoiceDBStub:
             balance_due=Decimal("0.00"),
             notes="Second invoice",
             payment_instructions=None,
+            payment_account_id=None,
+            payment_account=None,
             created_by=1,
             created_at=now,
             updated_at=now,
@@ -178,6 +191,7 @@ def test_invoice_detail_includes_safe_firm_and_client_details():
         assert body["display_status"] == "draft"
         assert body["payment_method_summary"] == "Unpaid"
         assert body["matter_title"] == "Matter 21"
+        assert body["payment_account"]["bank_name"] == "National Bank"
         assert "slug" not in body["organization"]
     finally:
         cleanup(client)

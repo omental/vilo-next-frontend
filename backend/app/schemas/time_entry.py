@@ -18,8 +18,18 @@ class TimeEntryBase(BaseModel):
     end_time: datetime | None = None
     duration_minutes: int | None = None
     billing_type: str = "professional_fee"
+    currency: str = "USD"
     hourly_rate: Decimal | None = None
+    rate_is_manual: bool | None = None
     status: str | None = None
+
+    @field_validator("currency")
+    @classmethod
+    def validate_currency(cls, value: str) -> str:
+        normalized = (value or "USD").strip().upper()
+        if normalized not in {"USD", "JMD"}:
+            raise ValueError("Unsupported currency")
+        return normalized
 
     @field_validator("billing_type")
     @classmethod
@@ -85,7 +95,9 @@ class TimeEntryResponse(BaseModel):
     end_time: datetime | None
     duration_minutes: int | None
     billing_type: str
+    currency: str
     hourly_rate: Decimal | None
+    rate_is_manual: bool
     amount: Decimal
     status: str
     created_at: datetime

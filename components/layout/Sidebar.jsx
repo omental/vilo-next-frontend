@@ -9,6 +9,7 @@ import { apiRequest } from "../../lib/api";
 import { motionEase, createHoverLift, createItemVariants } from "../motion";
 
 const billingChildren = [
+  { label: "Billing Reports", href: "/dashboard/billing" },
   { label: "Invoices", href: "/dashboard/invoices" },
   { label: "Time Entries", href: "/dashboard/time-entries" },
 ];

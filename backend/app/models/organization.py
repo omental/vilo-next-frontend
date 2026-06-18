@@ -29,6 +29,8 @@ class Organization(Base):
     invoices = relationship("Invoice", back_populates="organization", cascade="all, delete-orphan")
     invoice_payments = relationship("InvoicePayment", back_populates="organization", cascade="all, delete-orphan")
     invoice_line_items = relationship("InvoiceLineItem", back_populates="organization", cascade="all, delete-orphan")
+    firm_payment_accounts = relationship("FirmPaymentAccount", back_populates="organization", cascade="all, delete-orphan")
+    billing_rates = relationship("BillingRate", back_populates="organization", cascade="all, delete-orphan")
     trust_accounts = relationship("TrustAccount", back_populates="organization", cascade="all, delete-orphan")
     trust_ledgers = relationship("TrustLedger", back_populates="organization", cascade="all, delete-orphan")
     trust_transactions = relationship("TrustTransaction", back_populates="organization", cascade="all, delete-orphan")
