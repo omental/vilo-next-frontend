@@ -14,8 +14,12 @@ function formatDate(value) {
   return date.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
 }
 
-function formatMoney(value) {
-  return new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(Number(value || 0));
+function formatMoney(value, currency = "USD") {
+  return new Intl.NumberFormat("en-US", { style: "currency", currency }).format(Number(value || 0));
+}
+
+function paymentMethodLabel(row) {
+  return row.payment_method_summary || "Unpaid";
 }
 
 function formatContactMethod(value) {
@@ -209,7 +213,7 @@ export default function ClientDetailPage() {
   );
 
   const overdueAmount = useMemo(
-    () => invoices.filter((row) => row.status === "overdue" || (row.status === "sent" && Number(row.balance_due || 0) > 0)).reduce((sum, row) => sum + Number(row.balance_due || 0), 0),
+    () => invoices.filter((row) => (row.display_status || row.status) === "overdue").reduce((sum, row) => sum + Number(row.balance_due || 0), 0),
     [invoices],
   );
 
@@ -523,13 +527,14 @@ export default function ClientDetailPage() {
             {invoices.length ? (
               <div className="vilo-table-wrap case-table-wrap">
                 <table className="team-table">
-                  <thead><tr><th>Invoice</th><th>Status</th><th>Amount</th><th>Due</th><th>Action</th></tr></thead>
+                  <thead><tr><th>Invoice</th><th>Status</th><th>Payment</th><th>Amount</th><th>Due</th><th>Action</th></tr></thead>
                   <tbody>
                     {invoices.slice(0, 6).map((row) => (
                       <tr key={row.id}>
                         <td>{row.invoice_number}</td>
-                        <td><span className={`vilo-badge vilo-badge--${row.status}`}>{row.status}</span></td>
-                        <td>{formatMoney(row.total)}</td>
+                        <td><span className={`vilo-badge vilo-badge--${row.display_status || row.status}`}>{row.display_status || row.status}</span></td>
+                        <td>{paymentMethodLabel(row)}</td>
+                        <td>{formatMoney(row.total, row.currency || "USD")}</td>
                         <td>{formatDate(row.due_date)}</td>
                         <td><Link href={`/dashboard/invoices/${row.id}`}>View</Link></td>
                       </tr>

@@ -23,6 +23,7 @@ from app.schemas.invoice import (
     InvoiceClientSummary,
     InvoiceApplyTrustRequest,
     InvoiceCreate,
+    InvoiceLineItemCreate,
     InvoiceLineItemResponse,
     InvoicePaymentResponse,
     InvoicePaymentSummaryResponse,
@@ -39,8 +40,10 @@ from app.services.email import build_invoice_email
 from app.services.finance import (
     apply_trust_to_invoice,
     create_invoice_payment_operating_transaction,
+    derive_invoice_status,
     get_invoice_currency,
     get_matter_trust_balance,
+    summarize_invoice_payment_method,
     void_invoice_payment,
     validate_invoice_line_type,
 )
@@ -103,19 +106,23 @@ def client_ser(client: Client | None, fallback_id: int) -> InvoiceClientSummary:
 
 
 def inv_ser(i: Invoice, *, trust_balance_available: Decimal | None = None) -> InvoiceResponse:
+    display_status = derive_invoice_status(i)
     base = {
         c: getattr(i, c)
         for c in InvoiceResponse.model_fields.keys()
-        if c not in {"line_items", "organization", "client", "payments", "trust_balance_available", "can_apply_trust"}
+        if c not in {"line_items", "organization", "client", "payments", "trust_balance_available", "can_apply_trust", "display_status", "payment_method_summary", "matter_title"}
     }
     return InvoiceResponse(
         **base,
+        display_status=display_status,
+        payment_method_summary=summarize_invoice_payment_method(i),
         organization=org_ser(getattr(i, "organization", None)),
         client=client_ser(getattr(i, "client", None), i.client_id),
+        matter_title=getattr(getattr(i, "case", None), "title", None),
         line_items=[line_ser(x) for x in i.line_items],
         payments=[payment_ser(x) for x in getattr(i, "payments", [])],
         trust_balance_available=trust_balance_available,
-        can_apply_trust=bool(i.case_id and i.balance_due > 0 and i.status not in {"paid", "cancelled"}),
+        can_apply_trust=bool(i.case_id and i.balance_due > 0 and display_status not in {"paid", "cancelled"}),
     )
 
 
@@ -127,6 +134,7 @@ async def get_invoice_or_404(db: AsyncSession, org_id: int, invoice_id: int) -> 
             selectinload(Invoice.line_items),
             selectinload(Invoice.client),
             selectinload(Invoice.organization),
+            selectinload(Invoice.case),
             selectinload(Invoice.payments),
         )
     )
@@ -152,6 +160,17 @@ async def next_invoice_number(db: AsyncSession, org_id: int) -> str:
     return f"{prefix}{int(count or 0)+1:04d}"
 
 
+async def resolve_invoice_number(db: AsyncSession, org_id: int, requested: str | None, *, exclude_invoice_id: int | None = None) -> str:
+    candidate = (requested or "").strip() or await next_invoice_number(db, org_id)
+    query = select(Invoice.id).where(Invoice.organization_id == org_id, Invoice.invoice_number == candidate)
+    if exclude_invoice_id is not None:
+        query = query.where(Invoice.id != exclude_invoice_id)
+    existing = await db.scalar(query)
+    if existing is not None:
+        raise HTTPException(status_code=400, detail="Invoice number already exists")
+    return candidate
+
+
 def recalc(invoice: Invoice):
     subtotal = sum((li.amount for li in invoice.line_items), Decimal("0"))
     invoice.subtotal = subtotal
@@ -159,6 +178,36 @@ def recalc(invoice: Invoice):
     if invoice.paid_amount is None:
         invoice.paid_amount = Decimal("0")
     invoice.balance_due = max(Decimal("0"), invoice.total - invoice.paid_amount)
+
+
+async def sync_invoice_line_items(
+    db: AsyncSession,
+    *,
+    invoice: Invoice,
+    organization_id: int,
+    line_items: list[InvoiceLineItemCreate],
+    created_at: datetime,
+) -> None:
+    invoice.line_items.clear()
+    await db.flush()
+    for item in line_items:
+        quantity = Decimal(str(item.quantity))
+        unit_price = Decimal(str(item.unit_price))
+        amount = Decimal(str(item.amount)) if item.amount is not None else (quantity * unit_price)
+        invoice.line_items.append(
+            InvoiceLineItem(
+                organization_id=organization_id,
+                invoice_id=invoice.id,
+                line_type=validate_invoice_line_type(item.line_type),
+                description=item.description.strip(),
+                quantity=quantity,
+                unit_price=unit_price,
+                amount=amount.quantize(Decimal("0.01")),
+                time_entry_id=None,
+                expense_id=None,
+                created_at=created_at,
+            )
+        )
 
 
 def _round_quantity(duration_minutes: int | None) -> Decimal:
@@ -175,21 +224,30 @@ async def create_invoice(payload: InvoiceCreate, db: AsyncSession = Depends(get_
         organization_id=current_user.organization_id,
         client_id=payload.client_id,
         case_id=payload.case_id,
-        invoice_number=await next_invoice_number(db, current_user.organization_id),
+        invoice_number=await resolve_invoice_number(db, current_user.organization_id, payload.invoice_number),
+        currency=payload.currency,
         status="draft",
         issue_date=payload.issue_date,
         due_date=payload.due_date,
         subtotal=Decimal("0"),
-        tax_amount=Decimal("0"),
+        tax_amount=payload.tax_amount,
         total=Decimal("0"),
         paid_amount=Decimal("0"),
         balance_due=Decimal("0"),
         notes=payload.notes,
+        payment_instructions=payload.payment_instructions,
         created_by=current_user.id,
         created_at=now,
         updated_at=now,
     )
     db.add(inv); await db.flush()
+    await sync_invoice_line_items(
+        db,
+        invoice=inv,
+        organization_id=current_user.organization_id,
+        line_items=payload.line_items,
+        created_at=now,
+    )
     recalc(inv)
     if case:
         await create_case_timeline_event(db, organization_id=current_user.organization_id, case_id=case.id, actor_id=current_user.id, event_type="invoice_created", title=f"Invoice created: {inv.invoice_number}", metadata_json={"invoice_id": inv.id})
@@ -204,9 +262,9 @@ async def generate_from_case(case_id: int, db: AsyncSession = Depends(get_db), c
     now = datetime.now(timezone.utc)
     inv = Invoice(
         organization_id=current_user.organization_id, client_id=case.client_id, case_id=case.id,
-        invoice_number=await next_invoice_number(db, current_user.organization_id), status="draft",
+        invoice_number=await next_invoice_number(db, current_user.organization_id), currency="USD", status="draft",
         issue_date=date.today(), due_date=None, subtotal=Decimal("0"), tax_amount=Decimal("0"), total=Decimal("0"),
-        paid_amount=Decimal("0"), balance_due=Decimal("0"), notes="Generated from case", created_by=current_user.id, created_at=now, updated_at=now,
+        paid_amount=Decimal("0"), balance_due=Decimal("0"), notes="Generated from case", payment_instructions=None, created_by=current_user.id, created_at=now, updated_at=now,
     )
     db.add(inv); await db.flush()
 
@@ -240,18 +298,22 @@ async def generate_from_case(case_id: int, db: AsyncSession = Depends(get_db), c
 @router.get("", response_model=list[InvoiceResponse])
 async def list_invoices(
     client_id: int | None = Query(default=None),
+    case_id: int | None = Query(default=None),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(role_guard(ALLOWED)),
 ):
     query = select(Invoice).where(Invoice.organization_id == current_user.organization_id)
     if client_id is not None:
         query = query.where(Invoice.client_id == client_id)
+    if case_id is not None:
+        query = query.where(Invoice.case_id == case_id)
     rows = await db.scalars(
         query
         .options(
             selectinload(Invoice.line_items),
             selectinload(Invoice.client),
             selectinload(Invoice.organization),
+            selectinload(Invoice.case),
             selectinload(Invoice.payments),
         )
         .order_by(Invoice.created_at.desc())
@@ -296,7 +358,25 @@ async def update_invoice(invoice_id: int, payload: InvoiceUpdate, db: AsyncSessi
     updates = payload.model_dump(exclude_unset=True)
     st = updates.get("status")
     if st and st not in VALID_STATUS: raise HTTPException(status_code=400, detail="Invalid invoice status")
-    for k, v in updates.items(): setattr(inv, k, v)
+    next_client_id = updates["client_id"] if "client_id" in updates else inv.client_id
+    next_case_id = updates["case_id"] if "case_id" in updates else inv.case_id
+    if next_case_id is None:
+        raise HTTPException(status_code=400, detail="Invoice must be linked to a matter")
+    await validate_client_case(db, current_user.organization_id, next_client_id, next_case_id)
+    if "invoice_number" in updates:
+        inv.invoice_number = await resolve_invoice_number(db, current_user.organization_id, updates["invoice_number"], exclude_invoice_id=inv.id)
+    for k, v in updates.items():
+        if k in {"invoice_number", "line_items"}:
+            continue
+        setattr(inv, k, v)
+    if "line_items" in updates and updates["line_items"] is not None:
+        await sync_invoice_line_items(
+            db,
+            invoice=inv,
+            organization_id=current_user.organization_id,
+            line_items=payload.line_items or [],
+            created_at=datetime.now(timezone.utc),
+        )
     recalc(inv); inv.updated_at = datetime.now(timezone.utc)
     await db.commit(); inv = await get_invoice_or_404(db, current_user.organization_id, invoice_id)
     return inv_ser(inv)
@@ -305,6 +385,8 @@ async def update_invoice(invoice_id: int, payload: InvoiceUpdate, db: AsyncSessi
 @router.patch("/{invoice_id}/mark-sent", response_model=InvoiceResponse)
 async def mark_sent(invoice_id: int, request: Request, background_tasks: BackgroundTasks, db: AsyncSession = Depends(get_db), current_user: User = Depends(role_guard(ALLOWED))):
     inv = await get_invoice_or_404(db, current_user.organization_id, invoice_id)
+    if inv.case_id is None:
+        raise HTTPException(status_code=400, detail="Invoice must be linked to a matter")
     inv.status = "sent"; inv.updated_at = datetime.now(timezone.utc)
     linked_te_ids = [li.time_entry_id for li in inv.line_items if li.time_entry_id]
     linked_ex_ids = [li.expense_id for li in inv.line_items if li.expense_id]
@@ -469,7 +551,7 @@ async def payment_summary(invoice_id: int, db: AsyncSession = Depends(get_db), c
         paid_amount=inv.paid_amount,
         balance_due=inv.balance_due,
         trust_balance_available=trust_balance,
-        can_apply_trust=bool(inv.case_id and inv.balance_due > 0 and inv.status not in {"paid", "cancelled"}),
+        can_apply_trust=bool(inv.case_id and inv.balance_due > 0 and derive_invoice_status(inv) not in {"paid", "cancelled"}),
         payments=[payment_ser(x) for x in getattr(inv, "payments", [])],
     )
 

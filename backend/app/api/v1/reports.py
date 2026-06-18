@@ -5,6 +5,7 @@ from fastapi import APIRouter, Depends
 from fastapi.responses import FileResponse
 from sqlalchemy import and_, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from app.api.deps import role_guard
 from app.db.session import get_db
@@ -14,6 +15,7 @@ from app.models.case_timeline_event import CaseTimelineEvent
 from app.models.client import Client
 from app.models.expense import Expense
 from app.models.invoice import Invoice
+from app.models.invoice_payment import InvoicePayment
 from app.models.notification import Notification
 from app.models.task import Task
 from app.models.time_entry import TimeEntry
@@ -21,6 +23,7 @@ from app.models.trust_ledger import TrustLedger
 from app.models.trust_transaction import TrustTransaction
 from app.models.user import User
 from app.schemas.dashboard import DashboardWidgetsResponse
+from app.services.finance import derive_invoice_status, summarize_invoice_payment_method
 from app.services.pdf import generate_report_pdf
 
 router = APIRouter(prefix="/reports", tags=["reports"])
@@ -48,6 +51,28 @@ def _month_bounds(now: datetime) -> tuple[date, date]:
     else:
         next_start = date(now.year, now.month + 1, 1)
     return month_start, next_start
+
+
+def _invoice_row(inv: Invoice) -> dict:
+    return {
+        "id": inv.id,
+        "invoice_number": inv.invoice_number,
+        "client_id": inv.client_id,
+        "client_name": getattr(getattr(inv, "client", None), "name", None),
+        "case_id": inv.case_id,
+        "matter_title": getattr(getattr(inv, "case", None), "title", None),
+        "status": inv.status,
+        "display_status": derive_invoice_status(inv),
+        "payment_method": summarize_invoice_payment_method(inv),
+        "issue_date": inv.issue_date,
+        "due_date": inv.due_date,
+        "currency": getattr(inv, "currency", "USD"),
+        "total": d(inv.total),
+        "paid_amount": d(inv.paid_amount),
+        "balance_due": d(inv.balance_due),
+        "tax_amount": d(inv.tax_amount),
+        "created_by": inv.created_by,
+    }
 
 
 @router.get("/dashboard/widgets", response_model=DashboardWidgetsResponse)
@@ -349,6 +374,144 @@ async def financial_report(date_from: date | None = None, date_to: date | None =
         "billable_time_total": billable_time_total,
         "billable_hours_total": billable_hours_total,
         "revenue_by_month": [{"month": r.month, "amount": d(r.amount)} for r in month_rows],
+    }
+
+
+@router.get("/invoices")
+async def invoice_reports(
+    date_from: date | None = None,
+    date_to: date | None = None,
+    db: AsyncSession = Depends(get_db),
+    current_user=Depends(role_guard(OPER_REPORTS)),
+):
+    org_id = current_user.organization_id
+    filters = [Invoice.organization_id == org_id]
+    if date_from:
+        filters.append(Invoice.issue_date >= date_from)
+    if date_to:
+        filters.append(Invoice.issue_date <= date_to)
+
+    invoices = (
+        await db.scalars(
+            select(Invoice)
+            .where(and_(*filters))
+            .options(
+                selectinload(Invoice.client),
+                selectinload(Invoice.case),
+                selectinload(Invoice.payments),
+            )
+            .order_by(Invoice.issue_date.desc(), Invoice.created_at.desc())
+        )
+    ).all()
+    rows = [_invoice_row(inv) for inv in invoices]
+    paid_rows = [row for row in rows if row["display_status"] == "paid"]
+    unpaid_rows = [row for row in rows if row["balance_due"] > 0 and row["display_status"] not in {"cancelled"}]
+    overdue_rows = [row for row in rows if row["display_status"] == "overdue"]
+    outstanding_rows = [row for row in rows if row["balance_due"] > 0 and row["display_status"] not in {"cancelled"}]
+
+    revenue_filters = [InvoicePayment.organization_id == org_id, InvoicePayment.voided_at.is_(None)]
+    if date_from:
+        revenue_filters.append(InvoicePayment.paid_at >= date_from)
+    if date_to:
+        revenue_filters.append(InvoicePayment.paid_at <= date_to)
+
+    revenue_by_period_rows = (
+        await db.execute(
+            select(
+                func.date_trunc("month", InvoicePayment.paid_at).label("period"),
+                InvoicePayment.currency.label("currency"),
+                func.coalesce(func.sum(InvoicePayment.amount), 0).label("amount"),
+            )
+            .where(and_(*revenue_filters))
+            .group_by("period", InvoicePayment.currency)
+            .order_by("period")
+        )
+    ).all()
+    revenue_by_client_rows = (
+        await db.execute(
+            select(
+                Invoice.client_id,
+                Client.name.label("client_name"),
+                InvoicePayment.currency,
+                func.coalesce(func.sum(InvoicePayment.amount), 0).label("amount"),
+            )
+            .join(Invoice, Invoice.id == InvoicePayment.invoice_id)
+            .join(Client, Client.id == Invoice.client_id)
+            .where(and_(*revenue_filters))
+            .group_by(Invoice.client_id, Client.name, InvoicePayment.currency)
+            .order_by(func.coalesce(func.sum(InvoicePayment.amount), 0).desc(), Client.name.asc())
+        )
+    ).all()
+    revenue_by_matter_rows = (
+        await db.execute(
+            select(
+                Invoice.case_id,
+                Case.title.label("matter_title"),
+                InvoicePayment.currency,
+                func.coalesce(func.sum(InvoicePayment.amount), 0).label("amount"),
+            )
+            .join(Invoice, Invoice.id == InvoicePayment.invoice_id)
+            .outerjoin(Case, Case.id == Invoice.case_id)
+            .where(and_(*revenue_filters))
+            .group_by(Invoice.case_id, Case.title, InvoicePayment.currency)
+            .order_by(func.coalesce(func.sum(InvoicePayment.amount), 0).desc())
+        )
+    ).all()
+    revenue_by_staff_rows = (
+        await db.execute(
+            select(
+                Invoice.created_by.label("staff_id"),
+                User.name.label("staff_name"),
+                InvoicePayment.currency,
+                func.coalesce(func.sum(InvoicePayment.amount), 0).label("amount"),
+            )
+            .join(Invoice, Invoice.id == InvoicePayment.invoice_id)
+            .outerjoin(User, User.id == Invoice.created_by)
+            .where(and_(*revenue_filters))
+            .group_by(Invoice.created_by, User.name, InvoicePayment.currency)
+            .order_by(func.coalesce(func.sum(InvoicePayment.amount), 0).desc())
+        )
+    ).all()
+    tax_rows = (
+        await db.execute(
+            select(
+                InvoicePayment.currency,
+                func.coalesce(func.sum((Invoice.tax_amount * InvoicePayment.amount) / func.nullif(Invoice.total, 0)), 0).label("amount"),
+            )
+            .join(Invoice, Invoice.id == InvoicePayment.invoice_id)
+            .where(and_(*revenue_filters))
+            .group_by(InvoicePayment.currency)
+            .order_by(InvoicePayment.currency.asc())
+        )
+    ).all()
+
+    payment_method_totals: dict[str, Decimal] = {"Unpaid": Decimal("0.00"), "Direct": Decimal("0.00"), "Trust": Decimal("0.00"), "Mixed": Decimal("0.00"), "Voided/Reversed": Decimal("0.00")}
+    payment_method_counts: dict[str, int] = {key: 0 for key in payment_method_totals}
+    for row in rows:
+        label = row["payment_method"]
+        payment_method_counts[label] = payment_method_counts.get(label, 0) + 1
+        payment_method_totals[label] = d(payment_method_totals.get(label, Decimal("0.00")) + row["paid_amount"])
+
+    return {
+        "paid_invoices": paid_rows,
+        "unpaid_invoices": unpaid_rows,
+        "overdue_invoices": overdue_rows,
+        "outstanding_invoices": outstanding_rows,
+        "totals": {
+            "paid_count": len(paid_rows),
+            "unpaid_count": len(unpaid_rows),
+            "overdue_count": len(overdue_rows),
+            "outstanding_balance": sum((d(row["balance_due"]) for row in outstanding_rows), Decimal("0.00")),
+        },
+        "revenue_by_period": [{"period": row.period, "currency": row.currency, "amount": d(row.amount)} for row in revenue_by_period_rows],
+        "revenue_by_client": [{"client_id": row.client_id, "client_name": row.client_name, "currency": row.currency, "amount": d(row.amount)} for row in revenue_by_client_rows],
+        "revenue_by_matter": [{"case_id": row.case_id, "matter_title": row.matter_title, "currency": row.currency, "amount": d(row.amount)} for row in revenue_by_matter_rows],
+        "revenue_by_staff": [{"staff_id": row.staff_id, "staff_name": row.staff_name, "currency": row.currency, "amount": d(row.amount)} for row in revenue_by_staff_rows],
+        "gct_tax_report": [{"currency": row.currency, "amount": d(row.amount)} for row in tax_rows],
+        "payment_method_report": {
+            "counts": payment_method_counts,
+            "totals": {key: d(value) for key, value in payment_method_totals.items()},
+        },
     }
 
 

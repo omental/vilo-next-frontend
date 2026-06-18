@@ -25,8 +25,10 @@ from app.services.finance import (
     build_accounting_summary,
     create_invoice_payment_operating_transaction,
     create_trust_transaction,
+    derive_invoice_status,
     get_client_ledgers,
     get_matter_ledgers,
+    summarize_invoice_payment_method,
     validate_invoice_line_type,
     void_invoice_payment,
     void_trust_transaction,
@@ -295,13 +297,38 @@ def _transaction(
 
 
 def test_validate_invoice_line_type_rejects_trust_categories():
-    with pytest.raises(HTTPException) as exc:
-        validate_invoice_line_type("trust_deposit")
-    assert exc.value.status_code == 400
+    for forbidden in ["trust_deposit", "escrow", "property_funds", "invoice_retainer"]:
+        with pytest.raises(HTTPException) as exc:
+            validate_invoice_line_type(forbidden)
+        assert exc.value.status_code == 400
 
 
 def test_validate_invoice_line_type_maps_legacy_time_to_legal_fee():
-    assert validate_invoice_line_type("time") == "legal_fee"
+    assert validate_invoice_line_type("time") == "hourly_work"
+
+
+def test_derive_invoice_status_marks_overdue_only_when_balance_remains():
+    invoice = _invoice(total="200.00", paid_amount="0.00", status="sent")
+    invoice.due_date = date(2026, 6, 1)
+    assert derive_invoice_status(invoice) == "overdue"
+    invoice.paid_amount = Decimal("200.00")
+    invoice.balance_due = Decimal("0.00")
+    assert derive_invoice_status(invoice) == "paid"
+
+
+def test_summarize_invoice_payment_method_handles_direct_trust_mixed_and_voided():
+    invoice = _invoice(total="200.00", paid_amount="0.00", status="sent")
+    assert summarize_invoice_payment_method(invoice) == "Unpaid"
+    invoice.payments = [_payment(source="direct")]
+    assert summarize_invoice_payment_method(invoice) == "Direct"
+    invoice.payments = [_payment(source="trust", linked_trust_transaction_id=11)]
+    assert summarize_invoice_payment_method(invoice) == "Trust"
+    invoice.payments = [_payment(source="direct"), _payment(payment_id=41, source="trust", linked_trust_transaction_id=11)]
+    assert summarize_invoice_payment_method(invoice) == "Mixed"
+    voided = _payment(source="direct")
+    voided.voided_at = datetime.now(timezone.utc)
+    invoice.payments = [voided]
+    assert summarize_invoice_payment_method(invoice) == "Voided/Reversed"
 
 
 @pytest.mark.asyncio

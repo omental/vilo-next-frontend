@@ -44,8 +44,9 @@ class InvoiceDBStub:
             id=101,
             organization_id=1,
             client_id=10,
-            case_id=None,
+            case_id=21,
             invoice_number="INV-2026-0001",
+            currency="USD",
             status="draft",
             issue_date=date(2026, 6, 10),
             due_date=date(2026, 6, 20),
@@ -55,12 +56,15 @@ class InvoiceDBStub:
             paid_amount=Decimal("0.00"),
             balance_due=Decimal("0.00"),
             notes="Draft invoice",
+            payment_instructions="Pay by bank transfer",
             created_by=1,
             created_at=now,
             updated_at=now,
             organization=org,
             client=client,
+            case=SimpleNamespace(id=21, title="Matter 21"),
             line_items=[],
+            payments=[],
         )
         other_client = SimpleNamespace(
             id=11,
@@ -76,8 +80,9 @@ class InvoiceDBStub:
             id=102,
             organization_id=1,
             client_id=11,
-            case_id=None,
+            case_id=22,
             invoice_number="INV-2026-0002",
+            currency="USD",
             status="sent",
             issue_date=date(2026, 6, 11),
             due_date=date(2026, 6, 21),
@@ -87,12 +92,15 @@ class InvoiceDBStub:
             paid_amount=Decimal("0.00"),
             balance_due=Decimal("0.00"),
             notes="Second invoice",
+            payment_instructions=None,
             created_by=1,
             created_at=now,
             updated_at=now,
             organization=org,
             client=other_client,
+            case=SimpleNamespace(id=22, title="Matter 22"),
             line_items=[],
+            payments=[],
         )
         self.invoice = invoice
         self.invoices = [invoice, other_invoice]
@@ -122,8 +130,11 @@ class InvoiceDBStub:
             rows = self.invoices
             params = query.compile().params
             requested_client_id = params.get("client_id_1")
+            requested_case_id = params.get("case_id_1")
             if requested_client_id is not None:
                 rows = [row for row in rows if row.client_id == requested_client_id]
+            if requested_case_id is not None:
+                rows = [row for row in rows if row.case_id == requested_case_id]
             return _Rows(rows)
         return _Rows([])
 
@@ -164,6 +175,9 @@ def test_invoice_detail_includes_safe_firm_and_client_details():
         }
         assert body["client"]["name"] == "Jordan Miles"
         assert body["client"]["occupation"] == "Architect"
+        assert body["display_status"] == "draft"
+        assert body["payment_method_summary"] == "Unpaid"
+        assert body["matter_title"] == "Matter 21"
         assert "slug" not in body["organization"]
     finally:
         cleanup(client)
@@ -194,5 +208,18 @@ def test_list_invoices_can_filter_by_client_id():
         body = res.json()
         assert len(body) == 1
         assert body[0]["client_id"] == 10
+    finally:
+        cleanup(client)
+
+
+def test_list_invoices_can_filter_by_case_id():
+    db = InvoiceDBStub()
+    client = build_client("partner", db)
+    try:
+        res = client.get("/api/v1/invoices?case_id=22")
+        assert res.status_code == 200
+        body = res.json()
+        assert len(body) == 1
+        assert body[0]["case_id"] == 22
     finally:
         cleanup(client)

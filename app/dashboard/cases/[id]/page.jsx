@@ -40,6 +40,10 @@ function labelize(value) {
     .replace(/\b\w/g, (char) => char.toUpperCase());
 }
 
+function formatMoney(value, currency = "USD") {
+  return new Intl.NumberFormat("en-US", { style: "currency", currency }).format(Number(value || 0));
+}
+
 function EmptyState({ text }) {
   return <div className="vilo-state-block"><p className="vilo-state">{text}</p></div>;
 }
@@ -70,6 +74,7 @@ export default function CaseDetailPage() {
   const [documents, setDocuments] = useState([]);
   const [notes, setNotes] = useState([]);
   const [timeline, setTimeline] = useState([]);
+  const [invoices, setInvoices] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 
@@ -109,6 +114,8 @@ export default function CaseDetailPage() {
       setDocuments(docData || []);
       setNotes(noteData || []);
       setTeam((teamData || []).filter((u) => u.role !== "client"));
+      const invoiceData = await apiRequest(`/api/v1/invoices?case_id=${id}`).catch(() => []);
+      setInvoices(invoiceData || []);
       await loadTimeline(search, filters);
     } catch (err) {
       setError(err.message || "Failed to load case details");
@@ -414,6 +421,10 @@ export default function CaseDetailPage() {
     const sorted = [...tasks].filter((t) => t.due_date).sort((a, b) => new Date(a.due_date) - new Date(b.due_date));
     return sorted[sorted.length - 1] ? fmtDate(sorted[sorted.length - 1].due_date) : "-";
   }, [tasks]);
+  const caseInvoiceTotals = useMemo(() => ({
+    unpaid: invoices.reduce((sum, row) => sum + Number(row.balance_due || 0), 0),
+    overdue: invoices.filter((row) => (row.display_status || row.status) === "overdue").reduce((sum, row) => sum + Number(row.balance_due || 0), 0),
+  }), [invoices]);
 
   return (
     <section className="dashboard-page-stack">
@@ -440,6 +451,50 @@ export default function CaseDetailPage() {
               <span>Description:</span>
               <p>{item.description || "No description provided for this case yet."}</p>
             </div>
+          </article>
+
+          <article className="dashboard-card client-billing-card">
+            <div className="dashboard-card__header">
+              <h2>Matter Invoices</h2>
+              <div className="vilo-table-actions">
+                <Link href={`/dashboard/invoices?create=1&case_id=${id}`} className="vilo-btn vilo-btn--primary vilo-btn--xs">Create Invoice</Link>
+                <Link href="/dashboard/trust" className="vilo-btn vilo-btn--secondary vilo-btn--xs">Apply Trust Funds</Link>
+              </div>
+            </div>
+            <div className="client-billing-summary">
+              <div className="client-billing-metric">
+                <span>Invoices</span>
+                <strong>{invoices.length}</strong>
+              </div>
+              <div className="client-billing-metric">
+                <span>Unpaid</span>
+                <strong>{formatMoney(caseInvoiceTotals.unpaid)}</strong>
+              </div>
+              <div className="client-billing-metric">
+                <span>Overdue</span>
+                <strong>{formatMoney(caseInvoiceTotals.overdue)}</strong>
+              </div>
+            </div>
+            {invoices.length ? (
+              <div className="vilo-table-wrap case-table-wrap">
+                <table className="team-table">
+                  <thead><tr><th>Invoice</th><th>Status</th><th>Payment</th><th>Total</th><th>Due</th><th>Action</th></tr></thead>
+                  <tbody>
+                    {invoices.slice(0, 6).map((row) => (
+                      <tr key={row.id}>
+                        <td>{row.invoice_number}</td>
+                        <td><span className={`vilo-badge vilo-badge--${row.display_status || row.status}`}>{row.display_status || row.status}</span></td>
+                        <td>{row.payment_method_summary}</td>
+                        <td>{formatMoney(row.total, row.currency || "USD")}</td>
+                        <td>{fmtDate(row.due_date)}</td>
+                        <td><Link href={`/dashboard/invoices/${row.id}`}>View</Link></td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            ) : <EmptyState text="No invoices linked to this matter yet." />}
+            <p className="vilo-card-copy">Only trust funds held for this same client and matter can be applied to these invoices.</p>
           </article>
 
           <article className="dashboard-card case-tabs-card">

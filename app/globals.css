@@ -4650,6 +4650,33 @@ button {
   justify-content: flex-end;
 }
 
+.invoice-line-items-editor {
+  display: grid;
+  gap: 0.75rem;
+  border: 1px solid #ece8f5;
+  border-radius: 14px;
+  background: #fcfbff;
+  padding: 0.95rem 1rem;
+}
+
+.invoice-line-items-editor__header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
+.invoice-line-item-row {
+  display: grid;
+  grid-template-columns: 1.1fr 2fr repeat(3, minmax(0, 1fr)) auto;
+  gap: 0.55rem;
+}
+
+.invoice-line-item-row input,
+.invoice-line-item-row select {
+  width: 100%;
+}
+
 .invoice-hero-card {
   padding: 1rem 1.1rem;
 }
@@ -6701,8 +6728,8 @@ button {
 }
 
 .invoice-trust-banner span {
-  font-size: 1.15rem;
-  font-weight: 700;
+  font-size: 0.95rem;
+  font-weight: 600;
   color: #4c475f;
 }
 
@@ -6811,6 +6838,10 @@ button {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
+  .invoice-line-item-row {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
   .calendar-layout-grid {
     grid-template-columns: minmax(0, 1.9fr) minmax(280px, 0.95fr);
   }
@@ -6856,6 +6887,10 @@ button {
   .documents-footer {
     flex-direction: column;
     align-items: flex-start;
+  }
+
+  .invoice-line-items-editor__header {
+    flex-direction: column;
   }
 
   .documents-toolbar {

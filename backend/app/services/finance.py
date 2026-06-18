@@ -32,6 +32,30 @@ OPERATING_REVERSAL_TYPES = {"payment_reversal"}
 REVERSAL_REASON = "void_reversal"
 DIRECT_PAYMENT_SOURCE = "direct"
 TRUST_PAYMENT_SOURCE = "trust"
+VALID_INVOICE_LINE_TYPES = {
+    "legal_fee",
+    "hourly_work",
+    "flat_fee",
+    "disbursement",
+    "expense",
+    "approved_billable_expense",
+}
+PROHIBITED_INVOICE_LINE_TYPES = {
+    "trust_deposit",
+    "retainer_deposit",
+    "escrow",
+    "client_funds",
+    "property_funds",
+    "trust_income",
+    "trust_revenue",
+    "invoice_retainer",
+}
+INVOICE_LINE_TYPE_ALIASES = {
+    "time": "hourly_work",
+    "billable_time": "hourly_work",
+    "legal_service": "legal_fee",
+    "billable_expense": "approved_billable_expense",
+}
 
 
 def normalize_currency(value: str | None) -> str:
@@ -51,14 +75,43 @@ def utc_now() -> datetime:
 
 def validate_invoice_line_type(line_type: str) -> str:
     normalized = line_type.strip().lower()
-    prohibited = {"trust_deposit", "retainer_deposit", "client_funds"}
-    if normalized in prohibited:
+    normalized = INVOICE_LINE_TYPE_ALIASES.get(normalized, normalized)
+    if normalized in PROHIBITED_INVOICE_LINE_TYPES:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invoice line items cannot represent trust deposits or client funds")
-    if normalized == "time":
-        return "legal_fee"
-    if normalized not in {"legal_fee", "disbursement", "expense"}:
+    if normalized not in VALID_INVOICE_LINE_TYPES:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid invoice line item category")
     return normalized
+
+
+def derive_invoice_status(invoice: Invoice) -> str:
+    raw_status = (invoice.status or "draft").strip().lower()
+    balance_due = money(getattr(invoice, "balance_due", ZERO))
+    paid_amount = money(getattr(invoice, "paid_amount", ZERO))
+    due_date = getattr(invoice, "due_date", None)
+    today = date.today()
+    if raw_status in {"cancelled", "void", "voided"}:
+        return "cancelled"
+    if balance_due <= ZERO and (paid_amount > ZERO or raw_status == "paid"):
+        return "paid"
+    if due_date is not None and due_date < today and raw_status not in {"draft"}:
+        return "overdue"
+    if raw_status in {"sent", "partially_paid", "overdue"}:
+        return raw_status
+    return "draft"
+
+
+def summarize_invoice_payment_method(invoice: Invoice) -> str:
+    payments = list(getattr(invoice, "payments", []) or [])
+    active_sources = {payment.payment_source for payment in payments if getattr(payment, "voided_at", None) is None}
+    if "direct" in active_sources and "trust" in active_sources:
+        return "Mixed"
+    if "direct" in active_sources:
+        return "Direct"
+    if "trust" in active_sources:
+        return "Trust"
+    if payments and any(getattr(payment, "voided_at", None) is not None for payment in payments):
+        return "Voided/Reversed"
+    return "Unpaid"
 
 
 async def get_or_create_default_trust_account(db: AsyncSession, organization_id: int, currency: str) -> TrustAccount:
@@ -255,6 +308,9 @@ async def refresh_invoice_payment_totals(db: AsyncSession, invoice: Invoice) -> 
 async def get_invoice_currency(db: AsyncSession, organization_id: int, invoice: Invoice, explicit_currency: str | None = None) -> str:
     if explicit_currency is not None:
         return normalize_currency(explicit_currency)
+    invoice_currency = getattr(invoice, "currency", None)
+    if invoice_currency:
+        return normalize_currency(invoice_currency)
     client = await db.scalar(select(Client).where(Client.id == invoice.client_id, Client.organization_id == organization_id))
     return normalize_currency(getattr(client, "billing_currency", None))
 

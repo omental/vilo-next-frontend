@@ -10,7 +10,7 @@ class InvoiceLineItem(Base):
     __tablename__ = "invoice_line_items"
     __table_args__ = (
         CheckConstraint(
-            "line_type NOT IN ('trust_deposit', 'retainer_deposit', 'client_funds')",
+            "line_type NOT IN ('trust_deposit', 'retainer_deposit', 'escrow', 'client_funds', 'property_funds', 'trust_income', 'trust_revenue', 'invoice_retainer')",
             name="ck_invoice_line_items_no_trust_categories",
         ),
     )

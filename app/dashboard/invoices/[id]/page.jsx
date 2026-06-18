@@ -6,6 +6,15 @@ import { useParams, useSearchParams } from "next/navigation";
 import { getCachedUser, setCachedUser } from "../../../../lib/auth";
 import { apiDownload, apiRequest } from "../../../../lib/api";
 
+const LINE_ITEM_TYPE_OPTIONS = [
+  ["legal_fee", "Legal Fee"],
+  ["hourly_work", "Hourly Work"],
+  ["flat_fee", "Flat Fee"],
+  ["disbursement", "Disbursement"],
+  ["expense", "Expense"],
+  ["approved_billable_expense", "Approved Billable Expense"],
+];
+
 function roleCanManage(role) {
   return role === "partner" || role === "admin";
 }
@@ -71,6 +80,7 @@ function InvoiceDetailInner() {
   const [formError, setFormError] = useState("");
   const [modal, setModal] = useState("");
   const [selectedPayment, setSelectedPayment] = useState(null);
+  const [editForm, setEditForm] = useState(null);
   const [applyForm, setApplyForm] = useState({
     amount: "",
     trust_account_id: "",
@@ -136,9 +146,30 @@ function InvoiceDetailInner() {
       && invoice
       && invoice.balance_due > 0
       && Number(invoice.trust_balance_available || 0) > 0
-      && invoice.status !== "paid"
-      && invoice.status !== "cancelled",
+      && !["paid", "cancelled"].includes(invoice.display_status || invoice.status),
   );
+
+  useEffect(() => {
+    if (!invoice) return;
+    setEditForm({
+      client_id: String(invoice.client_id || ""),
+      case_id: String(invoice.case_id || ""),
+      invoice_number: invoice.invoice_number || "",
+      currency: invoice.currency || currency,
+      issue_date: invoice.issue_date || "",
+      due_date: invoice.due_date || "",
+      tax_amount: String(invoice.tax_amount || ""),
+      notes: invoice.notes || "",
+      payment_instructions: invoice.payment_instructions || "",
+      line_items: (invoice.line_items || []).map((line) => ({
+        line_type: line.line_type,
+        description: line.description,
+        quantity: String(line.quantity),
+        unit_price: String(line.unit_price),
+        amount: String(line.amount),
+      })),
+    });
+  }, [currency, invoice]);
 
   useEffect(() => {
     if (!invoice) return;
@@ -234,6 +265,45 @@ function InvoiceDetailInner() {
     }
   }
 
+  async function submitEditInvoice(event) {
+    event.preventDefault();
+    if (!editForm?.case_id) {
+      setFormError("Matter is required.");
+      return;
+    }
+    setSaving(true);
+    setFormError("");
+    try {
+      await apiRequest(`/api/v1/invoices/${id}`, {
+        method: "PATCH",
+        body: JSON.stringify({
+          client_id: Number(editForm.client_id),
+          case_id: Number(editForm.case_id),
+          invoice_number: editForm.invoice_number || null,
+          currency: editForm.currency,
+          issue_date: editForm.issue_date,
+          due_date: editForm.due_date || null,
+          tax_amount: Number(editForm.tax_amount || 0),
+          notes: editForm.notes || null,
+          payment_instructions: editForm.payment_instructions || null,
+          line_items: (editForm.line_items || []).filter((line) => line.description.trim()).map((line) => ({
+            line_type: line.line_type,
+            description: line.description.trim(),
+            quantity: Number(line.quantity || 0),
+            unit_price: Number(line.unit_price || 0),
+            amount: Number(line.amount || 0),
+          })),
+        }),
+      });
+      closeModal();
+      await load();
+    } catch (err) {
+      setFormError(err.message || "Failed to update invoice.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
   if (error && !invoice) return <EmptyState message={error} error />;
   if (loading && !invoice) return <EmptyState message="Loading invoice..." />;
   if (!invoice) return <EmptyState message="Invoice not found." error />;
@@ -247,8 +317,13 @@ function InvoiceDetailInner() {
         </div>
         <div className="invoice-page-actions">
           <button className="vilo-btn vilo-btn--ghost" type="button" onClick={() => apiDownload(`/api/v1/invoices/${id}/pdf`)}>Download PDF</button>
-          {invoice.status === "draft" ? <button className="vilo-btn vilo-btn--secondary" type="button" onClick={markSent}>Mark Sent</button> : null}
-          {canManage && invoice.balance_due > 0 ? (
+          {invoice.status === "draft" ? <button className="vilo-btn vilo-btn--secondary" type="button" onClick={markSent}>Send Invoice</button> : null}
+          {canManage ? (
+            <button className="vilo-btn vilo-btn--secondary" type="button" onClick={() => { setFormError(""); setModal("edit_invoice"); }}>
+              Edit Invoice
+            </button>
+          ) : null}
+          {canManage && invoice.balance_due > 0 && !["paid", "cancelled"].includes(invoice.display_status || invoice.status) ? (
             <button className="vilo-btn vilo-btn--secondary" type="button" onClick={() => { setFormError(""); setModal("direct_payment"); }}>
               Record Direct Payment
             </button>
@@ -278,10 +353,11 @@ function InvoiceDetailInner() {
           </div>
           <div className="invoice-party-card">
             <span className="invoice-party-label">Invoice Status</span>
-            <strong><span className={`vilo-badge vilo-badge--${invoice.status}`}>{invoice.status}</span></strong>
+            <strong><span className={`vilo-badge vilo-badge--${invoice.display_status || invoice.status}`}>{invoice.display_status || invoice.status}</span></strong>
             <span>Issue Date: {formatDate(invoice.issue_date)}</span>
             <span>Due Date: {formatDate(invoice.due_date)}</span>
-            <span>Matter: {invoice.case_id ? `#${invoice.case_id}` : "Not linked"}</span>
+            <span>Matter: {invoice.matter_title || (invoice.case_id ? `#${invoice.case_id}` : "Not linked")}</span>
+            <span>Payment Method: {invoice.payment_method_summary}</span>
           </div>
         </div>
       </article>
@@ -306,9 +382,9 @@ function InvoiceDetailInner() {
       </div>
 
       <article className="dashboard-card invoice-trust-banner">
-        <strong>Available Trust Balance</strong>
-        <span>{formatMoney(invoice.trust_balance_available || 0, currency)}</span>
-        <p>Trust funds are transferred to Operating only when applied to an earned invoice. Trust deposits themselves are not invoice items or firm revenue.</p>
+        <strong>Client Trust Balance (Matter): {formatMoney(invoice.trust_balance_available || 0, currency)}</strong>
+        <span>This balance is informational only and does not affect this invoice until Apply Trust Funds is used.</span>
+        <p>Only funds held for this same client and matter can be applied. Trust deposits themselves are not invoice items or firm revenue.</p>
       </article>
 
       <article className="dashboard-card vilo-table-card">
@@ -407,8 +483,81 @@ function InvoiceDetailInner() {
         </article>
       ) : null}
 
+      {invoice.payment_instructions ? (
+        <article className="dashboard-card vilo-detail-card">
+          <div className="dashboard-card__header"><h2>Payment Instructions</h2></div>
+          <p className="vilo-card-copy">{invoice.payment_instructions}</p>
+        </article>
+      ) : null}
+
+      {modal === "edit_invoice" && editForm ? (
+        <Modal title="Edit Invoice" copy="Billable/legal line items only. Trust deposits and client funds remain outside the invoice." onClose={closeModal}>
+          {formError ? <p className="vilo-state vilo-state--error trust-modal__error">{formError}</p> : null}
+          <form className="vilo-form-grid" onSubmit={submitEditInvoice}>
+            <div className="vilo-form-row-two">
+              <input value={editForm.invoice_number} onChange={(event) => setEditForm((current) => ({ ...current, invoice_number: event.target.value }))} placeholder="Invoice number" />
+              <select value={editForm.currency} onChange={(event) => setEditForm((current) => ({ ...current, currency: event.target.value }))}>
+                <option value="USD">USD</option>
+                <option value="JMD">JMD</option>
+              </select>
+            </div>
+            <div className="vilo-form-row-two">
+              <input type="date" value={editForm.issue_date} onChange={(event) => setEditForm((current) => ({ ...current, issue_date: event.target.value }))} required />
+              <input type="date" value={editForm.due_date} onChange={(event) => setEditForm((current) => ({ ...current, due_date: event.target.value }))} />
+            </div>
+            <div className="vilo-form-row-two">
+              <input value={editForm.case_id} onChange={(event) => setEditForm((current) => ({ ...current, case_id: event.target.value }))} placeholder="Matter ID" required />
+              <input type="number" step="0.01" min="0" value={editForm.tax_amount} onChange={(event) => setEditForm((current) => ({ ...current, tax_amount: event.target.value }))} placeholder="GCT / Tax" />
+            </div>
+            <input value={editForm.payment_instructions} onChange={(event) => setEditForm((current) => ({ ...current, payment_instructions: event.target.value }))} placeholder="Payment instructions" />
+            {(editForm.line_items || []).map((line, index) => (
+              <div className="invoice-line-item-row" key={`edit-line-${index}`}>
+                <select value={line.line_type} onChange={(event) => setEditForm((current) => {
+                  const next = [...current.line_items];
+                  next[index] = { ...next[index], line_type: event.target.value };
+                  return { ...current, line_items: next };
+                })}>
+                  {LINE_ITEM_TYPE_OPTIONS.map(([value, label]) => <option key={value} value={value}>{label}</option>)}
+                </select>
+                <input value={line.description} onChange={(event) => setEditForm((current) => {
+                  const next = [...current.line_items];
+                  next[index] = { ...next[index], description: event.target.value };
+                  return { ...current, line_items: next };
+                })} placeholder="Description" />
+                <input type="number" step="0.01" min="0.01" value={line.quantity} onChange={(event) => setEditForm((current) => {
+                  const next = [...current.line_items];
+                  next[index] = { ...next[index], quantity: event.target.value };
+                  return { ...current, line_items: next };
+                })} placeholder="Qty" />
+                <input type="number" step="0.01" min="0" value={line.unit_price} onChange={(event) => setEditForm((current) => {
+                  const next = [...current.line_items];
+                  next[index] = { ...next[index], unit_price: event.target.value };
+                  return { ...current, line_items: next };
+                })} placeholder="Unit price" />
+                <input type="number" step="0.01" min="0" value={line.amount} onChange={(event) => setEditForm((current) => {
+                  const next = [...current.line_items];
+                  next[index] = { ...next[index], amount: event.target.value };
+                  return { ...current, line_items: next };
+                })} placeholder="Amount" />
+              </div>
+            ))}
+            <button type="button" className="vilo-btn vilo-btn--secondary vilo-btn--xs" onClick={() => setEditForm((current) => ({
+              ...current,
+              line_items: [...current.line_items, { line_type: "legal_fee", description: "", quantity: "1", unit_price: "", amount: "" }],
+            }))}>
+              Add line item
+            </button>
+            <textarea placeholder="Notes" value={editForm.notes} onChange={(event) => setEditForm((current) => ({ ...current, notes: event.target.value }))} />
+            <div className="vilo-table-actions invoice-create-actions">
+              <button type="button" className="vilo-btn vilo-btn--secondary" onClick={closeModal}>Cancel</button>
+              <button type="submit" className="vilo-btn vilo-btn--primary" disabled={saving}>{saving ? "Saving..." : "Save invoice"}</button>
+            </div>
+          </form>
+        </Modal>
+      ) : null}
+
       {modal === "apply_trust" ? (
-        <Modal title="Apply Trust Funds" copy="This creates a trust-to-operating transfer linked to the invoice payment record." onClose={closeModal}>
+        <Modal title="Apply Trust Funds" copy="Only funds held for this same client and matter can be applied." onClose={closeModal}>
           {formError ? <p className="vilo-state vilo-state--error trust-modal__error">{formError}</p> : null}
           <form className="vilo-form-grid" onSubmit={submitApplyTrust}>
             <div className="invoice-action-review">

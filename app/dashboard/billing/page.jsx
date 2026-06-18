@@ -16,6 +16,7 @@ function formatMoney(value, currency = "USD") {
 export default function BillingPage() {
   const [currentUser, setCurrentUser] = useState(getCachedUser());
   const [summary, setSummary] = useState([]);
+  const [reports, setReports] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 
@@ -42,8 +43,12 @@ export default function BillingPage() {
       setLoading(true);
       setError("");
       try {
-        const response = await apiRequest("/api/v1/accounting/summary");
+        const [response, invoiceReports] = await Promise.all([
+          apiRequest("/api/v1/accounting/summary"),
+          apiRequest("/api/v1/reports/invoices"),
+        ]);
         setSummary(response.currencies || []);
+        setReports(invoiceReports);
       } catch (err) {
         setError(err.message || "Failed to load accounting summary.");
       } finally {
@@ -153,6 +158,49 @@ export default function BillingPage() {
               </div>
             </article>
           ))}
+
+          {reports ? (
+            <article className="dashboard-card billing-currency-card">
+              <div className="dashboard-card__header billing-currency-card__header">
+                <div>
+                  <h2>Invoice Reports</h2>
+                  <p>Revenue is based on non-voided invoice payments only. Trust deposits remain excluded.</p>
+                </div>
+              </div>
+              <div className="invoice-summary-grid billing-summary-grid">
+                <article className="invoice-summary-card invoice-summary-card--financial">
+                  <span>Paid Invoices</span>
+                  <strong>{reports.totals?.paid_count || 0}</strong>
+                </article>
+                <article className="invoice-summary-card invoice-summary-card--financial">
+                  <span>Unpaid Invoices</span>
+                  <strong>{reports.totals?.unpaid_count || 0}</strong>
+                </article>
+                <article className="invoice-summary-card invoice-summary-card--financial">
+                  <span>Overdue Invoices</span>
+                  <strong>{reports.totals?.overdue_count || 0}</strong>
+                </article>
+                <article className="invoice-summary-card invoice-summary-card--financial">
+                  <span>Outstanding Balance</span>
+                  <strong>{formatMoney(reports.totals?.outstanding_balance || 0, "USD")}</strong>
+                </article>
+              </div>
+              <div className="vilo-table-wrap">
+                <table className="team-table">
+                  <thead><tr><th>Payment Method</th><th>Invoice Count</th><th>Paid Total</th></tr></thead>
+                  <tbody>
+                    {Object.entries(reports.payment_method_report?.counts || {}).map(([label, count]) => (
+                      <tr key={label}>
+                        <td>{label}</td>
+                        <td>{count}</td>
+                        <td>{formatMoney(reports.payment_method_report?.totals?.[label] || 0, "USD")}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </article>
+          ) : null}
         </div>
       ) : null}
     </section>

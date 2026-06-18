@@ -1,7 +1,22 @@
 from datetime import date, datetime
 from decimal import Decimal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
+
+
+def _normalize_currency(value: str) -> str:
+    normalized = value.strip().upper()
+    if normalized not in {"USD", "JMD"}:
+        raise ValueError("Unsupported currency")
+    return normalized
+
+
+class InvoiceLineItemCreate(BaseModel):
+    line_type: str
+    description: str = Field(min_length=1)
+    quantity: Decimal = Field(gt=Decimal("0"))
+    unit_price: Decimal = Field(ge=Decimal("0"))
+    amount: Decimal | None = Field(default=None, ge=Decimal("0"))
 
 
 class InvoiceOrganizationSummary(BaseModel):
@@ -25,18 +40,41 @@ class InvoiceClientSummary(BaseModel):
 
 class InvoiceCreate(BaseModel):
     client_id: int
-    case_id: int | None = None
+    case_id: int
+    invoice_number: str | None = None
+    currency: str = "USD"
     issue_date: date
     due_date: date | None = None
+    tax_amount: Decimal = Field(default=Decimal("0.00"), ge=Decimal("0"))
     notes: str | None = None
+    payment_instructions: str | None = None
+    line_items: list[InvoiceLineItemCreate] = []
+
+    @field_validator("currency")
+    @classmethod
+    def validate_currency(cls, value: str) -> str:
+        return _normalize_currency(value)
 
 
 class InvoiceUpdate(BaseModel):
+    client_id: int | None = None
+    case_id: int | None = None
+    invoice_number: str | None = None
     status: str | None = None
+    currency: str | None = None
     issue_date: date | None = None
     due_date: date | None = None
     tax_amount: Decimal | None = None
     notes: str | None = None
+    payment_instructions: str | None = None
+    line_items: list[InvoiceLineItemCreate] | None = None
+
+    @field_validator("currency")
+    @classmethod
+    def validate_currency(cls, value: str | None) -> str | None:
+        if value is None:
+            return value
+        return _normalize_currency(value)
 
 
 class InvoiceApplyTrustRequest(BaseModel):
@@ -92,7 +130,10 @@ class InvoiceResponse(BaseModel):
     client_id: int
     case_id: int | None
     invoice_number: str
+    currency: str
     status: str
+    display_status: str
+    payment_method_summary: str
     issue_date: date
     due_date: date | None
     subtotal: Decimal
@@ -104,8 +145,10 @@ class InvoiceResponse(BaseModel):
     created_by: int
     created_at: datetime
     updated_at: datetime
+    payment_instructions: str | None
     organization: InvoiceOrganizationSummary
     client: InvoiceClientSummary
+    matter_title: str | None = None
     line_items: list[InvoiceLineItemResponse] = []
     payments: list[InvoicePaymentResponse] = []
     trust_balance_available: Decimal | None = None
