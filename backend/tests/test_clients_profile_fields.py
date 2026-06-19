@@ -175,6 +175,21 @@ def test_create_client_with_typed_fields():
         cleanup(client)
 
 
+def test_create_client_defaults_billing_currency_to_jmd():
+    db = ClientProfileDBStub()
+    client = build_client("partner", db)
+    try:
+        res = client.post("/api/v1/clients", json={
+            "name": "Default Currency Client",
+            "email": "default@example.com",
+        })
+        assert res.status_code == 200
+        body = res.json()
+        assert body["billing_currency"] == "JMD"
+    finally:
+        cleanup(client)
+
+
 def test_update_client_typed_fields_and_archive_sets_archived_at():
     db = ClientProfileDBStub()
     client = build_client("admin", db)

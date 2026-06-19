@@ -22,7 +22,7 @@ class ClientCreate(BaseModel):
     occupation: str | None = None
     preferred_contact_method: str | None = None
     date_of_birth: date | None = None
-    billing_currency: str | None = "USD"
+    billing_currency: str | None = "JMD"
     archived_at: datetime | None = None
     assigned_user_ids: list[int] = Field(default_factory=list)
 

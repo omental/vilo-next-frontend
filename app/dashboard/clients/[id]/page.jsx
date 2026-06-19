@@ -240,7 +240,7 @@ export default function ClientDetailPage() {
       filing_date: row.due_date || row.created_at,
       status: row.status || "pending",
       type: "tasks",
-      href: `/dashboard/tasks?task_id=${row.id}`,
+      href: `/dashboard/tasks/${row.id}`,
     }));
 
     const documentRows = documents.map((row) => ({
@@ -577,7 +577,7 @@ export default function ClientDetailPage() {
                         </td>
                         <td><span className={`vilo-badge vilo-badge--priority-${task.priority}`}>{labelize(task.priority)}</span></td>
                         <td>{formatDate(task.due_date)}</td>
-                        <td><Link href={`/dashboard/tasks?task_id=${task.id}`}>Open</Link></td>
+                        <td><Link href={`/dashboard/tasks/${task.id}`}>Open</Link></td>
                       </tr>
                     ))}
                   </tbody>
@@ -661,7 +661,7 @@ export default function ClientDetailPage() {
               <div className="client-overview-row"><span>Type:</span><span className="vilo-badge vilo-badge--priority-medium">{type}</span></div>
               {type === "Individual" ? <div className="client-overview-row"><span>Occupation:</span><strong>{client?.occupation || "-"}</strong></div> : null}
               <div className="client-overview-row"><span>Preferred Contact:</span><strong>{formatContactMethod(client?.preferred_contact_method)}</strong></div>
-              <div className="client-overview-row"><span>Billing Currency:</span><strong>{client?.billing_currency || "USD"}</strong></div>
+              <div className="client-overview-row"><span>Billing Currency:</span><strong>{client?.billing_currency || "JMD"}</strong></div>
               <div className="client-overview-row"><span>Date of Birth:</span><strong>{formatDate(client?.date_of_birth)}</strong></div>
               <div className="client-overview-row"><span>Email:</span><strong>{client?.email || "-"}</strong></div>
               <div className="client-overview-row"><span>Phone:</span><strong>{client?.phone || "-"}</strong></div>

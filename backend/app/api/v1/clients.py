@@ -189,7 +189,7 @@ async def create_client(
         occupation=payload.occupation,
         preferred_contact_method=payload.preferred_contact_method,
         date_of_birth=payload.date_of_birth,
-        billing_currency=payload.billing_currency or "USD",
+        billing_currency=payload.billing_currency or "JMD",
         archived_at=payload.archived_at,
         created_at=now,
         updated_at=now,

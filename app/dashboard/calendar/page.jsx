@@ -327,7 +327,7 @@ function CalendarPageContent() {
 
   function focusItem(item) {
     if (item.isTask) {
-      router.push(`/dashboard/tasks?task_id=${item.task_id || item.id}`);
+      router.push(`/dashboard/tasks/${item.task_id || item.id}`);
       return;
     }
     const params = new URLSearchParams(searchParams.toString());

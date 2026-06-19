@@ -664,7 +664,7 @@ export default function CaseDetailPage() {
                             </td>
                             <td><span className={`vilo-badge vilo-badge--priority-${t.priority}`}>{labelize(t.priority)}</span></td>
                             <td>{fmtDateTime(t.due_date)}</td>
-                            <td><Link href={`/dashboard/tasks?task_id=${t.id}`}>Open</Link></td>
+                            <td><Link href={`/dashboard/tasks/${t.id}`}>Open</Link></td>
                           </tr>
                         ))}
                       </tbody>

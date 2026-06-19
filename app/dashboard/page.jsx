@@ -22,7 +22,7 @@ function fmtShortDate(value) {
 }
 
 function taskHref(task) {
-  if (task?.id) return `/dashboard/tasks?task_id=${task.id}`;
+  if (task?.id) return `/dashboard/tasks/${task.id}`;
   if (task?.case_id) return `/dashboard/cases/${task.case_id}`;
   return "";
 }

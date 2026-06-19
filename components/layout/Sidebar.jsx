@@ -322,7 +322,7 @@ function resolveNotificationHref(item) {
   if (meta.message_id) return "/dashboard/messages";
   if (meta.document_id) return "/dashboard/documents";
   if (meta.invoice_id) return `/dashboard/invoices/${meta.invoice_id}`;
-  if (meta.task_id) return `/dashboard/tasks?task_id=${meta.task_id}`;
+  if (meta.task_id) return `/dashboard/tasks/${meta.task_id}`;
   if (meta.calendar_event_id) return `/dashboard/calendar?event_id=${meta.calendar_event_id}`;
   if (meta.case_id) return `/dashboard/cases/${meta.case_id}`;
   if (meta.client_id) return `/dashboard/clients/${meta.client_id}`;

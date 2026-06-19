@@ -30,22 +30,6 @@ function formatDateTime(value) {
   return date.toLocaleString([], { month: "short", day: "numeric", year: "numeric", hour: "numeric", minute: "2-digit" });
 }
 
-function formatDateOnly(value) {
-  if (!value) return "-";
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return value;
-  return date.toLocaleDateString([], { month: "short", day: "numeric", year: "numeric" });
-}
-
-function toDateTimeLocal(value) {
-  if (!value) return "";
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return "";
-  const offset = date.getTimezoneOffset();
-  const localDate = new Date(date.getTime() - offset * 60000);
-  return localDate.toISOString().slice(0, 16);
-}
-
 function normalizeLabel(value) {
   return String(value || "")
     .replace(/_/g, " ")
@@ -57,7 +41,20 @@ function isCompleted(task) {
 }
 
 function isOverdue(task) {
-  return Boolean(task?.is_overdue);
+  return Boolean(task?.is_overdue) && !isCompleted(task);
+}
+
+function buildTaskDetailHref(taskId, searchParams, extra = {}) {
+  const params = new URLSearchParams(searchParams.toString());
+  params.delete("task_id");
+  params.delete("create");
+  params.delete("due_date");
+  Object.entries(extra).forEach(([key, value]) => {
+    if (value === null || value === undefined || value === "") params.delete(key);
+    else params.set(key, String(value));
+  });
+  const query = params.toString();
+  return `/dashboard/tasks/${taskId}${query ? `?${query}` : ""}`;
 }
 
 export default function TasksPage() {
@@ -72,8 +69,6 @@ function TasksPageContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const titleInputRef = useRef(null);
-  const formCardRef = useRef(null);
-  const highlightedTaskRef = useRef(null);
 
   const [tasks, setTasks] = useState([]);
   const [cases, setCases] = useState([]);
@@ -86,6 +81,8 @@ function TasksPageContent() {
   const [success, setSuccess] = useState("");
   const [createOpen, setCreateOpen] = useState(searchParams.get("create") === "1");
   const [menuOpenId, setMenuOpenId] = useState(null);
+  const [statusMenuId, setStatusMenuId] = useState(null);
+  const [statusSavingId, setStatusSavingId] = useState(null);
 
   const requestedClientId = Number(searchParams.get("client_id") || 0);
   const requestedCaseId = Number(searchParams.get("case_id") || 0);
@@ -118,33 +115,24 @@ function TasksPageContent() {
     load();
   }, []);
 
-  const casesById = useMemo(
-    () => new Map(cases.map((row) => [Number(row.id), row])),
-    [cases],
-  );
+  const casesById = useMemo(() => new Map(cases.map((row) => [Number(row.id), row])), [cases]);
+  const clientsById = useMemo(() => new Map(clients.map((row) => [Number(row.id), row])), [clients]);
 
-  const clientsById = useMemo(
-    () => new Map(clients.map((row) => [Number(row.id), row])),
-    [clients],
-  );
+  const requestedClient = requestedClientId ? clientsById.get(requestedClientId) : null;
+  const requestedCase = requestedCaseId ? casesById.get(requestedCaseId) : null;
 
-  const teamById = useMemo(
-    () => new Map(team.map((row) => [Number(row.id), row])),
-    [team],
-  );
-
-  const selectedTask = useMemo(
-    () => tasks.find((task) => Number(task.id) === requestedTaskId) || null,
-    [requestedTaskId, tasks],
-  );
+  useEffect(() => {
+    if (!requestedTaskId) return;
+    router.replace(buildTaskDetailHref(requestedTaskId, searchParams));
+  }, [requestedTaskId, router, searchParams]);
 
   useEffect(() => {
     const shouldOpen = searchParams.get("create") === "1";
     setCreateOpen(shouldOpen);
     if (!shouldOpen) return;
 
-    const requestedCase = requestedCaseId ? casesById.get(requestedCaseId) : null;
-    const derivedClientId = requestedCase ? Number(requestedCase.client_id || 0) : requestedClientId;
+    const linkedCase = requestedCaseId ? casesById.get(requestedCaseId) : null;
+    const derivedClientId = linkedCase ? Number(linkedCase.client_id || 0) : requestedClientId;
 
     setForm((current) => ({
       ...current,
@@ -152,13 +140,39 @@ function TasksPageContent() {
       case_id: requestedCaseId ? String(requestedCaseId) : current.case_id,
       due_date: requestedDueDate && !current.due_date ? `${requestedDueDate}T09:00` : current.due_date,
     }));
-
-    formCardRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
-    titleInputRef.current?.focus();
   }, [casesById, requestedCaseId, requestedClientId, requestedDueDate, searchParams]);
 
-  const selectedClientId = Number(form.client_id || 0);
+  useEffect(() => {
+    if (!createOpen) return;
+    titleInputRef.current?.focus();
+  }, [createOpen]);
 
+  useEffect(() => {
+    if (!menuOpenId && !statusMenuId) return undefined;
+
+    function handlePointerDown(event) {
+      const target = event.target;
+      if (target instanceof Element && target.closest(".task-menu-anchor, .task-status-anchor")) return;
+      setMenuOpenId(null);
+      setStatusMenuId(null);
+    }
+
+    function handleEscape(event) {
+      if (event.key === "Escape") {
+        setMenuOpenId(null);
+        setStatusMenuId(null);
+      }
+    }
+
+    document.addEventListener("mousedown", handlePointerDown);
+    document.addEventListener("keydown", handleEscape);
+    return () => {
+      document.removeEventListener("mousedown", handlePointerDown);
+      document.removeEventListener("keydown", handleEscape);
+    };
+  }, [menuOpenId, statusMenuId]);
+
+  const selectedClientId = Number(form.client_id || 0);
   const availableCases = useMemo(() => {
     if (!selectedClientId) return cases;
     return cases.filter((row) => Number(row.client_id) === selectedClientId);
@@ -190,17 +204,8 @@ function TasksPageContent() {
       });
     }
 
-    if (requestedTaskId && !nextTasks.some((task) => Number(task.id) === requestedTaskId) && selectedTask) {
-      nextTasks = [selectedTask, ...nextTasks];
-    }
-
     return nextTasks;
-  }, [requestedFilter, requestedTaskId, selectedTask, tasks]);
-
-  useEffect(() => {
-    if (!requestedTaskId || !filteredTasks.some((task) => Number(task.id) === requestedTaskId)) return;
-    highlightedTaskRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
-  }, [filteredTasks, requestedTaskId]);
+  }, [requestedFilter, tasks]);
 
   function updateQuery(nextParams) {
     const params = new URLSearchParams(searchParams.toString());
@@ -219,11 +224,7 @@ function TasksPageContent() {
   function handleCloseCreate() {
     setCreateOpen(false);
     setForm(initialForm);
-    updateQuery({ create: null, client_id: requestedTaskId ? null : searchParams.get("client_id"), case_id: null, due_date: null });
-  }
-
-  function focusTask(taskId) {
-    updateQuery({ task_id: taskId });
+    updateQuery({ create: null, case_id: requestedTaskId ? null : searchParams.get("case_id"), due_date: null });
   }
 
   async function createTask(event) {
@@ -240,7 +241,7 @@ function TasksPageContent() {
           description: form.description || null,
           client_id: form.client_id ? Number(form.client_id) : null,
           case_id: form.case_id ? Number(form.case_id) : null,
-          assigned_user_id: form.assigned_to ? Number(form.assigned_to) : null,
+          assigned_to: form.assigned_to ? Number(form.assigned_to) : null,
           task_type: form.task_type,
           status: form.status,
           priority: form.priority,
@@ -252,8 +253,8 @@ function TasksPageContent() {
 
       setSuccess("Task created successfully.");
       setForm(initialForm);
-      updateQuery({ create: null, task_id: null });
       setCreateOpen(false);
+      updateQuery({ create: null });
       await load();
     } catch (err) {
       setError(err.message || "Unable to create task.");
@@ -262,23 +263,59 @@ function TasksPageContent() {
     }
   }
 
+  async function updateTaskStatus(taskId, status) {
+    setStatusSavingId(taskId);
+    setError("");
+    try {
+      const updated = await apiRequest(`/api/v1/tasks/${taskId}`, {
+        method: "PATCH",
+        body: JSON.stringify({ status }),
+      });
+      setTasks((current) => current.map((task) => (Number(task.id) === Number(taskId) ? updated : task)));
+      setStatusMenuId(null);
+      setMenuOpenId(null);
+    } catch (err) {
+      setError(err.message || "Unable to update task status.");
+    } finally {
+      setStatusSavingId(null);
+    }
+  }
+
   async function completeTask(taskId) {
     setError("");
-    await apiRequest(`/api/v1/tasks/${taskId}/complete`, { method: "POST" });
-    setMenuOpenId(null);
-    await load();
+    try {
+      const updated = await apiRequest(`/api/v1/tasks/${taskId}/complete`, { method: "POST" });
+      setTasks((current) => current.map((task) => (Number(task.id) === Number(taskId) ? updated : task)));
+      setMenuOpenId(null);
+      setStatusMenuId(null);
+    } catch (err) {
+      setError(err.message || "Unable to complete task.");
+    }
   }
 
   async function archiveTask(taskId) {
     setError("");
-    await apiRequest(`/api/v1/tasks/${taskId}/archive`, { method: "POST" });
-    setMenuOpenId(null);
-    if (requestedTaskId === Number(taskId)) updateQuery({ task_id: null });
-    await load();
+    try {
+      await apiRequest(`/api/v1/tasks/${taskId}/archive`, { method: "POST" });
+      setMenuOpenId(null);
+      setStatusMenuId(null);
+      setTasks((current) => current.filter((task) => Number(task.id) !== Number(taskId)));
+    } catch (err) {
+      setError(err.message || "Unable to archive task.");
+    }
   }
 
-  const requestedClient = requestedClientId ? clientsById.get(requestedClientId) : null;
-  const requestedCase = requestedCaseId ? casesById.get(requestedCaseId) : null;
+  async function deleteTask(taskId) {
+    setError("");
+    try {
+      await apiRequest(`/api/v1/tasks/${taskId}`, { method: "DELETE" });
+      setMenuOpenId(null);
+      setStatusMenuId(null);
+      setTasks((current) => current.filter((task) => Number(task.id) !== Number(taskId)));
+    } catch (err) {
+      setError(err.message || "Unable to delete task.");
+    }
+  }
 
   return (
     <section className="dashboard-page-stack">
@@ -295,257 +332,263 @@ function TasksPageContent() {
       {success ? <div className="vilo-state-block"><p className="vilo-state">{success}</p></div> : null}
       {error ? <div className="vilo-state-block"><p className="vilo-state vilo-state--error">{error}</p></div> : null}
 
-      <div className="tasks-page-grid">
-        <div className="tasks-page-main">
-          <article ref={formCardRef} className="dashboard-card vilo-form-card vilo-collapsible-card">
-            <div className="dashboard-card__header dashboard-card__header--action">
-              <div>
-                <h2>Create Task</h2>
-                <p className="vilo-card-copy">
-                  {requestedCase ? `Case context: ${requestedCase.title}` : requestedClient ? `Client context: ${requestedClient.name}` : "Start with a title, assignee, status, priority, and due date."}
-                </p>
-              </div>
-              <button
-                type="button"
-                className={createOpen ? "vilo-btn vilo-btn--secondary vilo-btn--xs" : "vilo-btn vilo-btn--primary vilo-btn--xs"}
-                aria-expanded={createOpen}
-                onClick={() => {
-                  if (createOpen) handleCloseCreate();
-                  else handleOpenCreate();
-                }}
-              >
-                {createOpen ? "Hide Form" : "Open Form"}
-              </button>
-            </div>
-
-            {createOpen ? (
-              <form className="vilo-form-grid vilo-collapsible-card__body" onSubmit={createTask}>
-                <input
-                  ref={titleInputRef}
-                  placeholder="Task title"
-                  value={form.title}
-                  onChange={(event) => setForm((current) => ({ ...current, title: event.target.value }))}
-                  required
-                />
-                <textarea
-                  placeholder="Description"
-                  value={form.description}
-                  onChange={(event) => setForm((current) => ({ ...current, description: event.target.value }))}
-                />
-
-                <div className="vilo-form-row-two">
-                  <select
-                    value={form.client_id}
-                    onChange={(event) => setForm((current) => ({ ...current, client_id: event.target.value, case_id: "" }))}
-                  >
-                    <option value="">Select client</option>
-                    {clients.map((client) => <option key={client.id} value={client.id}>{client.name}</option>)}
-                  </select>
-                  <select
-                    value={form.case_id}
-                    onChange={(event) => setForm((current) => ({ ...current, case_id: event.target.value }))}
-                  >
-                    <option value="">No linked case</option>
-                    {availableCases.map((caseRow) => <option key={caseRow.id} value={caseRow.id}>{caseRow.title}</option>)}
-                  </select>
-                </div>
-
-                <div className="vilo-form-row-two">
-                  <select
-                    value={form.assigned_to}
-                    onChange={(event) => setForm((current) => ({ ...current, assigned_to: event.target.value }))}
-                    required
-                  >
-                    <option value="">Assigned user</option>
-                    {team.map((user) => <option key={user.id} value={user.id}>{user.name} ({user.role})</option>)}
-                  </select>
-                  <select
-                    value={form.task_type}
-                    onChange={(event) => setForm((current) => ({ ...current, task_type: event.target.value }))}
-                  >
-                    {TASK_TYPE_OPTIONS.map((option) => <option key={option} value={option}>{normalizeLabel(option)}</option>)}
-                  </select>
-                </div>
-
-                <div className="vilo-form-row-two">
-                  <select
-                    value={form.status}
-                    onChange={(event) => setForm((current) => ({ ...current, status: event.target.value }))}
-                  >
-                    {STATUS_OPTIONS.map((option) => <option key={option} value={option}>{normalizeLabel(option)}</option>)}
-                  </select>
-                  <select
-                    value={form.priority}
-                    onChange={(event) => setForm((current) => ({ ...current, priority: event.target.value }))}
-                  >
-                    {PRIORITY_OPTIONS.map((option) => <option key={option} value={option}>{normalizeLabel(option)}</option>)}
-                  </select>
-                </div>
-
-                <div className="vilo-form-row-two">
-                  <input
-                    type="datetime-local"
-                    value={form.due_date}
-                    onChange={(event) => setForm((current) => ({ ...current, due_date: event.target.value }))}
-                    required
-                  />
-                  <input
-                    type="datetime-local"
-                    value={form.reminder_at}
-                    onChange={(event) => setForm((current) => ({ ...current, reminder_at: event.target.value }))}
-                  />
-                </div>
-
-                <textarea
-                  placeholder="Internal notes"
-                  value={form.notes}
-                  onChange={(event) => setForm((current) => ({ ...current, notes: event.target.value }))}
-                />
-
-                <div className="vilo-table-actions">
-                  <button type="button" className="vilo-btn vilo-btn--secondary" onClick={handleCloseCreate}>Cancel</button>
-                  <button type="submit" className="vilo-btn vilo-btn--primary" disabled={submitting}>
-                    {submitting ? "Creating..." : "Create Task"}
-                  </button>
-                </div>
-              </form>
-            ) : null}
-          </article>
-
-          <article className="dashboard-card vilo-table-card">
-            <div className="dashboard-card__header"><h2>{requestedFilter === "due_today" ? "Tasks Due Today" : requestedFilter === "overdue" ? "Overdue Tasks" : "Task List"}</h2></div>
-            {loading ? <p className="vilo-state">Loading tasks...</p> : null}
-            {!loading && !filteredTasks.length ? <p className="vilo-state">No tasks matched this view.</p> : null}
-            {!loading && filteredTasks.length ? (
-              <div className={`vilo-table-wrap case-table-wrap${menuOpenId ? " case-table-wrap--menu-visible" : ""}`}>
-                <table className="team-table">
-                  <thead>
-                    <tr><th>Title</th><th>Context</th><th>Status</th><th>Priority</th><th>Due</th><th>Action</th></tr>
-                  </thead>
-                  <tbody>
-                    {filteredTasks.map((task) => {
-                      const linkedCase = task.case_id ? casesById.get(Number(task.case_id)) : null;
-                      const linkedClient = task.client_id ? clientsById.get(Number(task.client_id)) : null;
-                      const isSelected = Number(task.id) === requestedTaskId;
-                      return (
-                        <tr
-                          key={task.id}
-                          ref={isSelected ? highlightedTaskRef : null}
-                          className={`tasks-table-row${isSelected ? " team-table__row-highlight" : ""}${isCompleted(task) ? " is-completed" : ""}${isOverdue(task) ? " is-overdue" : ""}`}
-                          onClick={() => focusTask(task.id)}
-                        >
-                          <td>
-                            <div className="tasks-table-title">
-                              <strong>{task.title}</strong>
-                              <span>{normalizeLabel(task.task_type || "general")}</span>
-                            </div>
-                          </td>
-                          <td>
-                            <div className="tasks-table-context">
-                              <span>{linkedClient?.name || "No client linked"}</span>
-                              <small>{linkedCase ? linkedCase.title : "No case linked"}</small>
-                            </div>
-                          </td>
-                          <td>
-                            <div className="tasks-status-stack">
-                              <span className={`vilo-badge vilo-badge--${task.status}`}>{normalizeLabel(task.status)}</span>
-                              {task.is_overdue ? <span className="vilo-badge vilo-badge--overdue">Overdue</span> : null}
-                            </div>
-                          </td>
-                          <td><span className={`vilo-badge vilo-badge--priority-${task.priority}`}>{normalizeLabel(task.priority)}</span></td>
-                          <td>{formatDateTime(task.due_date)}</td>
-                          <td onClick={(event) => event.stopPropagation()}>
-                            <div className="vilo-table-actions case-row-actions">
-                              <button
-                                type="button"
-                                className="vilo-btn vilo-btn--ghost vilo-btn--xs task-action-trigger"
-                                aria-expanded={menuOpenId === task.id}
-                                onClick={() => setMenuOpenId((openId) => (openId === task.id ? null : task.id))}
-                              >
-                                Actions
-                              </button>
-                              {menuOpenId === task.id ? (
-                                <div className="case-actions-menu task-actions-menu">
-                                  <button type="button" onClick={() => focusTask(task.id)}>View details</button>
-                                  {task.case_id ? <Link href={`/dashboard/cases/${task.case_id}`}>View case</Link> : null}
-                                  {task.client_id ? <Link href={`/dashboard/clients/${task.client_id}`}>View client</Link> : null}
-                                  {!isCompleted(task) ? <button type="button" onClick={() => completeTask(task.id)}>Complete task</button> : null}
-                                  <button type="button" onClick={() => archiveTask(task.id)}>Archive task</button>
-                                </div>
-                              ) : null}
-                            </div>
-                          </td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
-              </div>
-            ) : null}
-          </article>
+      <article className="dashboard-card vilo-table-card tasks-list-card">
+        <div className="dashboard-card__header dashboard-card__header--action">
+          <div>
+            <h2>{requestedFilter === "due_today" ? "Tasks Due Today" : requestedFilter === "overdue" ? "Overdue Tasks" : "Task List"}</h2>
+            <p className="vilo-card-copy">
+              {requestedCase ? `Case context: ${requestedCase.title}` : requestedClient ? `Client context: ${requestedClient.name}` : "Open any task to review details, update status, or edit the record."}
+            </p>
+          </div>
+          <div className="tasks-table-head-actions">
+            {requestedClient ? <span className="vilo-badge vilo-badge--draft">{requestedClient.name}</span> : null}
+            {requestedCase ? <span className="vilo-badge vilo-badge--active">{requestedCase.title}</span> : null}
+          </div>
         </div>
 
-        <aside className="tasks-page-side">
-          <article className="dashboard-card">
-            <div className="dashboard-card__header"><h2>Task Detail</h2></div>
-            {selectedTask ? (
-              <div className={`task-detail-card${isCompleted(selectedTask) ? " is-completed" : ""}${isOverdue(selectedTask) ? " is-overdue" : ""}`}>
-                <div className="task-detail-card__header">
-                  <div>
-                    <strong>{selectedTask.title}</strong>
-                    <p>{selectedTask.description || "No description provided."}</p>
-                  </div>
-                  <div className="task-detail-card__badges">
-                    <span className={`vilo-badge vilo-badge--${selectedTask.status}`}>{normalizeLabel(selectedTask.status)}</span>
-                    <span className={`vilo-badge vilo-badge--priority-${selectedTask.priority}`}>{normalizeLabel(selectedTask.priority)}</span>
-                    {selectedTask.is_overdue ? <span className="vilo-badge vilo-badge--overdue">Overdue</span> : null}
-                  </div>
-                </div>
+        {loading ? <p className="vilo-state">Loading tasks...</p> : null}
+        {!loading && !filteredTasks.length ? <p className="vilo-state">No tasks matched this view.</p> : null}
+        {!loading && filteredTasks.length ? (
+          <div className={`vilo-table-wrap case-table-wrap tasks-table-wrap${menuOpenId || statusMenuId ? " case-table-wrap--menu-visible" : ""}`}>
+            <table className="team-table tasks-table">
+              <thead>
+                <tr>
+                  <th>Title</th>
+                  <th>Client</th>
+                  <th>Status</th>
+                  <th>Priority</th>
+                  <th>Due</th>
+                  <th className="tasks-table__actions-col">Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {filteredTasks.map((task) => {
+                  const linkedCase = task.case_id ? casesById.get(Number(task.case_id)) : null;
+                  const linkedClient = task.client_id ? clientsById.get(Number(task.client_id)) : null;
+                  const detailHref = buildTaskDetailHref(task.id, searchParams);
+                  const editHref = buildTaskDetailHref(task.id, searchParams, { edit: 1 });
+                  return (
+                    <tr
+                      key={task.id}
+                      className={`tasks-table-row${isCompleted(task) ? " is-completed" : ""}${isOverdue(task) ? " is-overdue" : ""}`}
+                      onClick={() => router.push(detailHref)}
+                    >
+                      <td>
+                        <div className="tasks-table-title">
+                          <strong>{task.title}</strong>
+                          <span>{normalizeLabel(task.task_type || "general")}</span>
+                        </div>
+                      </td>
+                      <td>
+                        <div className="tasks-table-context">
+                          <span>{linkedClient?.name || "No client linked"}</span>
+                        </div>
+                      </td>
+                      <td className="task-status-cell" onClick={(event) => event.stopPropagation()}>
+                        <div className="tasks-status-stack task-status-anchor">
+                          <button
+                            type="button"
+                            className={`vilo-badge vilo-badge--${task.status} task-status-trigger`}
+                            aria-expanded={statusMenuId === task.id}
+                            onClick={() => {
+                              setMenuOpenId(null);
+                              setStatusMenuId((openId) => (openId === task.id ? null : task.id));
+                            }}
+                          >
+                            {statusSavingId === task.id ? "Saving..." : normalizeLabel(task.status)}
+                          </button>
+                          {task.is_overdue ? <span className="vilo-badge vilo-badge--overdue">Overdue</span> : null}
+                          {statusMenuId === task.id ? (
+                            <div className="case-actions-menu task-status-menu">
+                              {STATUS_OPTIONS.map((option) => (
+                                <button key={option} type="button" onClick={() => updateTaskStatus(task.id, option)}>
+                                  {normalizeLabel(option)}
+                                </button>
+                              ))}
+                            </div>
+                          ) : null}
+                        </div>
+                      </td>
+                      <td><span className={`vilo-badge vilo-badge--priority-${task.priority}`}>{normalizeLabel(task.priority)}</span></td>
+                      <td>
+                        <div className="tasks-table-due">
+                          <span>{formatDateTime(task.due_date)}</span>
+                          {linkedCase ? <small>{linkedCase.title}</small> : null}
+                        </div>
+                      </td>
+                      <td className="tasks-actions-cell" onClick={(event) => event.stopPropagation()}>
+                        <div className="vilo-table-actions case-row-actions task-menu-anchor">
+                          <button
+                            type="button"
+                            className="vilo-btn vilo-btn--ghost vilo-btn--xs task-action-trigger task-action-trigger--icon"
+                            aria-label={`Task actions for ${task.title}`}
+                            aria-expanded={menuOpenId === task.id}
+                            onClick={() => {
+                              setStatusMenuId(null);
+                              setMenuOpenId((openId) => (openId === task.id ? null : task.id));
+                            }}
+                          >
+                            <span aria-hidden="true">⋯</span>
+                          </button>
+                          {menuOpenId === task.id ? (
+                            <div className="case-actions-menu task-actions-menu">
+                              <button type="button" onClick={() => router.push(detailHref)}>View Details</button>
+                              {task.case_id ? <Link href={`/dashboard/cases/${task.case_id}`}>View Case</Link> : <button type="button" disabled>View Case</button>}
+                              <button type="button" onClick={() => router.push(editHref)}>Edit Task</button>
+                              {!isCompleted(task) ? <button type="button" onClick={() => completeTask(task.id)}>Mark as Complete</button> : null}
+                              <button type="button" onClick={() => archiveTask(task.id)}>Archive Task</button>
+                              <button type="button" className="is-danger" onClick={() => deleteTask(task.id)}>Delete Task</button>
+                            </div>
+                          ) : null}
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        ) : null}
+      </article>
 
-                <div className="task-detail-grid">
-                  <div><span>Task type</span><strong>{normalizeLabel(selectedTask.task_type || "general")}</strong></div>
-                  <div><span>Assigned user</span><strong>{teamById.get(Number(selectedTask.assigned_user_id || selectedTask.assigned_to || 0))?.name || "Unassigned"}</strong></div>
-                  <div><span>Due date</span><strong>{formatDateTime(selectedTask.due_date)}</strong></div>
-                  <div><span>Reminder</span><strong>{formatDateTime(selectedTask.reminder_at)}</strong></div>
-                  <div><span>Client</span><strong>{clientsById.get(Number(selectedTask.client_id || 0))?.name || "No client linked"}</strong></div>
-                  <div><span>Case</span><strong>{casesById.get(Number(selectedTask.case_id || 0))?.title || "No case linked"}</strong></div>
-                </div>
-
-                <div className="task-detail-notes">
-                  <span>Notes</span>
-                  <p>{selectedTask.notes || "No internal notes."}</p>
-                </div>
-
-                <div className="vilo-table-actions">
-                  {selectedTask.case_id ? <Link className="vilo-btn vilo-btn--secondary vilo-btn--xs" href={`/dashboard/cases/${selectedTask.case_id}`}>Open Case</Link> : null}
-                  {selectedTask.client_id ? <Link className="vilo-btn vilo-btn--secondary vilo-btn--xs" href={`/dashboard/clients/${selectedTask.client_id}`}>Open Client</Link> : null}
-                  {!isCompleted(selectedTask) ? <button type="button" className="vilo-btn vilo-btn--primary vilo-btn--xs" onClick={() => completeTask(selectedTask.id)}>Mark Complete</button> : null}
-                </div>
-              </div>
-            ) : (
-              <p className="vilo-card-copy">Select a task to view its full details, notes, due date, and related case or client.</p>
-            )}
-          </article>
-
-          <article className="dashboard-card">
-            <div className="dashboard-card__header"><h2>Current Context</h2></div>
-            <div className="task-context-stack">
-              <div className="task-context-row">
-                <span>Client route context</span>
-                <strong>{requestedClient?.name || "None"}</strong>
-              </div>
-              <div className="task-context-row">
-                <span>Case route context</span>
-                <strong>{requestedCase?.title || "None"}</strong>
-              </div>
-              <div className="task-context-row">
-                <span>Prefilled due date</span>
-                <strong>{requestedDueDate ? formatDateOnly(requestedDueDate) : "None"}</strong>
-              </div>
-            </div>
-          </article>
-        </aside>
-      </div>
+      {createOpen ? (
+        <TaskEditorModal
+          title="Create Task"
+          submitLabel={submitting ? "Creating..." : "Create Task"}
+          submitting={submitting}
+          form={form}
+          setForm={setForm}
+          clients={clients}
+          availableCases={availableCases}
+          team={team}
+          error={error}
+          onClose={handleCloseCreate}
+          onSubmit={createTask}
+          titleInputRef={titleInputRef}
+        />
+      ) : null}
     </section>
+  );
+}
+
+function TaskEditorModal({
+  title,
+  submitLabel,
+  submitting,
+  form,
+  setForm,
+  clients,
+  availableCases,
+  team,
+  error,
+  onClose,
+  onSubmit,
+  titleInputRef,
+}) {
+  return (
+    <div className="vilo-modal-overlay" onClick={onClose}>
+      <div className="vilo-modal task-editor-modal" onClick={(event) => event.stopPropagation()}>
+        <div className="vilo-modal__header">
+          <div>
+            <h3>{title}</h3>
+            <p className="precedents-modal__copy">Capture the task owner, links, due date, and internal notes in one place.</p>
+          </div>
+          <button type="button" className="vilo-btn vilo-btn--ghost vilo-btn--xs" onClick={onClose}>Close</button>
+        </div>
+
+        <form className="vilo-modal__body task-editor-modal__body" onSubmit={onSubmit}>
+          <div className="vilo-form-grid">
+            <input
+              ref={titleInputRef}
+              placeholder="Task title"
+              value={form.title}
+              onChange={(event) => setForm((current) => ({ ...current, title: event.target.value }))}
+              required
+            />
+            <textarea
+              placeholder="Description"
+              value={form.description}
+              onChange={(event) => setForm((current) => ({ ...current, description: event.target.value }))}
+            />
+
+            <div className="vilo-form-row-two">
+              <select
+                value={form.client_id}
+                onChange={(event) => setForm((current) => ({ ...current, client_id: event.target.value, case_id: "" }))}
+              >
+                <option value="">Select client</option>
+                {clients.map((client) => <option key={client.id} value={client.id}>{client.name}</option>)}
+              </select>
+              <select
+                value={form.case_id}
+                onChange={(event) => setForm((current) => ({ ...current, case_id: event.target.value }))}
+              >
+                <option value="">No linked case</option>
+                {availableCases.map((caseRow) => <option key={caseRow.id} value={caseRow.id}>{caseRow.title}</option>)}
+              </select>
+            </div>
+
+            <div className="vilo-form-row-two">
+              <select
+                value={form.assigned_to}
+                onChange={(event) => setForm((current) => ({ ...current, assigned_to: event.target.value }))}
+                required
+              >
+                <option value="">Assigned user</option>
+                {team.map((user) => <option key={user.id} value={user.id}>{user.name} ({user.role})</option>)}
+              </select>
+              <select
+                value={form.task_type}
+                onChange={(event) => setForm((current) => ({ ...current, task_type: event.target.value }))}
+              >
+                {TASK_TYPE_OPTIONS.map((option) => <option key={option} value={option}>{normalizeLabel(option)}</option>)}
+              </select>
+            </div>
+
+            <div className="vilo-form-row-two">
+              <select
+                value={form.status}
+                onChange={(event) => setForm((current) => ({ ...current, status: event.target.value }))}
+              >
+                {STATUS_OPTIONS.map((option) => <option key={option} value={option}>{normalizeLabel(option)}</option>)}
+              </select>
+              <select
+                value={form.priority}
+                onChange={(event) => setForm((current) => ({ ...current, priority: event.target.value }))}
+              >
+                {PRIORITY_OPTIONS.map((option) => <option key={option} value={option}>{normalizeLabel(option)}</option>)}
+              </select>
+            </div>
+
+            <div className="vilo-form-row-two">
+              <input
+                type="datetime-local"
+                value={form.due_date}
+                onChange={(event) => setForm((current) => ({ ...current, due_date: event.target.value }))}
+                required
+              />
+              <input
+                type="datetime-local"
+                value={form.reminder_at}
+                onChange={(event) => setForm((current) => ({ ...current, reminder_at: event.target.value }))}
+              />
+            </div>
+
+            <textarea
+              placeholder="Internal notes"
+              value={form.notes}
+              onChange={(event) => setForm((current) => ({ ...current, notes: event.target.value }))}
+            />
+          </div>
+
+          {error ? <p className="vilo-state vilo-state--error">{error}</p> : null}
+
+          <div className="vilo-table-actions">
+            <button type="button" className="vilo-btn vilo-btn--secondary" onClick={onClose}>Cancel</button>
+            <button type="submit" className="vilo-btn vilo-btn--primary" disabled={submitting}>{submitLabel}</button>
+          </div>
+        </form>
+      </div>
+    </div>
   );
 }

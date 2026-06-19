@@ -7,7 +7,7 @@ const initialState = {
   first_name: "",
   last_name: "",
   company_name: "",
-  billing_currency: "USD",
+  billing_currency: "JMD",
   address: "",
   trn_no: "",
   occupation: "",
@@ -36,7 +36,7 @@ function parseClient(client) {
     first_name: readMetaLine(client?.notes, "First Name") || first_name,
     last_name: readMetaLine(client?.notes, "Last Name") || last_name,
     company_name: readMetaLine(client?.notes, "Company Name"),
-    billing_currency: client?.billing_currency || readMetaLine(client?.notes, "Billing Currency") || "USD",
+    billing_currency: client?.billing_currency || readMetaLine(client?.notes, "Billing Currency") || "JMD",
     address: client?.address || readMetaLine(client?.notes, "Address") || "",
     trn_no: client?.trn_no || readMetaLine(client?.notes, "TRN No") || "",
     occupation: client?.occupation || "",
@@ -63,7 +63,7 @@ function payloadFromState(state, existingClient) {
     occupation: state.client_type === "corporate" ? null : state.occupation || null,
     preferred_contact_method: state.preferred_contact_method || null,
     date_of_birth: state.date_of_birth || null,
-    billing_currency: state.billing_currency || "USD",
+    billing_currency: state.billing_currency || "JMD",
   };
 }
 
@@ -130,7 +130,7 @@ export default function ClientIntakeModal({ open, mode = "create", client = null
             <Field label={firstNameLabel} value={form.first_name} onChange={(v) => setForm({ ...form, first_name: v })} error={errors.first_name} placeholder={corporate ? "Contact first name (optional)" : "Enter First Name"} />
             <Field label={lastNameLabel} value={form.last_name} onChange={(v) => setForm({ ...form, last_name: v })} error={errors.last_name} placeholder={corporate ? "Contact last name (optional)" : "Enter Last Name"} />
             <Field label={companyLabel} value={form.company_name} onChange={(v) => setForm({ ...form, company_name: v })} error={errors.company_name} placeholder={corporate ? "Enter Company Name" : "Company name (optional)"} />
-            <div><label>Billing Currency *</label><select value={form.billing_currency} onChange={(e) => setForm({ ...form, billing_currency: e.target.value })}><option value="USD">USD</option><option value="EUR">EUR</option><option value="AED">AED</option></select></div>
+            <div><label>Billing Currency *</label><select value={form.billing_currency} onChange={(e) => setForm({ ...form, billing_currency: e.target.value })}><option value="JMD">JMD — Jamaican Dollar</option><option value="USD">USD</option><option value="EUR">EUR</option><option value="AED">AED</option></select></div>
             <Field label="Address *" value={form.address} onChange={(v) => setForm({ ...form, address: v })} error={errors.address} placeholder="Enter Address" />
             <Field label="TRN No. *" value={form.trn_no} onChange={(v) => setForm({ ...form, trn_no: v })} error={errors.trn_no} placeholder="Enter TRN" />
             {!corporate ? <Field label="Occupation" value={form.occupation} onChange={(v) => setForm({ ...form, occupation: v })} placeholder="Enter Occupation" /> : null}

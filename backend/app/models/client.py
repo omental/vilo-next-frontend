@@ -21,7 +21,7 @@ class Client(Base):
     occupation: Mapped[str | None] = mapped_column(String(255), nullable=True)
     preferred_contact_method: Mapped[str | None] = mapped_column(String(50), nullable=True)
     date_of_birth: Mapped[date | None] = mapped_column(Date, nullable=True)
-    billing_currency: Mapped[str | None] = mapped_column(String(10), nullable=True, default="USD")
+    billing_currency: Mapped[str | None] = mapped_column(String(10), nullable=True, default="JMD")
     archived_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)

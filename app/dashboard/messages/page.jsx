@@ -89,23 +89,6 @@ function SearchIcon() {
   );
 }
 
-function VideoIcon() {
-  return (
-    <IconBase>
-      <rect x="3" y="6" width="12" height="12" rx="3" />
-      <path d="m15 10 5-3v10l-5-3" />
-    </IconBase>
-  );
-}
-
-function PhoneIcon() {
-  return (
-    <IconBase>
-      <path d="M6.6 4.8h2.6l1.2 3.4-1.6 1.5a14.5 14.5 0 0 0 5.5 5.5l1.5-1.6 3.4 1.2v2.6a1.5 1.5 0 0 1-1.7 1.5C10.4 18 6 13.6 5.1 6.5A1.5 1.5 0 0 1 6.6 4.8Z" />
-    </IconBase>
-  );
-}
-
 function DotsIcon() {
   return (
     <IconBase>
@@ -642,12 +625,6 @@ function MessagesPageContent() {
                     </div>
                   </div>
                   <div className="messages-thread__actions" aria-label="Message actions">
-                    <button type="button" className="messages-icon-button" aria-label="Call feature unavailable" title="Call feature unavailable">
-                      <VideoIcon />
-                    </button>
-                    <button type="button" className="messages-icon-button" aria-label="Phone feature unavailable" title="Phone feature unavailable">
-                      <PhoneIcon />
-                    </button>
                     <button type="button" className="messages-icon-button" aria-label="More actions unavailable" title="More actions unavailable">
                       <DotsIcon />
                     </button>
@@ -750,12 +727,13 @@ function MessagesPageContent() {
       {showCreateModal ? (
         <div className="vilo-modal-overlay" onClick={closeCreateModal}>
           <div className="vilo-modal messages-create-modal" onClick={(event) => event.stopPropagation()}>
-            <div className="vilo-modal__header">
-              <h3>New Message</h3>
-              <button type="button" className="vilo-btn vilo-btn--ghost vilo-btn--xs" onClick={closeCreateModal}>Close</button>
-            </div>
-            <div className="vilo-modal__body">
-              <form className="messages-create-form" onSubmit={createConversation}>
+            <form className="messages-create-modal__shell" onSubmit={createConversation}>
+              <div className="vilo-modal__header">
+                <h3>New Message</h3>
+                <button type="button" className="vilo-btn vilo-btn--ghost vilo-btn--xs" onClick={closeCreateModal}>Close</button>
+              </div>
+              <div className="vilo-modal__body messages-create-modal__body">
+                <div className="messages-create-form">
                 {requestedClient ? (
                   <p className="vilo-card-copy">
                     Client context: <strong>{requestedClient.name}</strong>
@@ -881,17 +859,20 @@ function MessagesPageContent() {
                     required
                   />
                 </section>
-
-                {createError ? <p className="vilo-state vilo-state--error">{createError}</p> : null}
-
+                </div>
+              </div>
+              <div className="messages-create-modal__footer">
+                <div className="messages-create-modal__footer-copy">
+                  {createError ? <p className="vilo-state vilo-state--error">{createError}</p> : <span>Conversation type, participants, title, and first message are required.</span>}
+                </div>
                 <div className="messages-create-form__footer">
                   <button type="button" className="vilo-btn vilo-btn--secondary" onClick={closeCreateModal}>Cancel</button>
                   <button type="submit" className="vilo-btn vilo-btn--primary" disabled={createDisabled}>
                     {creating ? "Creating..." : "Create Conversation"}
                   </button>
                 </div>
-              </form>
-            </div>
+              </div>
+            </form>
           </div>
         </div>
       ) : null}
