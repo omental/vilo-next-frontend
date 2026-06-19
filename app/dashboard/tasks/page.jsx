@@ -2,12 +2,23 @@
 
 import { Suspense, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
+import { createPortal } from "react-dom";
 import { useRouter, useSearchParams } from "next/navigation";
 import { apiRequest } from "../../../lib/api";
 
 const STATUS_OPTIONS = ["not_started", "in_progress", "waiting", "completed"];
 const PRIORITY_OPTIONS = ["low", "medium", "high", "urgent"];
 const TASK_TYPE_OPTIONS = ["general", "deadline", "court", "client_follow_up", "document", "billing", "other"];
+const DROPDOWN_MENU_GAP = 8;
+const DROPDOWN_VIEWPORT_PADDING = 12;
+const DROPDOWN_WIDTHS = {
+  actions: 220,
+  status: 196,
+};
+const DROPDOWN_ESTIMATED_HEIGHTS = {
+  actions: 280,
+  status: 196,
+};
 
 const initialForm = {
   client_id: "",
@@ -42,6 +53,27 @@ function isCompleted(task) {
 
 function isOverdue(task) {
   return Boolean(task?.is_overdue) && !isCompleted(task);
+}
+
+function getDropdownPosition(anchorElement, type) {
+  if (!anchorElement || typeof window === "undefined") return null;
+
+  const rect = anchorElement.getBoundingClientRect();
+  const menuWidth = DROPDOWN_WIDTHS[type] || 220;
+  const estimatedHeight = DROPDOWN_ESTIMATED_HEIGHTS[type] || 220;
+  const spaceBelow = window.innerHeight - rect.bottom;
+  const openUpward = spaceBelow < estimatedHeight && rect.top > spaceBelow;
+
+  const baseLeft = type === "actions" ? rect.right - menuWidth : rect.left;
+  const maxLeft = Math.max(DROPDOWN_VIEWPORT_PADDING, window.innerWidth - menuWidth - DROPDOWN_VIEWPORT_PADDING);
+  const left = Math.min(Math.max(baseLeft, DROPDOWN_VIEWPORT_PADDING), maxLeft);
+
+  return {
+    left,
+    top: openUpward ? rect.top - DROPDOWN_MENU_GAP : rect.bottom + DROPDOWN_MENU_GAP,
+    openUpward,
+    width: menuWidth,
+  };
 }
 
 function buildTaskDetailHref(taskId, searchParams, extra = {}) {
@@ -80,9 +112,10 @@ function TasksPageContent() {
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
   const [createOpen, setCreateOpen] = useState(searchParams.get("create") === "1");
-  const [menuOpenId, setMenuOpenId] = useState(null);
-  const [statusMenuId, setStatusMenuId] = useState(null);
+  const [activeDropdown, setActiveDropdown] = useState(null);
   const [statusSavingId, setStatusSavingId] = useState(null);
+  const actionTriggerRefs = useRef(new Map());
+  const statusTriggerRefs = useRef(new Map());
 
   const requestedClientId = Number(searchParams.get("client_id") || 0);
   const requestedCaseId = Number(searchParams.get("case_id") || 0);
@@ -148,29 +181,41 @@ function TasksPageContent() {
   }, [createOpen]);
 
   useEffect(() => {
-    if (!menuOpenId && !statusMenuId) return undefined;
+    if (!activeDropdown) return undefined;
 
     function handlePointerDown(event) {
       const target = event.target;
-      if (target instanceof Element && target.closest(".task-menu-anchor, .task-status-anchor")) return;
-      setMenuOpenId(null);
-      setStatusMenuId(null);
+      if (target instanceof Element && target.closest(".task-menu-anchor, .task-status-anchor, .task-overlay-menu")) return;
+      setActiveDropdown(null);
     }
 
     function handleEscape(event) {
       if (event.key === "Escape") {
-        setMenuOpenId(null);
-        setStatusMenuId(null);
+        setActiveDropdown(null);
       }
+    }
+
+    function handleViewportChange() {
+      setActiveDropdown((current) => {
+        if (!current) return null;
+        const anchorMap = current.type === "actions" ? actionTriggerRefs.current : statusTriggerRefs.current;
+        const anchorElement = anchorMap.get(current.taskId);
+        const position = getDropdownPosition(anchorElement, current.type);
+        return position ? { ...current, position } : null;
+      });
     }
 
     document.addEventListener("mousedown", handlePointerDown);
     document.addEventListener("keydown", handleEscape);
+    window.addEventListener("resize", handleViewportChange);
+    window.addEventListener("scroll", handleViewportChange, true);
     return () => {
       document.removeEventListener("mousedown", handlePointerDown);
       document.removeEventListener("keydown", handleEscape);
+      window.removeEventListener("resize", handleViewportChange);
+      window.removeEventListener("scroll", handleViewportChange, true);
     };
-  }, [menuOpenId, statusMenuId]);
+  }, [activeDropdown]);
 
   const selectedClientId = Number(form.client_id || 0);
   const availableCases = useMemo(() => {
@@ -272,8 +317,7 @@ function TasksPageContent() {
         body: JSON.stringify({ status }),
       });
       setTasks((current) => current.map((task) => (Number(task.id) === Number(taskId) ? updated : task)));
-      setStatusMenuId(null);
-      setMenuOpenId(null);
+      setActiveDropdown(null);
     } catch (err) {
       setError(err.message || "Unable to update task status.");
     } finally {
@@ -286,8 +330,7 @@ function TasksPageContent() {
     try {
       const updated = await apiRequest(`/api/v1/tasks/${taskId}/complete`, { method: "POST" });
       setTasks((current) => current.map((task) => (Number(task.id) === Number(taskId) ? updated : task)));
-      setMenuOpenId(null);
-      setStatusMenuId(null);
+      setActiveDropdown(null);
     } catch (err) {
       setError(err.message || "Unable to complete task.");
     }
@@ -297,8 +340,7 @@ function TasksPageContent() {
     setError("");
     try {
       await apiRequest(`/api/v1/tasks/${taskId}/archive`, { method: "POST" });
-      setMenuOpenId(null);
-      setStatusMenuId(null);
+      setActiveDropdown(null);
       setTasks((current) => current.filter((task) => Number(task.id) !== Number(taskId)));
     } catch (err) {
       setError(err.message || "Unable to archive task.");
@@ -309,12 +351,58 @@ function TasksPageContent() {
     setError("");
     try {
       await apiRequest(`/api/v1/tasks/${taskId}`, { method: "DELETE" });
-      setMenuOpenId(null);
-      setStatusMenuId(null);
+      setActiveDropdown(null);
       setTasks((current) => current.filter((task) => Number(task.id) !== Number(taskId)));
     } catch (err) {
       setError(err.message || "Unable to delete task.");
     }
+  }
+
+  function setTriggerRef(refMap, id, node) {
+    if (node) refMap.current.set(id, node);
+    else refMap.current.delete(id);
+  }
+
+  function toggleDropdown(taskId, type, anchorElement) {
+    setActiveDropdown((current) => {
+      if (current?.taskId === taskId && current.type === type) return null;
+      const position = getDropdownPosition(anchorElement, type);
+      if (!position) return null;
+      return { taskId, type, position };
+    });
+  }
+
+  function renderDropdownMenu(task, detailHref, editHref) {
+    if (!activeDropdown || typeof document === "undefined" || Number(activeDropdown.taskId) !== Number(task.id)) return null;
+
+    const menuClassName = `case-actions-menu task-overlay-menu ${activeDropdown.type === "status" ? "task-status-menu" : "task-actions-menu"}${activeDropdown.position.openUpward ? " task-overlay-menu--upward" : ""}`;
+    const menuStyle = {
+      left: `${activeDropdown.position.left}px`,
+      top: `${activeDropdown.position.top}px`,
+      width: `${activeDropdown.position.width}px`,
+    };
+
+    return createPortal(
+      <div className={menuClassName} style={menuStyle} onClick={(event) => event.stopPropagation()}>
+        {activeDropdown.type === "status"
+          ? STATUS_OPTIONS.map((option) => (
+              <button key={option} type="button" onClick={() => updateTaskStatus(task.id, option)}>
+                {normalizeLabel(option)}
+              </button>
+            ))
+          : (
+            <>
+              <button type="button" onClick={() => { setActiveDropdown(null); router.push(detailHref); }}>View Details</button>
+              {task.case_id ? <Link href={`/dashboard/cases/${task.case_id}`} onClick={() => setActiveDropdown(null)}>View Case</Link> : <button type="button" disabled>View Case</button>}
+              <button type="button" onClick={() => { setActiveDropdown(null); router.push(editHref); }}>Edit Task</button>
+              {!isCompleted(task) ? <button type="button" onClick={() => completeTask(task.id)}>Mark as Complete</button> : null}
+              <button type="button" onClick={() => archiveTask(task.id)}>Archive Task</button>
+              <button type="button" className="is-danger" onClick={() => deleteTask(task.id)}>Delete Task</button>
+            </>
+          )}
+      </div>,
+      document.body,
+    );
   }
 
   return (
@@ -349,7 +437,7 @@ function TasksPageContent() {
         {loading ? <p className="vilo-state">Loading tasks...</p> : null}
         {!loading && !filteredTasks.length ? <p className="vilo-state">No tasks matched this view.</p> : null}
         {!loading && filteredTasks.length ? (
-          <div className={`vilo-table-wrap case-table-wrap tasks-table-wrap${menuOpenId || statusMenuId ? " case-table-wrap--menu-visible" : ""}`}>
+          <div className={`vilo-table-wrap case-table-wrap tasks-table-wrap${activeDropdown ? " case-table-wrap--menu-visible" : ""}`}>
             <table className="team-table tasks-table">
               <thead>
                 <tr>
@@ -389,24 +477,19 @@ function TasksPageContent() {
                           <button
                             type="button"
                             className={`vilo-badge vilo-badge--${task.status} task-status-trigger`}
-                            aria-expanded={statusMenuId === task.id}
-                            onClick={() => {
-                              setMenuOpenId(null);
-                              setStatusMenuId((openId) => (openId === task.id ? null : task.id));
+                            aria-expanded={activeDropdown?.type === "status" && activeDropdown?.taskId === task.id}
+                            aria-haspopup="menu"
+                            ref={(node) => setTriggerRef(statusTriggerRefs, task.id, node)}
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              toggleDropdown(task.id, "status", event.currentTarget);
                             }}
                           >
-                            {statusSavingId === task.id ? "Saving..." : normalizeLabel(task.status)}
+                            <span>{statusSavingId === task.id ? "Saving..." : normalizeLabel(task.status)}</span>
+                            <span className="task-status-trigger__chevron" aria-hidden="true">▾</span>
                           </button>
-                          {task.is_overdue ? <span className="vilo-badge vilo-badge--overdue">Overdue</span> : null}
-                          {statusMenuId === task.id ? (
-                            <div className="case-actions-menu task-status-menu">
-                              {STATUS_OPTIONS.map((option) => (
-                                <button key={option} type="button" onClick={() => updateTaskStatus(task.id, option)}>
-                                  {normalizeLabel(option)}
-                                </button>
-                              ))}
-                            </div>
-                          ) : null}
+                          {isOverdue(task) ? <span className="vilo-badge vilo-badge--overdue">Overdue</span> : null}
+                          {activeDropdown?.type === "status" && activeDropdown?.taskId === task.id ? renderDropdownMenu(task, detailHref, editHref) : null}
                         </div>
                       </td>
                       <td><span className={`vilo-badge vilo-badge--priority-${task.priority}`}>{normalizeLabel(task.priority)}</span></td>
@@ -422,24 +505,17 @@ function TasksPageContent() {
                             type="button"
                             className="vilo-btn vilo-btn--ghost vilo-btn--xs task-action-trigger task-action-trigger--icon"
                             aria-label={`Task actions for ${task.title}`}
-                            aria-expanded={menuOpenId === task.id}
-                            onClick={() => {
-                              setStatusMenuId(null);
-                              setMenuOpenId((openId) => (openId === task.id ? null : task.id));
+                            aria-expanded={activeDropdown?.type === "actions" && activeDropdown?.taskId === task.id}
+                            aria-haspopup="menu"
+                            ref={(node) => setTriggerRef(actionTriggerRefs, task.id, node)}
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              toggleDropdown(task.id, "actions", event.currentTarget);
                             }}
                           >
                             <span aria-hidden="true">⋯</span>
                           </button>
-                          {menuOpenId === task.id ? (
-                            <div className="case-actions-menu task-actions-menu">
-                              <button type="button" onClick={() => router.push(detailHref)}>View Details</button>
-                              {task.case_id ? <Link href={`/dashboard/cases/${task.case_id}`}>View Case</Link> : <button type="button" disabled>View Case</button>}
-                              <button type="button" onClick={() => router.push(editHref)}>Edit Task</button>
-                              {!isCompleted(task) ? <button type="button" onClick={() => completeTask(task.id)}>Mark as Complete</button> : null}
-                              <button type="button" onClick={() => archiveTask(task.id)}>Archive Task</button>
-                              <button type="button" className="is-danger" onClick={() => deleteTask(task.id)}>Delete Task</button>
-                            </div>
-                          ) : null}
+                          {activeDropdown?.type === "actions" && activeDropdown?.taskId === task.id ? renderDropdownMenu(task, detailHref, editHref) : null}
                         </div>
                       </td>
                     </tr>

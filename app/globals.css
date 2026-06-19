@@ -7488,7 +7488,8 @@ button {
 }
 
 .tasks-table-wrap {
-  overflow: visible;
+  overflow-x: auto;
+  overflow-y: visible;
 }
 
 .tasks-table {
@@ -7590,17 +7591,61 @@ button {
 .task-status-trigger {
   border: 0;
   cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.38rem;
+  white-space: nowrap;
 }
 
-.task-status-menu,
-.task-actions-menu {
-  width: 188px;
-  z-index: 80;
+.task-status-trigger__chevron {
+  font-size: 0.7rem;
+  line-height: 1;
+  opacity: 0.8;
+  transform: translateY(1px);
+}
+
+.task-overlay-menu.case-actions-menu {
+  position: fixed;
+  top: 0;
+  right: auto;
+  min-width: 188px;
+  border: 1px solid #ddd7ef;
+  border-radius: 14px;
+  background: #ffffff;
+  box-shadow: 0 22px 48px rgba(39, 31, 79, 0.2);
+  padding: 0.35rem 0;
+  z-index: 9999;
+  isolation: isolate;
+}
+
+.task-overlay-menu.task-overlay-menu--upward {
+  transform: translateY(-100%);
+}
+
+.task-overlay-menu.case-actions-menu button,
+.task-overlay-menu.case-actions-menu a {
+  padding: 0.68rem 0.8rem;
+  border-bottom-color: #efeaf9;
+  background: #ffffff;
+}
+
+.task-overlay-menu.case-actions-menu button:hover:not(:disabled),
+.task-overlay-menu.case-actions-menu a:hover {
+  background: #f7f5fd;
+}
+
+.task-overlay-menu.case-actions-menu a:focus-visible,
+.task-overlay-menu.case-actions-menu button:focus-visible {
+  outline: none;
+  background: #f3f0fd;
 }
 
 .task-status-menu {
-  left: 0;
-  right: auto;
+  min-width: 196px;
+}
+
+.task-actions-menu {
+  min-width: 220px;
 }
 
 .task-action-trigger--icon {
