@@ -1,4 +1,5 @@
 from datetime import datetime, timezone
+from io import BytesIO
 from pathlib import Path
 
 from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, Request, UploadFile, status
@@ -13,7 +14,13 @@ from app.models.client import Client
 from app.models.document import Document
 from app.models.document_version import DocumentVersion
 from app.models.user import User
-from app.schemas.document import DocumentResponse, DocumentUpdate, DocumentVersionResponse
+from app.schemas.document import (
+    DocumentEditableContentResponse,
+    DocumentEditableContentUpdate,
+    DocumentResponse,
+    DocumentUpdate,
+    DocumentVersionResponse,
+)
 from app.services.audit import log_audit_event
 from app.services.document_storage import MAX_UPLOAD_BYTES, persist_file, safe_original_name
 from app.services.email import build_document_shared_email
@@ -25,6 +32,8 @@ router = APIRouter(prefix="/documents", tags=["documents"])
 ALLOWED_STAFF = ["partner", "admin", "lawyer", "paralegal"]
 VALID_VISIBILITY = {"internal", "client_visible"}
 STORAGE_ROOT = Path("backend/storage/documents")
+DOCX_MIME_TYPE = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+DOCX_WARNING = "Editing DOCX content creates a new version. Original uploaded file remains in version history."
 
 
 def to_response(document: Document) -> DocumentResponse:
@@ -42,6 +51,8 @@ def to_response(document: Document) -> DocumentResponse:
         category=document.category,
         visibility=document.visibility,
         version=document.version,
+        version_source=getattr(document, "version_source", None),
+        version_note=getattr(document, "version_note", None),
         created_at=document.created_at,
         updated_at=document.updated_at,
     )
@@ -57,9 +68,82 @@ def to_version_response(version: DocumentVersion) -> DocumentVersionResponse:
         file_size=version.file_size,
         version_number=version.version_number,
         uploaded_by=version.uploaded_by,
+        source=getattr(version, "source", None),
         notes=version.notes,
+        version_note=version.notes,
         created_at=version.created_at,
     )
+
+
+async def get_org_document(db: AsyncSession, document_id: int, organization_id: int) -> Document | None:
+    return await db.scalar(select(Document).where(Document.id == document_id, Document.organization_id == organization_id))
+
+
+def is_docx_document(document: Document) -> bool:
+    file_name = (document.file_name or "").lower()
+    file_type = (document.file_type or "").lower()
+    return file_name.endswith(".docx") or file_type == DOCX_MIME_TYPE
+
+
+def extract_docx_text(file_path: str) -> str:
+    from docx import Document as DocxDocument
+
+    path = Path(file_path)
+    if not path.exists():
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Stored file not found")
+
+    docx_document = DocxDocument(str(path))
+    blocks: list[str] = []
+
+    for paragraph in docx_document.paragraphs:
+        text = paragraph.text.rstrip()
+        blocks.append(text)
+
+    for table_index, table in enumerate(docx_document.tables, start=1):
+        rows: list[str] = []
+        for row in table.rows:
+            cells = [cell.text.strip() for cell in row.cells]
+            if any(cells):
+                rows.append(" | ".join(cells))
+        if rows:
+            if blocks and any(blocks):
+                blocks.append("")
+            blocks.append(f"[Table {table_index}]")
+            blocks.extend(rows)
+
+    text = "\n".join(blocks).strip()
+    return text
+
+
+def render_docx_bytes(content: str) -> bytes:
+    from docx import Document as DocxDocument
+
+    docx_document = DocxDocument()
+    normalized = (content or "").replace("\r\n", "\n")
+    lines = normalized.split("\n")
+
+    if not any(line.strip() for line in lines):
+        docx_document.add_paragraph("")
+    else:
+        for line in lines:
+            docx_document.add_paragraph(line)
+
+    buffer = BytesIO()
+    docx_document.save(buffer)
+    return buffer.getvalue()
+
+
+def build_docx_version_name(document: Document) -> str:
+    original_name = (document.file_name or "").strip()
+    if original_name.lower().endswith(".docx"):
+        return original_name
+    title = (document.title or "").strip()
+    stem = title or original_name or f"document-{document.id}"
+    safe_stem = "".join(char if char.isalnum() or char in {"-", "_", " "} else "-" for char in stem).strip(" -_")
+    if not safe_stem:
+        safe_stem = f"document-{document.id}"
+    safe_stem = safe_stem.replace(" ", "-")
+    return f"{safe_stem}.docx"
 
 
 async def validate_case(db: AsyncSession, organization_id: int, case_id: int | None):
@@ -126,6 +210,8 @@ async def upload_document(
         category=category,
         visibility=visibility,
         version=1,
+        version_source="upload",
+        version_note=None,
         created_at=now,
         updated_at=now,
     )
@@ -201,7 +287,7 @@ async def get_document(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(role_guard(ALLOWED_STAFF)),
 ):
-    doc = await db.scalar(select(Document).where(Document.id == document_id, Document.organization_id == current_user.organization_id))
+    doc = await get_org_document(db, document_id, current_user.organization_id)
     if not doc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document not found")
     return to_response(doc)
@@ -213,7 +299,7 @@ async def download_document(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(role_guard(ALLOWED_STAFF)),
 ):
-    doc = await db.scalar(select(Document).where(Document.id == document_id, Document.organization_id == current_user.organization_id))
+    doc = await get_org_document(db, document_id, current_user.organization_id)
     if not doc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document not found")
     path = Path(doc.file_path)
@@ -230,7 +316,7 @@ async def update_document(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(role_guard(ALLOWED_STAFF)),
 ):
-    doc = await db.scalar(select(Document).where(Document.id == document_id, Document.organization_id == current_user.organization_id))
+    doc = await get_org_document(db, document_id, current_user.organization_id)
     if not doc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document not found")
 
@@ -287,7 +373,7 @@ async def replace_document(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(role_guard(ALLOWED_STAFF)),
 ):
-    doc = await db.scalar(select(Document).where(Document.id == document_id, Document.organization_id == current_user.organization_id))
+    doc = await get_org_document(db, document_id, current_user.organization_id)
     if not doc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document not found")
 
@@ -316,7 +402,8 @@ async def replace_document(
         file_size=previous_size,
         version_number=previous_version,
         uploaded_by=current_user.id,
-        notes=notes,
+        source=getattr(doc, "version_source", "upload"),
+        notes=getattr(doc, "version_note", None),
         created_at=now,
     )
     db.add(version_row)
@@ -327,6 +414,8 @@ async def replace_document(
     doc.file_size = len(data)
     doc.version = previous_version + 1
     doc.uploaded_by = current_user.id
+    doc.version_source = "replace"
+    doc.version_note = notes.strip() if notes and notes.strip() else None
     doc.updated_at = now
 
     await log_audit_event(
@@ -357,13 +446,125 @@ async def replace_document(
     return to_response(doc)
 
 
+@router.get("/{document_id}/editable-content", response_model=DocumentEditableContentResponse)
+async def get_document_editable_content(
+    document_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(role_guard(ALLOWED_STAFF)),
+):
+    doc = await get_org_document(db, document_id, current_user.organization_id)
+    if not doc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document not found")
+
+    if not is_docx_document(doc):
+        return DocumentEditableContentResponse(
+            document_id=doc.id,
+            file_type=doc.file_type,
+            editable=False,
+            mode=None,
+            content="",
+            warning=DOCX_WARNING,
+            reason="DOCX editing only is supported right now. PDF editing will be added later.",
+        )
+
+    return DocumentEditableContentResponse(
+        document_id=doc.id,
+        file_type=doc.file_type or DOCX_MIME_TYPE,
+        editable=True,
+        mode="docx_text",
+        content=extract_docx_text(doc.file_path),
+        warning=DOCX_WARNING,
+        reason=None,
+    )
+
+
+@router.post("/{document_id}/editable-content", response_model=DocumentResponse)
+async def save_document_editable_content(
+    document_id: int,
+    payload: DocumentEditableContentUpdate,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(role_guard(ALLOWED_STAFF)),
+):
+    doc = await get_org_document(db, document_id, current_user.organization_id)
+    if not doc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document not found")
+    if not is_docx_document(doc):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Only DOCX documents can be edited in this workflow")
+
+    previous_path = doc.file_path
+    previous_name = doc.file_name
+    previous_type = doc.file_type
+    previous_size = doc.file_size
+    previous_version = doc.version
+    version_note = payload.version_note.strip() if payload.version_note and payload.version_note.strip() else None
+
+    data = render_docx_bytes(payload.content)
+    file_name = build_docx_version_name(doc)
+    file_path, _stored_name = persist_file(STORAGE_ROOT, current_user.organization_id, file_name, data)
+    now = datetime.now(timezone.utc)
+
+    db.add(
+        DocumentVersion(
+            document_id=doc.id,
+            organization_id=doc.organization_id,
+            file_name=previous_name,
+            file_path=previous_path,
+            file_type=previous_type,
+            file_size=previous_size,
+            version_number=previous_version,
+            uploaded_by=current_user.id,
+            source=getattr(doc, "version_source", "upload"),
+            notes=getattr(doc, "version_note", None),
+            created_at=now,
+        )
+    )
+
+    doc.file_name = file_name
+    doc.file_path = file_path
+    doc.file_type = DOCX_MIME_TYPE
+    doc.file_size = len(data)
+    doc.version = previous_version + 1
+    doc.uploaded_by = current_user.id
+    doc.version_source = "content_edit"
+    doc.version_note = version_note
+    doc.updated_at = now
+
+    await log_audit_event(
+        db,
+        organization_id=current_user.organization_id,
+        user_id=current_user.id,
+        action="document_content_edited",
+        entity_type="document",
+        entity_id=str(doc.id),
+        description=f"Document content edited: {doc.title}",
+        metadata_json={"previous_version": previous_version, "new_version": doc.version, "source": "content_edit"},
+        ip_address=request.client.host if request.client else None,
+        user_agent=request.headers.get("user-agent"),
+    )
+    if doc.case_id:
+        await create_case_timeline_event(
+            db,
+            organization_id=current_user.organization_id,
+            case_id=doc.case_id,
+            actor_id=current_user.id,
+            event_type="document_content_edited",
+            title=f"Document edited: {doc.title}",
+            metadata_json={"document_id": doc.id, "version": doc.version},
+        )
+
+    await db.commit()
+    await db.refresh(doc)
+    return to_response(doc)
+
+
 @router.get("/{document_id}/versions", response_model=list[DocumentVersionResponse])
 async def list_document_versions(
     document_id: int,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(role_guard(ALLOWED_STAFF)),
 ):
-    doc = await db.scalar(select(Document).where(Document.id == document_id, Document.organization_id == current_user.organization_id))
+    doc = await get_org_document(db, document_id, current_user.organization_id)
     if not doc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document not found")
     rows = await db.scalars(
@@ -381,7 +582,7 @@ async def download_document_version(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(role_guard(ALLOWED_STAFF)),
 ):
-    doc = await db.scalar(select(Document).where(Document.id == document_id, Document.organization_id == current_user.organization_id))
+    doc = await get_org_document(db, document_id, current_user.organization_id)
     if not doc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document not found")
     version = await db.scalar(
@@ -406,7 +607,7 @@ async def delete_document(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(role_guard(ALLOWED_STAFF)),
 ):
-    doc = await db.scalar(select(Document).where(Document.id == document_id, Document.organization_id == current_user.organization_id))
+    doc = await get_org_document(db, document_id, current_user.organization_id)
     if not doc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document not found")
 

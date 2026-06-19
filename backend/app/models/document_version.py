@@ -18,8 +18,8 @@ class DocumentVersion(Base):
     file_size: Mapped[int | None] = mapped_column(Integer, nullable=True)
     version_number: Mapped[int] = mapped_column(Integer, nullable=False)
     uploaded_by: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="RESTRICT"), index=True, nullable=False)
+    source: Mapped[str] = mapped_column(String(30), nullable=False, default="upload")
     notes: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
     document = relationship("Document", back_populates="versions")
-

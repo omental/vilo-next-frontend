@@ -55,6 +55,11 @@ function DocumentsPageContent() {
   const [replaceTarget, setReplaceTarget] = useState(null);
   const [replaceFile, setReplaceFile] = useState(null);
   const [replaceNotes, setReplaceNotes] = useState("");
+  const [editTarget, setEditTarget] = useState(null);
+  const [editContent, setEditContent] = useState("");
+  const [editVersionNote, setEditVersionNote] = useState("");
+  const [editWarning, setEditWarning] = useState("");
+  const [editLoading, setEditLoading] = useState(false);
   const [versionTarget, setVersionTarget] = useState(null);
   const [versions, setVersions] = useState([]);
   const [success, setSuccess] = useState("");
@@ -82,6 +87,10 @@ function DocumentsPageContent() {
         apiRequest("/api/v1/clients"),
       ]);
       setDocuments(docs || []);
+      setVersionTarget((current) => {
+        if (!current) return current;
+        return (docs || []).find((row) => Number(row.id) === Number(current.id)) || current;
+      });
       setCases(caseData || []);
       setClients(clientData || []);
     } catch (err) {
@@ -135,6 +144,10 @@ function DocumentsPageContent() {
         closeReplaceModal();
         return;
       }
+      if (editTarget) {
+        closeEditModal();
+        return;
+      }
       if (versionTarget) {
         setVersionTarget(null);
         return;
@@ -146,7 +159,7 @@ function DocumentsPageContent() {
 
     window.addEventListener("keydown", handleKeydown);
     return () => window.removeEventListener("keydown", handleKeydown);
-  }, [menuOpenId, replaceTarget, versionTarget, uploadOpen]);
+  }, [editTarget, menuOpenId, replaceTarget, versionTarget, uploadOpen]);
 
   const casesById = useMemo(() => {
     return new Map(cases.map((row) => [Number(row.id), row]));
@@ -316,6 +329,67 @@ function DocumentsPageContent() {
       setVersions(rows || []);
     } catch (err) {
       setError(err.message || "Failed to load versions");
+    }
+  }
+
+  async function openEditModal(document) {
+    setEditTarget(document);
+    setEditContent("");
+    setEditVersionNote("");
+    setEditWarning("");
+    setEditLoading(true);
+    setMenuOpenId(null);
+    setError("");
+    setSuccess("");
+
+    try {
+      const response = await apiRequest(`/api/v1/documents/${document.id}/editable-content`);
+      if (!response.editable) {
+        setEditTarget(null);
+        setError(response.reason || "This document cannot be edited in the DOCX workflow.");
+        return;
+      }
+      setEditContent(response.content || "");
+      setEditWarning(response.warning || "");
+    } catch (err) {
+      setEditTarget(null);
+      setError(err.message || "Failed to load editable content");
+    } finally {
+      setEditLoading(false);
+    }
+  }
+
+  function closeEditModal() {
+    setEditTarget(null);
+    setEditContent("");
+    setEditVersionNote("");
+    setEditWarning("");
+    setEditLoading(false);
+  }
+
+  async function saveEditedContent(event) {
+    event.preventDefault();
+    if (!editTarget) return;
+
+    setSaving(true);
+    setError("");
+    setSuccess("");
+
+    try {
+      await apiRequest(`/api/v1/documents/${editTarget.id}/editable-content`, {
+        method: "POST",
+        body: JSON.stringify({
+          content: editContent,
+          version_note: editVersionNote.trim() || null,
+        }),
+      });
+      closeEditModal();
+      setSuccess("DOCX content saved as a new version.");
+      await load();
+    } catch (err) {
+      setError(err.message || "Failed to save edited content");
+    } finally {
+      setSaving(false);
     }
   }
 
@@ -520,6 +594,14 @@ function DocumentsPageContent() {
                                 {menuOpenId === document.id ? (
                                   <div className="case-actions-menu documents-actions-menu">
                                     <button type="button" onClick={() => apiDownload(`/api/v1/documents/${document.id}/download`).catch((err) => setError(err.message || "Download failed"))}>Download</button>
+                                    {isDocxDocument(document) ? (
+                                      <button type="button" onClick={() => openEditModal(document)}>Edit Content</button>
+                                    ) : null}
+                                    {isPdfDocument(document) ? (
+                                      <button type="button" className="is-disabled" disabled title="PDF editing will be added later. Use Replace File for now.">
+                                        PDF Editing Later
+                                      </button>
+                                    ) : null}
                                     <button type="button" onClick={() => openReplaceModal(document)}>Edit / Replace</button>
                                     <button type="button" onClick={() => openVersions(document)}>Versions</button>
                                     <button type="button" className="is-danger" onClick={() => deleteDocument(document.id)}>Delete</button>
@@ -700,6 +782,53 @@ function DocumentsPageContent() {
         </div>
       ) : null}
 
+      {editTarget ? (
+        <div className="vilo-modal-overlay" onClick={closeEditModal}>
+          <div className="vilo-modal documents-edit-modal" onClick={(event) => event.stopPropagation()}>
+            <div className="vilo-modal__header">
+              <h3>Edit DOCX Content</h3>
+              <button type="button" className="vilo-btn vilo-btn--ghost vilo-btn--xs" onClick={closeEditModal}>Close</button>
+            </div>
+            <div className="vilo-modal__body">
+              <form className="vilo-form-grid documents-edit-form" onSubmit={saveEditedContent}>
+                <p className="documents-edit-form__warning">
+                  {editWarning || "Saving creates a new DOCX version. The original file remains in version history."}
+                </p>
+                <p className="documents-edit-form__note">
+                  Complex formatting may not be preserved perfectly in this MVP. Use Replace File when layout fidelity matters.
+                </p>
+                <label className="documents-edit-form__field">
+                  <span>Content</span>
+                  <textarea
+                    className="documents-edit-form__textarea"
+                    value={editContent}
+                    onChange={(event) => setEditContent(event.target.value)}
+                    placeholder="Editable DOCX text will appear here."
+                    disabled={editLoading || saving}
+                  />
+                </label>
+                <label className="documents-edit-form__field">
+                  <span>Version Note</span>
+                  <input
+                    type="text"
+                    value={editVersionNote}
+                    onChange={(event) => setEditVersionNote(event.target.value)}
+                    placeholder="Summarize what changed (optional)"
+                    disabled={editLoading || saving}
+                  />
+                </label>
+                <div className="vilo-table-actions">
+                  <button type="button" className="vilo-btn vilo-btn--secondary" onClick={closeEditModal}>Cancel</button>
+                  <button type="submit" className="vilo-btn vilo-btn--primary" disabled={editLoading || saving}>
+                    {editLoading ? "Loading..." : saving ? "Saving..." : "Save as New Version"}
+                  </button>
+                </div>
+              </form>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
       {versionTarget ? (
         <div className="vilo-modal-overlay" onClick={() => setVersionTarget(null)}>
           <div className="vilo-modal documents-versions-modal" onClick={(event) => event.stopPropagation()}>
@@ -708,11 +837,24 @@ function DocumentsPageContent() {
               <button type="button" className="vilo-btn vilo-btn--ghost vilo-btn--xs" onClick={() => setVersionTarget(null)}>Close</button>
             </div>
             <div className="vilo-modal__body">
+              <div className="documents-version-current">
+                <div>
+                  <strong>Current Version</strong>
+                  <p>v{versionTarget.version} • {formatVersionSource(versionTarget.version_source)} • User #{versionTarget.uploaded_by}</p>
+                </div>
+                <button type="button" className="vilo-btn vilo-btn--ghost vilo-btn--xs" onClick={() => apiDownload(`/api/v1/documents/${versionTarget.id}/download`).catch((err) => setError(err.message || "Download failed"))}>
+                  Download Current
+                </button>
+              </div>
+              <div className="documents-version-current__meta">
+                <span>Saved {new Date(versionTarget.updated_at || versionTarget.created_at).toLocaleString()}</span>
+                <span>{versionTarget.version_note || "No version note."}</span>
+              </div>
               {!versions.length ? <p className="vilo-state">No previous versions.</p> : null}
               {versions.length ? (
                 <div className="vilo-table-wrap case-table-wrap documents-table-wrap">
                   <table className="team-table documents-table">
-                    <thead><tr><th>Version</th><th>File</th><th>Size</th><th>Uploaded</th><th>Notes</th><th>Action</th></tr></thead>
+                    <thead><tr><th>Version</th><th>File</th><th>Size</th><th>Created</th><th>Created By</th><th>Source</th><th>Version Note</th><th>Action</th></tr></thead>
                     <tbody>
                       {versions.map((version) => (
                         <tr key={version.id}>
@@ -720,7 +862,9 @@ function DocumentsPageContent() {
                           <td>{version.file_name}</td>
                           <td>{formatFileSize(version.file_size)}</td>
                           <td>{new Date(version.created_at).toLocaleString()}</td>
-                          <td>{version.notes || "-"}</td>
+                          <td>User #{version.uploaded_by}</td>
+                          <td>{formatVersionSource(version.source)}</td>
+                          <td>{version.version_note || version.notes || "-"}</td>
                           <td><button type="button" className="vilo-btn vilo-btn--ghost vilo-btn--xs" onClick={() => apiDownload(`/api/v1/documents/${versionTarget.id}/versions/${version.id}/download`).catch((err) => setError(err.message || "Download failed"))}>Download</button></td>
                         </tr>
                       ))}
@@ -761,6 +905,18 @@ function matchesFolder(document, folder) {
   return true;
 }
 
+function isDocxDocument(document) {
+  const fileName = String(document?.file_name || "").toLowerCase();
+  const fileType = String(document?.file_type || "").toLowerCase();
+  return fileName.endsWith(".docx") || fileType === "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
+}
+
+function isPdfDocument(document) {
+  const fileName = String(document?.file_name || "").toLowerCase();
+  const fileType = String(document?.file_type || "").toLowerCase();
+  return fileName.endsWith(".pdf") || fileType === "application/pdf";
+}
+
 function formatFileSize(bytes) {
   const size = Number(bytes || 0);
   if (!size) return "-";
@@ -797,6 +953,12 @@ function toTitleCase(value) {
     .replace(/\s+/g, " ")
     .trim()
     .replace(/\b\w/g, (char) => char.toUpperCase()) || "-";
+}
+
+function formatVersionSource(value) {
+  if (!value) return "-";
+  if (value === "content_edit") return "Content Edit";
+  return toTitleCase(value);
 }
 
 function FolderIcon() {

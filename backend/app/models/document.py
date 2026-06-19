@@ -23,6 +23,8 @@ class Document(Base):
     category: Mapped[str | None] = mapped_column(String(100), nullable=True)
     visibility: Mapped[str] = mapped_column(String(30), nullable=False, default="internal")
     version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    version_source: Mapped[str] = mapped_column(String(30), nullable=False, default="upload")
+    version_note: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 

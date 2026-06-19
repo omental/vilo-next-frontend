@@ -21,8 +21,8 @@ const financeChildren = [
 
 const navigationItems = [
   { label: "Dashboard", icon: HomeIcon, href: "/dashboard" },
-  // TODO: Restore a distinct Files route when the product has one.
   { label: "Clients", icon: UsersIcon, href: "/dashboard/clients" },
+  { label: "Files", icon: FileStackIcon, href: "/dashboard/cases" },
   { label: "Calendar", icon: CalendarIcon, href: "/dashboard/calendar" },
   { label: "Tasks", icon: ClipboardListIcon, href: "/dashboard/tasks" },
   { label: "Documents", icon: FileStackIcon, href: "/dashboard/documents" },

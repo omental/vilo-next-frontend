@@ -16,6 +16,8 @@ class DocumentResponse(BaseModel):
     category: str | None
     visibility: str
     version: int
+    version_source: str | None = None
+    version_note: str | None = None
     created_at: datetime
     updated_at: datetime
 
@@ -36,5 +38,22 @@ class DocumentVersionResponse(BaseModel):
     file_size: int | None
     version_number: int
     uploaded_by: int
+    source: str | None = None
     notes: str | None
+    version_note: str | None = None
     created_at: datetime
+
+
+class DocumentEditableContentResponse(BaseModel):
+    document_id: int
+    file_type: str | None
+    editable: bool
+    mode: str | None = None
+    content: str = ""
+    warning: str | None = None
+    reason: str | None = None
+
+
+class DocumentEditableContentUpdate(BaseModel):
+    content: str
+    version_note: str | None = None

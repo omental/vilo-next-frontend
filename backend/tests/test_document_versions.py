@@ -84,6 +84,8 @@ def _doc_obj(doc_id=51, org_id=1, path="/tmp/original.pdf"):
         category="general",
         visibility="internal",
         version=1,
+        version_source="upload",
+        version_note=None,
         created_at=now,
         updated_at=now,
     )
@@ -101,6 +103,7 @@ def _version_obj(version_id=8, doc_id=51, org_id=1):
         file_size=120,
         version_number=1,
         uploaded_by=10,
+        source="upload",
         notes="Initial",
         created_at=now,
     )
@@ -159,6 +162,8 @@ def test_document_versions_list_is_org_scoped():
         body = res.json()
         assert len(body) == 1
         assert body[0]["version_number"] == 1
+        assert body[0]["source"] == "upload"
+        assert "file_path" not in body[0]
     finally:
         cleanup(client)
 
@@ -181,6 +186,55 @@ def test_client_role_cannot_replace_document():
             "/api/v1/documents/51/replace",
             files={"file": ("replacement.pdf", b"%PDF", "application/pdf")},
         )
+        assert res.status_code == 403
+    finally:
+        cleanup(client)
+
+
+def test_docx_editable_content_returns_extracted_text(monkeypatch):
+    with TemporaryDirectory() as tmpdir:
+        doc_path = Path(tmpdir) / "editable.docx"
+        monkeypatch.setattr(documents_module, "extract_docx_text", lambda _path: "Paragraph one\nParagraph two")
+        db = DocsVersionDBStub(
+            scalar_values=[
+                _doc_obj(path=str(doc_path)),
+            ]
+        )
+        doc = db.scalar_values[0]
+        doc.file_name = "editable.docx"
+        doc.file_type = documents_module.DOCX_MIME_TYPE
+        client = build_client("lawyer", db)
+        try:
+            res = client.get("/api/v1/documents/51/editable-content")
+            assert res.status_code == 200
+            body = res.json()
+            assert body["editable"] is True
+            assert body["mode"] == "docx_text"
+            assert body["content"] == "Paragraph one\nParagraph two"
+            assert "file_path" not in body
+        finally:
+            cleanup(client)
+
+
+def test_pdf_editable_content_returns_unsupported():
+    db = DocsVersionDBStub(scalar_values=[_doc_obj()])
+    client = build_client("admin", db)
+    try:
+        res = client.get("/api/v1/documents/51/editable-content")
+        assert res.status_code == 200
+        body = res.json()
+        assert body["editable"] is False
+        assert "PDF editing will be added later" in body["reason"]
+        assert "file_path" not in body
+    finally:
+        cleanup(client)
+
+
+def test_client_role_cannot_access_docx_editable_content():
+    db = DocsVersionDBStub()
+    client = build_client("client", db)
+    try:
+        res = client.get("/api/v1/documents/51/editable-content")
         assert res.status_code == 403
     finally:
         cleanup(client)
@@ -263,6 +317,81 @@ async def test_replace_keeps_old_file_and_versions_download_previous_binary(tmp_
     )
     assert version_download.filename == "original.pdf"
     monkey.undo()
+
+
+@pytest.mark.asyncio
+async def test_save_docx_edit_creates_new_version_and_keeps_original(tmp_path):
+    monkey = pytest.MonkeyPatch()
+    monkey.setattr(documents_module, "STORAGE_ROOT", tmp_path)
+
+    original_bytes = documents_module.render_docx_bytes("Original version")
+    old_path = tmp_path / "org1" / "editable.docx"
+    old_path.parent.mkdir(parents=True, exist_ok=True)
+    old_path.write_bytes(original_bytes)
+
+    doc = _doc_obj(path=str(old_path))
+    doc.file_name = "editable.docx"
+    doc.file_type = documents_module.DOCX_MIME_TYPE
+    db = DocsVersionDBStub()
+    user = DummyUser(id=10, organization_id=1, name="Admin", email="a@example.com", role=UserRole.admin)
+
+    version_rows = []
+
+    async def scalar_side_effect(query, *args, **kwargs):
+        q = str(query)
+        if "documents.id" in q:
+            return doc
+        return None
+
+    db.scalar = scalar_side_effect  # type: ignore[assignment]
+
+    def add_side_effect(obj):
+        db.added.append(obj)
+        if obj.__class__.__name__ == "DocumentVersion":
+            version_rows.append(obj)
+
+    db.add = add_side_effect  # type: ignore[assignment]
+
+    updated = await documents_module.save_document_editable_content(
+        document_id=51,
+        payload=documents_module.DocumentEditableContentUpdate(content="Edited content", version_note="Cleaned up clauses"),
+        request=SimpleNamespace(client=None, headers={}),
+        db=db,
+        current_user=user,
+    )
+
+    assert updated.version == 2
+    assert updated.version_source == "content_edit"
+    assert updated.version_note == "Cleaned up clauses"
+    assert len(version_rows) == 1
+    assert version_rows[0].file_name == "editable.docx"
+    assert version_rows[0].version_number == 1
+    assert version_rows[0].source == "upload"
+    assert Path(version_rows[0].file_path).read_bytes() == original_bytes
+    assert Path(doc.file_path).exists()
+    assert doc.file_path != str(old_path)
+    assert documents_module.extract_docx_text(doc.file_path) == "Edited content"
+    monkey.undo()
+
+
+def test_cross_org_docx_edit_access_blocked():
+    db = DocsVersionDBStub(scalar_values=[None])
+    client = build_client("partner", db)
+    try:
+        res = client.post("/api/v1/documents/999/editable-content", json={"content": "x", "version_note": "note"})
+        assert res.status_code == 404
+    finally:
+        cleanup(client)
+
+
+def test_client_role_cannot_save_docx_edit():
+    db = DocsVersionDBStub()
+    client = build_client("client", db)
+    try:
+        res = client.post("/api/v1/documents/51/editable-content", json={"content": "x"})
+        assert res.status_code == 403
+    finally:
+        cleanup(client)
 
 
 @pytest.mark.asyncio
