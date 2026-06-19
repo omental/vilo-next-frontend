@@ -236,7 +236,7 @@ export default function TaskDetailPage() {
   return (
     <section className="dashboard-page-stack task-detail-page">
       <div className="task-detail-page__topbar">
-        <div>
+        <div className="task-detail-page__heading">
           <p className="task-detail-page__crumb"><Link href="/dashboard/tasks">Task List</Link> / Task #{task.id}</p>
           <h1>{task.title}</h1>
           <p className="vilo-card-copy">Dedicated task detail for status changes, linked records, and editing.</p>
@@ -279,16 +279,16 @@ export default function TaskDetailPage() {
           </div>
 
           <div className="task-detail-grid">
-            <div><span>Linked client</span><strong>{linkedClient?.name || "No client linked"}</strong></div>
-            <div><span>Linked case</span><strong>{linkedCase?.title || "No case linked"}</strong></div>
-            <div><span>Assigned user</span><strong>{assignedUser?.name || "Unassigned"}</strong></div>
-            <div><span>Task type</span><strong>{normalizeLabel(task.task_type || "general")}</strong></div>
-            <div><span>Due date</span><strong>{formatDateTime(task.due_date)}</strong></div>
-            <div><span>Reminder</span><strong>{formatDateTime(task.reminder_at)}</strong></div>
-            <div><span>Created by</span><strong>{createdByUser?.name || `User #${task.created_by || "-"}`}</strong></div>
-            <div><span>Created</span><strong>{formatDateTime(task.created_at)}</strong></div>
-            <div><span>Last updated</span><strong>{formatDateTime(task.updated_at)}</strong></div>
-            <div><span>Task ID</span><strong>#{task.id}</strong></div>
+            <div className="task-detail-grid__item"><span>Linked client</span><strong>{linkedClient?.name || "No client linked"}</strong></div>
+            <div className="task-detail-grid__item"><span>Linked case</span><strong>{linkedCase?.title || "No case linked"}</strong></div>
+            <div className="task-detail-grid__item"><span>Assigned user</span><strong>{assignedUser?.name || "Unassigned"}</strong></div>
+            <div className="task-detail-grid__item"><span>Task type</span><strong>{normalizeLabel(task.task_type || "general")}</strong></div>
+            <div className="task-detail-grid__item"><span>Due date</span><strong>{formatDateTime(task.due_date)}</strong></div>
+            <div className="task-detail-grid__item"><span>Reminder</span><strong>{formatDateTime(task.reminder_at)}</strong></div>
+            <div className="task-detail-grid__item"><span>Created by</span><strong>{createdByUser?.name || `User #${task.created_by || "-"}`}</strong></div>
+            <div className="task-detail-grid__item"><span>Created</span><strong>{formatDateTime(task.created_at)}</strong></div>
+            <div className="task-detail-grid__item"><span>Last updated</span><strong>{formatDateTime(task.updated_at)}</strong></div>
+            <div className="task-detail-grid__item"><span>Task ID</span><strong>#{task.id}</strong></div>
           </div>
 
           <div className="task-detail-notes">
