@@ -1,13 +1,18 @@
-from datetime import datetime, timezone
+import hashlib
+from datetime import datetime, timedelta, timezone
 from io import BytesIO
 from pathlib import Path
+from typing import Any
 
+import httpx
 from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, Request, UploadFile, status
 from fastapi.responses import FileResponse
+from jose import JWTError, jwt
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import role_guard
+from app.core.config import settings
 from app.db.session import get_db
 from app.models.case import Case
 from app.models.client import Client
@@ -20,6 +25,7 @@ from app.schemas.document import (
     DocumentResponse,
     DocumentUpdate,
     DocumentVersionResponse,
+    OnlyOfficeSessionResponse,
 )
 from app.services.audit import log_audit_event
 from app.services.document_storage import MAX_UPLOAD_BYTES, persist_file, safe_original_name
@@ -34,6 +40,8 @@ VALID_VISIBILITY = {"internal", "client_visible"}
 STORAGE_ROOT = Path("backend/storage/documents")
 DOCX_MIME_TYPE = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
 DOCX_WARNING = "Editing DOCX content creates a new version. Original uploaded file remains in version history."
+ONLYOFFICE_CALLBACK_SUCCESS = {"error": 0}
+ONLYOFFICE_SAVE_STATUSES = {2, 6}
 
 
 def to_response(document: Document) -> DocumentResponse:
@@ -144,6 +152,119 @@ def build_docx_version_name(document: Document) -> str:
         safe_stem = f"document-{document.id}"
     safe_stem = safe_stem.replace(" ", "-")
     return f"{safe_stem}.docx"
+
+
+def archive_current_document_version(doc: Document, actor_user_id: int, now: datetime) -> DocumentVersion:
+    return DocumentVersion(
+        document_id=doc.id,
+        organization_id=doc.organization_id,
+        file_name=doc.file_name,
+        file_path=doc.file_path,
+        file_type=doc.file_type,
+        file_size=doc.file_size,
+        version_number=doc.version,
+        uploaded_by=actor_user_id,
+        source=getattr(doc, "version_source", "upload"),
+        notes=getattr(doc, "version_note", None),
+        created_at=now,
+    )
+
+
+def current_utc() -> datetime:
+    return datetime.now(timezone.utc)
+
+
+def normalize_base_url(value: str) -> str:
+    return value.rstrip("/")
+
+
+def get_public_backend_base_url(request: Request) -> str:
+    configured = (settings.public_backend_url or "").strip()
+    if configured:
+        return normalize_base_url(configured)
+    return normalize_base_url(str(request.base_url).rstrip("/"))
+
+
+def build_onlyoffice_document_key(doc: Document) -> str:
+    digest = hashlib.sha256(f"{doc.organization_id}:{doc.id}:{doc.version}:{doc.updated_at}".encode("utf-8")).hexdigest()
+    return digest[:48]
+
+
+def build_internal_document_token(*, document_id: int, organization_id: int, version: int, purpose: str) -> str:
+    expires_at = current_utc() + timedelta(minutes=settings.onlyoffice_file_token_expires_minutes)
+    payload = {
+        "sub": f"document:{document_id}",
+        "document_id": document_id,
+        "organization_id": organization_id,
+        "version": version,
+        "purpose": purpose,
+        "exp": expires_at,
+    }
+    return jwt.encode(payload, settings.jwt_secret_key, algorithm=settings.jwt_algorithm)
+
+
+def decode_internal_document_token(token: str, expected_purpose: str) -> dict[str, Any]:
+    try:
+        payload = jwt.decode(token, settings.jwt_secret_key, algorithms=[settings.jwt_algorithm])
+    except JWTError as exc:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Invalid or expired ONLYOFFICE token") from exc
+    if payload.get("purpose") != expected_purpose:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Invalid ONLYOFFICE token purpose")
+    return payload
+
+
+def sign_onlyoffice_config(config: dict[str, Any]) -> dict[str, Any]:
+    secret = (settings.onlyoffice_jwt_secret or "").strip()
+    if not secret:
+        return config
+    signed = dict(config)
+    signed["token"] = jwt.encode(config, secret, algorithm="HS256")
+    return signed
+
+
+def decode_onlyoffice_callback_token(token: str) -> dict[str, Any]:
+    secret = (settings.onlyoffice_jwt_secret or "").strip()
+    if not secret:
+        return {}
+    try:
+        return jwt.decode(token, secret, algorithms=["HS256"])
+    except JWTError as exc:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Invalid ONLYOFFICE callback JWT") from exc
+
+
+def get_onlyoffice_callback_payload(request: Request, body: dict[str, Any]) -> dict[str, Any]:
+    secret = (settings.onlyoffice_jwt_secret or "").strip()
+    if not secret:
+        return body
+
+    auth_header = request.headers.get("authorization", "")
+    bearer_token = auth_header.removeprefix("Bearer ").strip() if auth_header.startswith("Bearer ") else ""
+    body_token = body.get("token") if isinstance(body.get("token"), str) else ""
+    token = bearer_token or body_token
+    if not token:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="ONLYOFFICE callback JWT is required")
+
+    decoded = decode_onlyoffice_callback_token(token)
+    if bearer_token:
+        return body
+    return decoded
+
+
+def build_onlyoffice_callback_note(payload: dict[str, Any]) -> str:
+    users = payload.get("users")
+    if isinstance(users, list) and users:
+        return f"Edited in ONLYOFFICE by {users[0]}"
+    return "Edited in ONLYOFFICE"
+
+
+def get_onlyoffice_actor_user_id(payload: dict[str, Any], fallback_user_id: int) -> int:
+    users = payload.get("users")
+    if isinstance(users, list) and users:
+        try:
+            return int(users[0])
+        except (TypeError, ValueError):
+            return fallback_user_id
+    return fallback_user_id
 
 
 async def validate_case(db: AsyncSession, organization_id: int, case_id: int | None):
@@ -293,6 +414,101 @@ async def get_document(
     return to_response(doc)
 
 
+@router.post("/{document_id}/onlyoffice/session", response_model=OnlyOfficeSessionResponse)
+async def create_onlyoffice_session(
+    document_id: int,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(role_guard(ALLOWED_STAFF)),
+):
+    document_server_url = (settings.onlyoffice_document_server_url or "").strip()
+    if not document_server_url:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Online editor is not configured. Use basic editor or Replace File.",
+        )
+
+    doc = await get_org_document(db, document_id, current_user.organization_id)
+    if not doc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document not found")
+    if not is_docx_document(doc):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="ONLYOFFICE editing currently supports DOCX only")
+
+    backend_base_url = get_public_backend_base_url(request)
+    file_token = build_internal_document_token(
+        document_id=doc.id,
+        organization_id=doc.organization_id,
+        version=doc.version,
+        purpose="onlyoffice_file",
+    )
+    callback_token = build_internal_document_token(
+        document_id=doc.id,
+        organization_id=doc.organization_id,
+        version=doc.version,
+        purpose="onlyoffice_callback",
+    )
+    file_url = f"{backend_base_url}/api/v1/documents/{doc.id}/onlyoffice/file?token={file_token}"
+    callback_url = f"{backend_base_url}/api/v1/documents/{doc.id}/onlyoffice/callback?token={callback_token}"
+
+    config = {
+        "documentType": "word",
+        "document": {
+            "fileType": "docx",
+            "title": doc.file_name,
+            "url": file_url,
+            "key": build_onlyoffice_document_key(doc),
+            "permissions": {
+                "edit": True,
+                "download": True,
+            },
+        },
+        "editorConfig": {
+            "callbackUrl": callback_url,
+            "mode": "edit",
+            "user": {
+                "id": str(current_user.id),
+                "name": current_user.name or current_user.email or f"User {current_user.id}",
+            },
+            "customization": {
+                "autosave": True,
+            },
+        },
+    }
+
+    return OnlyOfficeSessionResponse(
+        document_id=doc.id,
+        version=doc.version,
+        document_server_url=normalize_base_url(document_server_url),
+        editor_config=sign_onlyoffice_config(config),
+        warning=DOCX_WARNING,
+        notes=[
+            "Edits saved from ONLYOFFICE create a new document version.",
+            "The existing basic editor remains available as a fallback for DOCX text edits.",
+        ],
+    )
+
+
+@router.get("/{document_id}/onlyoffice/file")
+async def download_onlyoffice_document_file(
+    document_id: int,
+    token: str,
+    db: AsyncSession = Depends(get_db),
+):
+    payload = decode_internal_document_token(token, expected_purpose="onlyoffice_file")
+    doc = await get_org_document(db, document_id, int(payload["organization_id"]))
+    if not doc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document not found")
+    if int(payload["document_id"]) != doc.id or int(payload["version"]) != doc.version:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="ONLYOFFICE file token no longer matches the current version")
+    if not is_docx_document(doc):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="ONLYOFFICE editing currently supports DOCX only")
+
+    path = Path(doc.file_path)
+    if not path.exists():
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Stored file not found")
+    return FileResponse(path=str(path), filename=doc.file_name, media_type=doc.file_type or DOCX_MIME_TYPE)
+
+
 @router.get("/{document_id}/download")
 async def download_document(
     document_id: int,
@@ -377,10 +593,6 @@ async def replace_document(
     if not doc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document not found")
 
-    previous_path = doc.file_path
-    previous_name = doc.file_name
-    previous_type = doc.file_type
-    previous_size = doc.file_size
     previous_version = doc.version
 
     original_name = safe_original_name(file.filename or "")
@@ -391,21 +603,9 @@ async def replace_document(
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="File exceeds upload size limit")
 
     file_path, _stored_name = persist_file(STORAGE_ROOT, current_user.organization_id, original_name, data)
-    now = datetime.now(timezone.utc)
+    now = current_utc()
 
-    version_row = DocumentVersion(
-        document_id=doc.id,
-        organization_id=doc.organization_id,
-        file_name=previous_name,
-        file_path=previous_path,
-        file_type=previous_type,
-        file_size=previous_size,
-        version_number=previous_version,
-        uploaded_by=current_user.id,
-        source=getattr(doc, "version_source", "upload"),
-        notes=getattr(doc, "version_note", None),
-        created_at=now,
-    )
+    version_row = archive_current_document_version(doc, current_user.id, now)
     db.add(version_row)
 
     doc.file_name = original_name
@@ -492,33 +692,15 @@ async def save_document_editable_content(
     if not is_docx_document(doc):
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Only DOCX documents can be edited in this workflow")
 
-    previous_path = doc.file_path
-    previous_name = doc.file_name
-    previous_type = doc.file_type
-    previous_size = doc.file_size
     previous_version = doc.version
     version_note = payload.version_note.strip() if payload.version_note and payload.version_note.strip() else None
 
     data = render_docx_bytes(payload.content)
     file_name = build_docx_version_name(doc)
     file_path, _stored_name = persist_file(STORAGE_ROOT, current_user.organization_id, file_name, data)
-    now = datetime.now(timezone.utc)
+    now = current_utc()
 
-    db.add(
-        DocumentVersion(
-            document_id=doc.id,
-            organization_id=doc.organization_id,
-            file_name=previous_name,
-            file_path=previous_path,
-            file_type=previous_type,
-            file_size=previous_size,
-            version_number=previous_version,
-            uploaded_by=current_user.id,
-            source=getattr(doc, "version_source", "upload"),
-            notes=getattr(doc, "version_note", None),
-            created_at=now,
-        )
-    )
+    db.add(archive_current_document_version(doc, current_user.id, now))
 
     doc.file_name = file_name
     doc.file_path = file_path
@@ -556,6 +738,96 @@ async def save_document_editable_content(
     await db.commit()
     await db.refresh(doc)
     return to_response(doc)
+
+
+@router.post("/{document_id}/onlyoffice/callback")
+async def handle_onlyoffice_callback(
+    document_id: int,
+    request: Request,
+    token: str,
+    db: AsyncSession = Depends(get_db),
+):
+    payload = decode_internal_document_token(token, expected_purpose="onlyoffice_callback")
+    doc = await get_org_document(db, document_id, int(payload["organization_id"]))
+    if not doc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document not found")
+    if int(payload["document_id"]) != doc.id:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="ONLYOFFICE callback token does not match this document")
+    if not is_docx_document(doc):
+        return ONLYOFFICE_CALLBACK_SUCCESS
+
+    body = await request.json()
+    callback_payload = get_onlyoffice_callback_payload(request, body)
+    status_code = int(callback_payload.get("status") or 0)
+    if status_code not in ONLYOFFICE_SAVE_STATUSES:
+        return ONLYOFFICE_CALLBACK_SUCCESS
+
+    expected_key = build_onlyoffice_document_key(doc)
+    if callback_payload.get("key") != expected_key:
+        return ONLYOFFICE_CALLBACK_SUCCESS
+    if int(payload["version"]) != doc.version:
+        return ONLYOFFICE_CALLBACK_SUCCESS
+
+    file_url = callback_payload.get("url")
+    if not file_url or not isinstance(file_url, str):
+        return ONLYOFFICE_CALLBACK_SUCCESS
+
+    async with httpx.AsyncClient(timeout=60.0) as client:
+        response = await client.get(file_url)
+        response.raise_for_status()
+        data = response.content
+
+    if not data:
+        return ONLYOFFICE_CALLBACK_SUCCESS
+    if len(data) > MAX_UPLOAD_BYTES:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Edited file exceeds upload size limit")
+
+    current_file_bytes = Path(doc.file_path).read_bytes()
+    if current_file_bytes == data:
+        return ONLYOFFICE_CALLBACK_SUCCESS
+
+    actor_user_id = get_onlyoffice_actor_user_id(callback_payload, doc.uploaded_by)
+    now = current_utc()
+    db.add(archive_current_document_version(doc, actor_user_id, now))
+
+    file_name = build_docx_version_name(doc)
+    file_path, _stored_name = persist_file(STORAGE_ROOT, doc.organization_id, file_name, data)
+    previous_version = doc.version
+    doc.file_name = file_name
+    doc.file_path = file_path
+    doc.file_type = DOCX_MIME_TYPE
+    doc.file_size = len(data)
+    doc.version = previous_version + 1
+    doc.uploaded_by = actor_user_id
+    doc.version_source = "onlyoffice_edit"
+    doc.version_note = build_onlyoffice_callback_note(callback_payload)
+    doc.updated_at = now
+
+    await log_audit_event(
+        db,
+        organization_id=doc.organization_id,
+        user_id=actor_user_id,
+        action="document_onlyoffice_edited",
+        entity_type="document",
+        entity_id=str(doc.id),
+        description=f"Document edited in ONLYOFFICE: {doc.title}",
+        metadata_json={"previous_version": previous_version, "new_version": doc.version, "source": "onlyoffice_edit"},
+        ip_address=request.client.host if request.client else None,
+        user_agent=request.headers.get("user-agent"),
+    )
+    if doc.case_id:
+        await create_case_timeline_event(
+            db,
+            organization_id=doc.organization_id,
+            case_id=doc.case_id,
+            actor_id=actor_user_id,
+            event_type="document_onlyoffice_edited",
+            title=f"Document edited: {doc.title}",
+            metadata_json={"document_id": doc.id, "version": doc.version, "source": "onlyoffice_edit"},
+        )
+
+    await db.commit()
+    return ONLYOFFICE_CALLBACK_SUCCESS
 
 
 @router.get("/{document_id}/versions", response_model=list[DocumentVersionResponse])

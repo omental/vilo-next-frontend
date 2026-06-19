@@ -109,6 +109,13 @@ def _version_obj(version_id=8, doc_id=51, org_id=1):
     )
 
 
+def _docx_doc(doc_id=51, org_id=1, path="/tmp/editable.docx"):
+    doc = _doc_obj(doc_id=doc_id, org_id=org_id, path=path)
+    doc.file_name = "editable.docx"
+    doc.file_type = documents_module.DOCX_MIME_TYPE
+    return doc
+
+
 def build_client(role: str, db: DocsVersionDBStub, org_id: int = 1):
     user = DummyUser(id=10, organization_id=org_id, name=f"{role} user", email="u@example.com", role=UserRole(role))
 
@@ -126,6 +133,14 @@ def build_client(role: str, db: DocsVersionDBStub, org_id: int = 1):
 def cleanup(client: TestClient):
     client.close()
     app.dependency_overrides.clear()
+
+
+def build_db_client(db: DocsVersionDBStub):
+    async def _get_db() -> AsyncIterator[DocsVersionDBStub]:
+        yield db
+
+    app.dependency_overrides[deps_module.get_db] = _get_db
+    return TestClient(app)
 
 
 def test_replace_document_updates_latest_and_keeps_previous_metadata(monkeypatch):
@@ -238,6 +253,82 @@ def test_client_role_cannot_access_docx_editable_content():
         assert res.status_code == 403
     finally:
         cleanup(client)
+
+
+def test_onlyoffice_session_blocks_non_docx(monkeypatch):
+    monkeypatch.setattr(documents_module.settings, "onlyoffice_document_server_url", "https://docs.example.com")
+    db = DocsVersionDBStub(scalar_values=[_doc_obj()])
+    client = build_client("admin", db)
+    try:
+        res = client.post("/api/v1/documents/51/onlyoffice/session")
+        assert res.status_code == 400
+        assert "DOCX only" in res.json()["detail"]
+    finally:
+        cleanup(client)
+
+
+def test_onlyoffice_session_is_org_scoped(monkeypatch):
+    monkeypatch.setattr(documents_module.settings, "onlyoffice_document_server_url", "https://docs.example.com")
+    db = DocsVersionDBStub(scalar_values=[None])
+    client = build_client("lawyer", db)
+    try:
+        res = client.post("/api/v1/documents/999/onlyoffice/session")
+        assert res.status_code == 404
+    finally:
+        cleanup(client)
+
+
+def test_client_role_cannot_create_onlyoffice_session():
+    db = DocsVersionDBStub()
+    client = build_client("client", db)
+    try:
+        res = client.post("/api/v1/documents/51/onlyoffice/session")
+        assert res.status_code == 403
+    finally:
+        cleanup(client)
+
+
+def test_onlyoffice_session_returns_editor_config_without_raw_path(monkeypatch):
+    monkeypatch.setattr(documents_module.settings, "onlyoffice_document_server_url", "https://docs.example.com/")
+    monkeypatch.setattr(documents_module.settings, "public_backend_url", "https://api.example.com")
+    monkeypatch.setattr(documents_module.settings, "onlyoffice_jwt_secret", None)
+    doc = _docx_doc(path="/private/storage/org1/editable.docx")
+    db = DocsVersionDBStub(scalar_values=[doc])
+    client = build_client("partner", db)
+    try:
+        res = client.post("/api/v1/documents/51/onlyoffice/session")
+        assert res.status_code == 200
+        body = res.json()
+        assert body["document_id"] == 51
+        assert body["document_server_url"] == "https://docs.example.com"
+        assert body["editor_config"]["document"]["fileType"] == "docx"
+        assert body["editor_config"]["editorConfig"]["mode"] == "edit"
+        assert "/private/storage" not in str(body)
+        assert "file_path" not in str(body)
+    finally:
+        cleanup(client)
+
+
+@pytest.mark.asyncio
+async def test_onlyoffice_file_endpoint_requires_valid_token(tmp_path):
+    doc_path = tmp_path / "org1" / "editable.docx"
+    doc_path.parent.mkdir(parents=True, exist_ok=True)
+    doc_path.write_bytes(b"docx-binary")
+    doc = _docx_doc(path=str(doc_path))
+    db = DocsVersionDBStub(scalar_values=[doc])
+
+    with pytest.raises(HTTPException) as exc:
+        await documents_module.download_onlyoffice_document_file(document_id=51, token="invalid", db=db)
+    assert exc.value.status_code == 403
+
+    valid_token = documents_module.build_internal_document_token(
+        document_id=51,
+        organization_id=1,
+        version=1,
+        purpose="onlyoffice_file",
+    )
+    response = await documents_module.download_onlyoffice_document_file(document_id=51, token=valid_token, db=db)
+    assert response.filename == "editable.docx"
 
 
 @pytest.mark.asyncio
@@ -372,6 +463,125 @@ async def test_save_docx_edit_creates_new_version_and_keeps_original(tmp_path):
     assert doc.file_path != str(old_path)
     assert documents_module.extract_docx_text(doc.file_path) == "Edited content"
     monkey.undo()
+
+
+@pytest.mark.asyncio
+async def test_onlyoffice_callback_save_creates_new_version_and_preserves_original(tmp_path, monkeypatch):
+    monkeypatch.setattr(documents_module.settings, "onlyoffice_jwt_secret", None)
+    monkeypatch.setattr(documents_module, "STORAGE_ROOT", tmp_path)
+
+    original_bytes = documents_module.render_docx_bytes("Original version")
+    edited_bytes = documents_module.render_docx_bytes("Edited in onlyoffice")
+    old_path = tmp_path / "org1" / "editable.docx"
+    old_path.parent.mkdir(parents=True, exist_ok=True)
+    old_path.write_bytes(original_bytes)
+
+    doc = _docx_doc(path=str(old_path))
+    db = DocsVersionDBStub()
+    version_rows = []
+
+    async def scalar_side_effect(query, *args, **kwargs):
+        if "documents.id" in str(query):
+            return doc
+        return None
+
+    db.scalar = scalar_side_effect  # type: ignore[assignment]
+
+    def add_side_effect(obj):
+        db.added.append(obj)
+        if obj.__class__.__name__ == "DocumentVersion":
+            version_rows.append(obj)
+
+    db.add = add_side_effect  # type: ignore[assignment]
+
+    class DummyResponse:
+        def __init__(self, content):
+            self.content = content
+
+        def raise_for_status(self):
+            return None
+
+    class DummyAsyncClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+        async def get(self, _url):
+            return DummyResponse(edited_bytes)
+
+    monkeypatch.setattr(documents_module.httpx, "AsyncClient", DummyAsyncClient)
+
+    callback_token = documents_module.build_internal_document_token(
+        document_id=51,
+        organization_id=1,
+        version=1,
+        purpose="onlyoffice_callback",
+    )
+    key = documents_module.build_onlyoffice_document_key(doc)
+    client = build_db_client(db)
+    try:
+        res = client.post(
+            f"/api/v1/documents/51/onlyoffice/callback?token={callback_token}",
+            json={"status": 2, "url": "https://docs.example.com/cache/file.docx", "key": key, "users": ["10"]},
+        )
+        assert res.status_code == 200
+        assert res.json() == {"error": 0}
+        assert doc.version == 2
+        assert doc.version_source == "onlyoffice_edit"
+        assert doc.version_note == "Edited in ONLYOFFICE by 10"
+        assert len(version_rows) == 1
+        assert version_rows[0].version_number == 1
+        assert Path(version_rows[0].file_path).read_bytes() == original_bytes
+        assert Path(doc.file_path).read_bytes() == edited_bytes
+        assert doc.file_path != str(old_path)
+    finally:
+        cleanup(client)
+
+
+@pytest.mark.asyncio
+async def test_onlyoffice_callback_no_change_does_not_create_new_version(tmp_path, monkeypatch):
+    monkeypatch.setattr(documents_module.settings, "onlyoffice_jwt_secret", None)
+    monkeypatch.setattr(documents_module, "STORAGE_ROOT", tmp_path)
+
+    original_bytes = documents_module.render_docx_bytes("Original version")
+    old_path = tmp_path / "org1" / "editable.docx"
+    old_path.parent.mkdir(parents=True, exist_ok=True)
+    old_path.write_bytes(original_bytes)
+
+    doc = _docx_doc(path=str(old_path))
+    db = DocsVersionDBStub()
+
+    async def scalar_side_effect(query, *args, **kwargs):
+        if "documents.id" in str(query):
+            return doc
+        return None
+
+    db.scalar = scalar_side_effect  # type: ignore[assignment]
+
+    callback_token = documents_module.build_internal_document_token(
+        document_id=51,
+        organization_id=1,
+        version=1,
+        purpose="onlyoffice_callback",
+    )
+    key = documents_module.build_onlyoffice_document_key(doc)
+    client = build_db_client(db)
+    try:
+        res = client.post(
+            f"/api/v1/documents/51/onlyoffice/callback?token={callback_token}",
+            json={"status": 4, "key": key},
+        )
+        assert res.status_code == 200
+        assert res.json() == {"error": 0}
+        assert doc.version == 1
+        assert [row for row in db.added if row.__class__.__name__ == "DocumentVersion"] == []
+    finally:
+        cleanup(client)
 
 
 def test_cross_org_docx_edit_access_blocked():

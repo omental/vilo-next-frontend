@@ -31,6 +31,8 @@ const FOLDER_ITEMS = [
   { key: "archive", label: "Archive" },
 ];
 
+const ONLYOFFICE_EDITOR_ID = "vilo-onlyoffice-editor";
+
 export default function DocumentsPage() {
   return (
     <Suspense fallback={<section className="dashboard-page-stack"><div className="vilo-state-block"><p className="vilo-state vilo-state--loading">Loading documents...</p></div></section>}>
@@ -60,6 +62,9 @@ function DocumentsPageContent() {
   const [editVersionNote, setEditVersionNote] = useState("");
   const [editWarning, setEditWarning] = useState("");
   const [editLoading, setEditLoading] = useState(false);
+  const [onlyOfficeTarget, setOnlyOfficeTarget] = useState(null);
+  const [onlyOfficeSession, setOnlyOfficeSession] = useState(null);
+  const [onlyOfficeLoading, setOnlyOfficeLoading] = useState(false);
   const [versionTarget, setVersionTarget] = useState(null);
   const [versions, setVersions] = useState([]);
   const [success, setSuccess] = useState("");
@@ -73,6 +78,7 @@ function DocumentsPageContent() {
   const [page, setPage] = useState(1);
   const [dragActive, setDragActive] = useState(false);
   const [folderNotice, setFolderNotice] = useState("");
+  const onlyOfficeEditorRef = useRef(null);
   const uploadOpen = searchParams.get("upload") === "1";
   const requestedClientId = searchParams.get("client_id") || "";
   const currentUser = useMemo(() => getCachedUser(), []);
@@ -144,6 +150,10 @@ function DocumentsPageContent() {
         closeReplaceModal();
         return;
       }
+      if (onlyOfficeTarget) {
+        closeOnlyOfficeModal();
+        return;
+      }
       if (editTarget) {
         closeEditModal();
         return;
@@ -159,7 +169,44 @@ function DocumentsPageContent() {
 
     window.addEventListener("keydown", handleKeydown);
     return () => window.removeEventListener("keydown", handleKeydown);
-  }, [editTarget, menuOpenId, replaceTarget, versionTarget, uploadOpen]);
+  }, [editTarget, menuOpenId, onlyOfficeTarget, replaceTarget, versionTarget, uploadOpen]);
+
+  useEffect(() => {
+    if (!onlyOfficeSession) return undefined;
+
+    let cancelled = false;
+
+    async function mountEditor() {
+      try {
+        await loadOnlyOfficeScript(onlyOfficeSession.document_server_url);
+        if (cancelled) return;
+        if (!window.DocsAPI?.DocEditor) {
+          throw new Error("ONLYOFFICE editor script loaded, but the editor API is unavailable.");
+        }
+        if (onlyOfficeEditorRef.current?.destroyEditor) {
+          onlyOfficeEditorRef.current.destroyEditor();
+        }
+        const host = document.getElementById(ONLYOFFICE_EDITOR_ID);
+        if (!host) return;
+        host.innerHTML = "";
+        onlyOfficeEditorRef.current = new window.DocsAPI.DocEditor(ONLYOFFICE_EDITOR_ID, onlyOfficeSession.editor_config);
+      } catch (err) {
+        setError(err.message || "Failed to load the online editor.");
+      } finally {
+        if (!cancelled) setOnlyOfficeLoading(false);
+      }
+    }
+
+    mountEditor();
+
+    return () => {
+      cancelled = true;
+      if (onlyOfficeEditorRef.current?.destroyEditor) {
+        onlyOfficeEditorRef.current.destroyEditor();
+      }
+      onlyOfficeEditorRef.current = null;
+    };
+  }, [onlyOfficeSession]);
 
   const casesById = useMemo(() => {
     return new Map(cases.map((row) => [Number(row.id), row]));
@@ -359,12 +406,43 @@ function DocumentsPageContent() {
     }
   }
 
+  async function openOnlyOfficeModal(document) {
+    setOnlyOfficeTarget(document);
+    setOnlyOfficeSession(null);
+    setOnlyOfficeLoading(true);
+    setMenuOpenId(null);
+    setError("");
+    setSuccess("");
+
+    try {
+      const response = await apiRequest(`/api/v1/documents/${document.id}/onlyoffice/session`, {
+        method: "POST",
+      });
+      setOnlyOfficeSession(response);
+    } catch (err) {
+      setOnlyOfficeTarget(null);
+      setOnlyOfficeSession(null);
+      setOnlyOfficeLoading(false);
+      setError(err.message || "Failed to open the Word editor");
+    }
+  }
+
   function closeEditModal() {
     setEditTarget(null);
     setEditContent("");
     setEditVersionNote("");
     setEditWarning("");
     setEditLoading(false);
+  }
+
+  function closeOnlyOfficeModal() {
+    if (onlyOfficeEditorRef.current?.destroyEditor) {
+      onlyOfficeEditorRef.current.destroyEditor();
+    }
+    onlyOfficeEditorRef.current = null;
+    setOnlyOfficeTarget(null);
+    setOnlyOfficeSession(null);
+    setOnlyOfficeLoading(false);
   }
 
   async function saveEditedContent(event) {
@@ -594,6 +672,9 @@ function DocumentsPageContent() {
                                 {menuOpenId === document.id ? (
                                   <div className="case-actions-menu documents-actions-menu">
                                     <button type="button" onClick={() => apiDownload(`/api/v1/documents/${document.id}/download`).catch((err) => setError(err.message || "Download failed"))}>Download</button>
+                                    {isDocxDocument(document) ? (
+                                      <button type="button" onClick={() => openOnlyOfficeModal(document)}>Open in Word Editor</button>
+                                    ) : null}
                                     {isDocxDocument(document) ? (
                                       <button type="button" onClick={() => openEditModal(document)}>Edit Content</button>
                                     ) : null}
@@ -829,6 +910,40 @@ function DocumentsPageContent() {
         </div>
       ) : null}
 
+      {onlyOfficeTarget ? (
+        <div className="vilo-modal-overlay" onClick={closeOnlyOfficeModal}>
+          <div className="vilo-modal documents-onlyoffice-modal" onClick={(event) => event.stopPropagation()}>
+            <div className="vilo-modal__header documents-onlyoffice-modal__header">
+              <div>
+                <h3>Word Editor</h3>
+                <p className="documents-onlyoffice-modal__subcopy">{onlyOfficeTarget.title || onlyOfficeTarget.file_name}</p>
+              </div>
+              <button type="button" className="vilo-btn vilo-btn--ghost vilo-btn--xs" onClick={closeOnlyOfficeModal}>Close</button>
+            </div>
+            <div className="vilo-modal__body documents-onlyoffice-modal__body">
+              <p className="documents-edit-form__warning">
+                Edits are saved as a new version. Original versions are preserved.
+              </p>
+              <p className="documents-edit-form__note">
+                Use the basic editor or Replace File if the online editor is unavailable.
+              </p>
+              {onlyOfficeSession?.notes?.length ? (
+                <div className="documents-onlyoffice-modal__notes">
+                  {onlyOfficeSession.notes.map((note) => <p key={note}>{note}</p>)}
+                </div>
+              ) : null}
+              {onlyOfficeLoading ? (
+                <div className="documents-onlyoffice-editor documents-onlyoffice-editor--loading">
+                  <p className="vilo-state">Loading online editor...</p>
+                </div>
+              ) : (
+                <div id={ONLYOFFICE_EDITOR_ID} className="documents-onlyoffice-editor" />
+              )}
+            </div>
+          </div>
+        </div>
+      ) : null}
+
       {versionTarget ? (
         <div className="vilo-modal-overlay" onClick={() => setVersionTarget(null)}>
           <div className="vilo-modal documents-versions-modal" onClick={(event) => event.stopPropagation()}>
@@ -958,7 +1073,35 @@ function toTitleCase(value) {
 function formatVersionSource(value) {
   if (!value) return "-";
   if (value === "content_edit") return "Content Edit";
+  if (value === "onlyoffice_edit") return "ONLYOFFICE Edit";
   return toTitleCase(value);
+}
+
+async function loadOnlyOfficeScript(documentServerUrl) {
+  const src = `${String(documentServerUrl || "").replace(/\/$/, "")}/web-apps/apps/api/documents/api.js`;
+  const existing = document.querySelector(`script[data-onlyoffice-src="${src}"]`);
+  if (existing) {
+    if (window.DocsAPI?.DocEditor) return;
+    await waitForScript(existing);
+    return;
+  }
+
+  await new Promise((resolve, reject) => {
+    const script = document.createElement("script");
+    script.src = src;
+    script.async = true;
+    script.dataset.onlyofficeSrc = src;
+    script.onload = resolve;
+    script.onerror = () => reject(new Error("Failed to load ONLYOFFICE editor assets."));
+    document.body.appendChild(script);
+  });
+}
+
+function waitForScript(script) {
+  return new Promise((resolve, reject) => {
+    script.addEventListener("load", resolve, { once: true });
+    script.addEventListener("error", () => reject(new Error("Failed to load ONLYOFFICE editor assets.")), { once: true });
+  });
 }
 
 function FolderIcon() {

@@ -1,5 +1,6 @@
 from datetime import datetime
-from pydantic import BaseModel
+from typing import Any
+from pydantic import BaseModel, Field
 
 
 class DocumentResponse(BaseModel):
@@ -57,3 +58,12 @@ class DocumentEditableContentResponse(BaseModel):
 class DocumentEditableContentUpdate(BaseModel):
     content: str
     version_note: str | None = None
+
+
+class OnlyOfficeSessionResponse(BaseModel):
+    document_id: int
+    version: int
+    document_server_url: str
+    editor_config: dict[str, Any]
+    warning: str | None = None
+    notes: list[str] = Field(default_factory=list)
