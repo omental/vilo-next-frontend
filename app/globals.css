@@ -5629,11 +5629,12 @@ button {
   max-height: calc(100vh - 48px);
   display: flex;
   flex-direction: column;
-  overflow: visible;
+  overflow: hidden;
 }
 
 .documents-onlyoffice-overlay--fullscreen {
   padding: 0;
+  background: #fff;
 }
 
 .documents-onlyoffice-modal--fullscreen {
@@ -5645,10 +5646,17 @@ button {
   max-height: none;
   border-radius: 0;
   border-width: 0;
+  box-shadow: none;
+  background: #fff;
 }
 
 .documents-onlyoffice-modal__header {
   align-items: flex-start;
+  padding: 0.8rem 1rem;
+}
+
+.documents-onlyoffice-modal__heading {
+  min-width: 0;
 }
 
 .documents-onlyoffice-modal__actions {
@@ -5663,37 +5671,58 @@ button {
   margin: 0;
 }
 
+.documents-onlyoffice-modal__header h3 {
+  font-size: 1rem;
+  line-height: 1.25;
+  word-break: break-word;
+}
+
 .documents-onlyoffice-modal__subcopy {
-  margin-top: 0.3rem;
+  margin-top: 0.15rem;
   color: #7b7790;
-  font-size: 0.9rem;
+  font-size: 0.78rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.documents-onlyoffice-modal--fullscreen .documents-onlyoffice-modal__header {
+  padding: 0.75rem 1rem;
+}
+
+.documents-onlyoffice-modal--fullscreen .documents-onlyoffice-modal__subcopy {
+  display: none;
 }
 
 .documents-onlyoffice-modal__body {
   display: flex;
   flex: 1;
   flex-direction: column;
-  gap: 0.75rem;
+  gap: 0.5rem;
   min-height: 0;
   overflow: hidden;
+  padding-top: 0.75rem;
 }
 
-.documents-onlyoffice-modal__info {
-  display: grid;
-  gap: 0.45rem;
-  flex-shrink: 0;
+.documents-onlyoffice-modal--fullscreen .documents-onlyoffice-modal__body {
+  gap: 0;
+  padding: 0;
 }
 
-.documents-onlyoffice-modal__notes {
+.documents-onlyoffice-modal__meta {
   display: grid;
   gap: 0.35rem;
-  color: #6a6384;
-  font-size: 0.82rem;
   flex-shrink: 0;
 }
 
-.documents-onlyoffice-modal__notes p {
+.documents-onlyoffice-modal__note,
+.documents-onlyoffice-modal__statusline {
   margin: 0;
+}
+
+.documents-onlyoffice-modal__statusline {
+  color: #7a768f;
+  font-size: 0.76rem;
+  line-height: 1.45;
 }
 
 .documents-onlyoffice-editor-shell {
@@ -5702,6 +5731,7 @@ button {
   flex: 1;
   min-height: 600px;
   min-width: 0;
+  overflow: hidden;
 }
 
 .documents-onlyoffice-editor-shell--fullscreen {
@@ -5713,6 +5743,7 @@ button {
   height: 100%;
   flex: 1;
   min-height: 100%;
+  min-width: 0;
   border: 1px solid #e7e1f5;
   border-radius: 16px;
   overflow: visible;
@@ -5720,7 +5751,9 @@ button {
 }
 
 .documents-onlyoffice-modal--fullscreen .documents-onlyoffice-editor {
+  border-width: 0;
   border-radius: 0;
+  background: #fff;
 }
 
 .documents-onlyoffice-editor-status {
@@ -5731,12 +5764,14 @@ button {
   padding: 1rem;
   border: 1px solid #e7e1f5;
   border-radius: 16px;
-  background: linear-gradient(180deg, rgba(247, 245, 253, 0.96) 0%, rgba(255, 255, 255, 0.96) 100%);
+  background: linear-gradient(180deg, rgba(247, 245, 253, 0.97) 0%, rgba(255, 255, 255, 0.97) 100%);
   text-align: center;
 }
 
 .documents-onlyoffice-modal--fullscreen .documents-onlyoffice-editor-status {
+  border-width: 0;
   border-radius: 0;
+  background: rgba(255, 255, 255, 0.96);
 }
 
 .documents-edit-form__warning--compact,

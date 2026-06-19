@@ -88,6 +88,7 @@ function DocumentsPageContent() {
   const requestedClientId = searchParams.get("client_id") || "";
   const currentUser = useMemo(() => getCachedUser(), []);
   const onlyOfficeContainerId = onlyOfficeTarget ? `${ONLYOFFICE_EDITOR_ID_PREFIX}-${onlyOfficeTarget.id}` : null;
+  const onlyOfficeDisplayTitle = onlyOfficeTarget?.title || onlyOfficeTarget?.file_name || "Untitled document";
 
   async function load() {
     setLoading(true);
@@ -498,7 +499,7 @@ function DocumentsPageContent() {
     setEditLoading(false);
   }
 
-  function closeOnlyOfficeModal() {
+  async function closeOnlyOfficeModal() {
     destroyOnlyOfficeEditor(onlyOfficeEditorRef, onlyOfficeInitKeyRef, onlyOfficeContainerId);
     setOnlyOfficeTarget(null);
     setOnlyOfficeSession(null);
@@ -506,6 +507,11 @@ function DocumentsPageContent() {
     setOnlyOfficeStatus("idle");
     setOnlyOfficeError("");
     setOnlyOfficeFullscreen(false);
+    try {
+      await load();
+    } catch {
+      // load() already updates the shared error state.
+    }
   }
 
   async function saveEditedContent(event) {
@@ -983,9 +989,9 @@ function DocumentsPageContent() {
             onClick={(event) => event.stopPropagation()}
           >
             <div className="vilo-modal__header documents-onlyoffice-modal__header">
-              <div>
-                <h3>Word Editor</h3>
-                <p className="documents-onlyoffice-modal__subcopy">{onlyOfficeTarget.title || onlyOfficeTarget.file_name}</p>
+              <div className="documents-onlyoffice-modal__heading">
+                <h3>{onlyOfficeDisplayTitle}</h3>
+                {!onlyOfficeFullscreen ? <p className="documents-onlyoffice-modal__subcopy">Word Editor</p> : null}
               </div>
               <div className="documents-onlyoffice-modal__actions">
                 <button
@@ -999,17 +1005,14 @@ function DocumentsPageContent() {
               </div>
             </div>
             <div className="vilo-modal__body documents-onlyoffice-modal__body">
-              <div className="documents-onlyoffice-modal__info">
-                <p className="documents-edit-form__warning documents-edit-form__warning--compact">
-                  Edits are saved as a new version. Original versions are preserved.
-                </p>
-                <p className="documents-edit-form__note documents-edit-form__note--compact">
-                  Use the basic editor or Replace File if the online editor is unavailable.
-                </p>
-              </div>
-              {onlyOfficeSession?.notes?.length ? (
-                <div className="documents-onlyoffice-modal__notes">
-                  {onlyOfficeSession.notes.map((note) => <p key={note}>{note}</p>)}
+              {!onlyOfficeFullscreen ? (
+                <div className="documents-onlyoffice-modal__meta">
+                  <p className="documents-edit-form__warning documents-edit-form__warning--compact documents-onlyoffice-modal__note">
+                    Edits are saved as a new version. Original versions are preserved.
+                  </p>
+                  <p className="documents-onlyoffice-modal__statusline">
+                    Autosave is enabled. Closing the editor preserves changes as a new version after ONLYOFFICE finishes saving.
+                  </p>
                 </div>
               ) : null}
               <div className={`documents-onlyoffice-editor-shell${onlyOfficeFullscreen ? " documents-onlyoffice-editor-shell--fullscreen" : ""}`}>
@@ -1019,19 +1022,14 @@ function DocumentsPageContent() {
                     className="documents-onlyoffice-editor"
                   />
                 ) : null}
-                {!isMounted ? (
-                  <div className="documents-onlyoffice-editor-status">
-                    <p className="vilo-state">Preparing editor...</p>
-                  </div>
-                ) : null}
                 {isMounted && onlyOfficeError ? (
                   <div className="documents-onlyoffice-editor-status">
                     <p className="vilo-state vilo-state--error">{onlyOfficeError || "Failed to load ONLYOFFICE editor"}</p>
                   </div>
                 ) : null}
-                {isMounted && !onlyOfficeError && (onlyOfficeLoading || onlyOfficeStatus !== "ready") ? (
+                {(!isMounted || (!onlyOfficeError && (onlyOfficeLoading || onlyOfficeStatus !== "ready"))) ? (
                   <div className="documents-onlyoffice-editor-status">
-                    <p className="vilo-state">{getOnlyOfficeStatusMessage(onlyOfficeStatus)}</p>
+                    <p className="vilo-state">Opening Word Editor...</p>
                   </div>
                 ) : null}
               </div>
@@ -1231,14 +1229,6 @@ function getOnlyOfficeSessionKey(document, session) {
     session?.version ?? "unknown",
     session?.editor_config?.document?.key ?? "unknown",
   ].join(":");
-}
-
-function getOnlyOfficeStatusMessage(status) {
-  if (status === "preparing") return "Preparing editor...";
-  if (status === "script") return "Loading ONLYOFFICE script...";
-  if (status === "opening") return "Opening document...";
-  if (status === "error") return "Failed to load ONLYOFFICE editor";
-  return "Preparing editor...";
 }
 
 function FolderIcon() {
