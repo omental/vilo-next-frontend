@@ -652,7 +652,7 @@ async def apply_trust(
         trust_account_id=payload.trust_account_id,
         currency=payload.currency,
         description=payload.description,
-        reference_number=payload.reference_number,
+        reference_number=payload.external_reference_number or payload.reference_number,
         payment_date=payload.payment_date,
         audit_request={
             "ip_address": request.client.host if request.client else None,

@@ -13,7 +13,7 @@ class TrustAccount(Base):
     id: Mapped[int] = mapped_column(primary_key=True, index=True)
     organization_id: Mapped[int] = mapped_column(ForeignKey("organizations.id", ondelete="CASCADE"), index=True, nullable=False)
     name: Mapped[str] = mapped_column(String(255), nullable=False)
-    currency: Mapped[str] = mapped_column(String(10), nullable=False, default="USD")
+    currency: Mapped[str] = mapped_column(String(10), nullable=False, default="JMD")
     account_type: Mapped[str] = mapped_column(String(30), nullable=False, default="pooled")
     is_default: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     opening_balance: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False, default=0)

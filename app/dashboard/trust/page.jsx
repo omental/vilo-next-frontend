@@ -1,87 +1,65 @@
 "use client";
 
+import Link from "next/link";
 import { Suspense, useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { getCachedUser, setCachedUser } from "../../../lib/auth";
-import { apiRequest } from "../../../lib/api";
+import { apiDownload, apiRequest } from "../../../lib/api";
 
-const TAB_OPTIONS = ["transactions", "client_ledgers", "matter_ledgers", "receipts", "reconciliation"];
-const MODAL_DEFAULTS = {
-  deposit: {
-    trust_account_id: "",
-    client_id: "",
-    case_id: "",
-    amount: "",
-    currency: "USD",
-    transaction_date: "",
-    payment_method: "",
-    reference_number: "",
-    description: "",
-    payee_name: "",
-    payee_type: "",
-    adjustment_direction: "increase",
-    adjustment_reason: "",
-  },
-  disbursement: {
-    trust_account_id: "",
-    client_id: "",
-    case_id: "",
-    amount: "",
-    currency: "USD",
-    transaction_date: "",
-    payment_method: "",
-    reference_number: "",
-    description: "",
-    payee_name: "",
-    payee_type: "",
-    adjustment_direction: "increase",
-    adjustment_reason: "",
-  },
-  refund: {
-    trust_account_id: "",
-    client_id: "",
-    case_id: "",
-    amount: "",
-    currency: "USD",
-    transaction_date: "",
-    payment_method: "",
-    reference_number: "",
-    description: "",
-    payee_name: "",
-    payee_type: "",
-    adjustment_direction: "increase",
-    adjustment_reason: "",
-  },
-  adjustment: {
-    trust_account_id: "",
-    client_id: "",
-    case_id: "",
-    amount: "",
-    currency: "USD",
-    transaction_date: "",
-    payment_method: "",
-    reference_number: "",
-    description: "",
-    payee_name: "",
-    payee_type: "",
-    adjustment_direction: "increase",
-    adjustment_reason: "",
-  },
+const TAB_OPTIONS = ["transactions", "client_ledgers", "matter_ledgers", "receipts"];
+const SUPPORTED_CURRENCIES = ["JMD", "USD"];
+const TX_TYPES = ["deposit", "disbursement", "refund", "adjustment"];
+
+const EMPTY_FILTERS = {
+  client_id: "",
+  case_id: "",
+  transaction_type: "",
+  status: "",
+  currency: "JMD",
+  date_from: "",
+  date_to: "",
+  include_reversed: true,
+};
+
+const FORM_DEFAULTS = {
+  trust_account_id: "",
+  client_id: "",
+  case_id: "",
+  amount: "",
+  currency: "JMD",
+  transaction_date: "",
+  payment_method: "",
+  external_reference_number: "",
+  description: "",
+  payee_name: "",
+  payee_type: "",
+  adjustment_direction: "increase",
+  adjustment_reason: "",
 };
 
 function roleCanManage(role) {
   return role === "partner" || role === "admin";
 }
 
-function formatMoney(value, currency = "USD") {
+function formatMoney(value, currency = "JMD") {
   return new Intl.NumberFormat("en-US", { style: "currency", currency }).format(Number(value || 0));
 }
 
-function formatDate(value) {
+function formatDate(value, includeTime = false) {
   if (!value) return "-";
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return value;
-  return date.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
+  return date.toLocaleString("en-US", includeTime ? {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  } : {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+  });
 }
 
 function today() {
@@ -91,37 +69,51 @@ function today() {
 function buildSearch(path, params) {
   const search = new URLSearchParams();
   Object.entries(params).forEach(([key, value]) => {
-    if (value === undefined || value === null || value === "" || value === false) return;
+    if (value === undefined || value === null || value === "") return;
+    if (typeof value === "boolean") {
+      search.set(key, value ? "true" : "false");
+      return;
+    }
     search.set(key, String(value));
   });
   const query = search.toString();
   return query ? `${path}?${query}` : path;
 }
 
-function txStatus(txn) {
-  if (txn.voided_at) return "voided";
-  if (txn.reversal_of_id) return "reversal";
-  return "active";
+function typeLabel(type) {
+  return String(type || "").replaceAll("_", " ").replace(/\b\w/g, (char) => char.toUpperCase());
+}
+
+function txTypeTone(txn) {
+  if (txn.status === "reversal") return "reversal";
+  if (txn.transaction_type === "deposit") return "deposit";
+  if (txn.transaction_type === "disbursement") return "disbursement";
+  if (txn.transaction_type === "refund") return "refund";
+  if (txn.transaction_type === "transfer_to_operating") return "transfer";
+  return "adjustment";
 }
 
 function txDirection(txn) {
   if (txn.transaction_type === "deposit") return "inflow";
   if (txn.transaction_type === "adjustment") return txn.adjustment_direction === "decrease" ? "outflow" : "inflow";
+  if (txn.status === "reversal" && txn.adjustment_direction !== "decrease") return "inflow";
   return "outflow";
 }
 
-function txTypeLabel(txn) {
-  if (txn.reversal_of_id) return "Reversal adjustment";
-  return txn.transaction_type.replaceAll("_", " ");
+function txStatusLabel(status) {
+  if (status === "reversed") return "Reversed";
+  if (status === "reversal") return "Reversal";
+  return "Active";
 }
 
-function sectionCopy(modal) {
-  if (modal === "deposit") return "Client funds are held in trust and remain separate from firm operating revenue.";
-  if (modal === "disbursement") return "Use disbursement only for third-party payouts from trust. Revenue is not created here.";
-  if (modal === "refund") return "Refund returns unused client funds from trust. It does not affect invoice revenue or tax.";
-  if (modal === "adjustment") return "Adjustment is an audited correction entry. It does not edit prior trust transactions.";
-  if (modal === "void") return "Voiding preserves history and creates a reversal. Transactions are not deleted.";
-  return "";
+function typeDisplay(txn) {
+  if (txn.status === "reversal") return "Reversal";
+  if (txn.transaction_type === "transfer_to_operating") return "Applied to Invoice";
+  return typeLabel(txn.transaction_type);
+}
+
+function stopPropagation(event) {
+  event.stopPropagation();
 }
 
 function EmptyState({ message }) {
@@ -149,33 +141,49 @@ function Modal({ title, copy, onClose, children }) {
   );
 }
 
+function Field({ label, required = false, children, helper }) {
+  return (
+    <label className="trust-form-field">
+      <span>{label}{required ? " *" : ""}</span>
+      {children}
+      {helper ? <small>{helper}</small> : null}
+    </label>
+  );
+}
+
 function TrustPageInner() {
   const searchParams = useSearchParams();
+  const queryClientId = searchParams.get("client_id") || "";
+  const queryCaseId = searchParams.get("case_id") || "";
+  const queryAction = searchParams.get("action") || "";
+
   const [currentUser, setCurrentUser] = useState(getCachedUser());
-  const [accounts, setAccounts] = useState([]);
-  const [transactions, setTransactions] = useState([]);
-  const [clientLedgers, setClientLedgers] = useState([]);
-  const [matterLedgers, setMatterLedgers] = useState([]);
-  const [clients, setClients] = useState([]);
-  const [cases, setCases] = useState([]);
-  const [balances, setBalances] = useState(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const [formError, setFormError] = useState("");
   const [activeTab, setActiveTab] = useState("transactions");
-  const [currency, setCurrency] = useState("USD");
-  const [includeVoided, setIncludeVoided] = useState(true);
+  const [filters, setFilters] = useState({
+    ...EMPTY_FILTERS,
+    client_id: queryClientId,
+    case_id: queryCaseId,
+  });
+  const [accounts, setAccounts] = useState([]);
+  const [transactions, setTransactions] = useState([]);
+  const [receipts, setReceipts] = useState([]);
+  const [clientLedgers, setClientLedgers] = useState([]);
+  const [matterLedgers, setMatterLedgers] = useState([]);
+  const [clients, setClients] = useState([]);
+  const [cases, setCases] = useState([]);
+  const [balances, setBalances] = useState(null);
   const [modal, setModal] = useState("");
-  const [selectedReceipt, setSelectedReceipt] = useState(null);
   const [selectedTransaction, setSelectedTransaction] = useState(null);
-  const [voidReason, setVoidReason] = useState("");
-  const [forms, setForms] = useState(MODAL_DEFAULTS);
-
-  const queryClientId = searchParams.get("client_id") || "";
-  const queryCaseId = searchParams.get("case_id") || "";
-  const queryAction = searchParams.get("action") || "";
+  const [selectedReceipt, setSelectedReceipt] = useState(null);
+  const [reversalReason, setReversalReason] = useState("");
+  const [formType, setFormType] = useState("deposit");
+  const [form, setForm] = useState(FORM_DEFAULTS);
+  const [formBalances, setFormBalances] = useState(null);
 
   useEffect(() => {
     if (currentUser) return;
@@ -195,53 +203,58 @@ function TrustPageInner() {
     };
   }, [currentUser]);
 
-  const filteredCases = useMemo(() => {
-    if (!queryClientId) return cases;
-    return cases.filter((row) => Number(row.client_id) === Number(queryClientId));
-  }, [cases, queryClientId]);
+  const canManage = roleCanManage(currentUser?.role || "");
+  const unauthorized = currentUser && !["partner", "admin", "lawyer", "paralegal"].includes(currentUser.role);
 
-  const availableCurrencies = useMemo(() => {
-    const next = new Set(["USD"]);
-    accounts.forEach((row) => next.add((row.currency || "USD").toUpperCase()));
-    clientLedgers.forEach((row) => next.add((row.currency || "USD").toUpperCase()));
-    matterLedgers.forEach((row) => next.add((row.currency || "USD").toUpperCase()));
-    transactions.forEach((row) => next.add((row.currency || "USD").toUpperCase()));
-    return Array.from(next);
-  }, [accounts, clientLedgers, matterLedgers, transactions]);
+  const casesForSelectedClient = useMemo(() => {
+    if (!filters.client_id) return cases;
+    return cases.filter((row) => Number(row.client_id) === Number(filters.client_id));
+  }, [cases, filters.client_id]);
 
-  useEffect(() => {
-    if (!availableCurrencies.includes(currency)) {
-      setCurrency(availableCurrencies[0] || "USD");
+  const formCases = useMemo(() => {
+    if (!form.client_id) return cases;
+    return cases.filter((row) => Number(row.client_id) === Number(form.client_id));
+  }, [cases, form.client_id]);
+
+  const accountOptions = useMemo(() => {
+    const matches = accounts.filter((row) => (row.currency || "JMD").toUpperCase() === (form.currency || "JMD").toUpperCase());
+    if (matches.length === 1) {
+      return [{ ...matches[0], display_name: "Main Trust Account" }];
     }
-  }, [availableCurrencies, currency]);
+    return matches.map((row) => ({ ...row, display_name: row.name }));
+  }, [accounts, form.currency]);
 
-  async function loadData(nextCurrency = currency, opts = { initial: false }) {
-    if (opts.initial) setLoading(true);
+  async function loadData(nextFilters = filters, { initial = false } = {}) {
+    if (initial) setLoading(true);
     else setRefreshing(true);
     setError("");
     try {
-      const txPath = buildSearch("/api/v1/trust/transactions", {
-        currency: nextCurrency,
-        client_id: queryClientId || undefined,
-        case_id: queryCaseId || undefined,
-        include_voided: includeVoided,
+      const txPath = buildSearch("/api/v1/trust/transactions", nextFilters);
+      const receiptPath = buildSearch("/api/v1/trust/receipts", {
+        client_id: nextFilters.client_id || undefined,
+        case_id: nextFilters.case_id || undefined,
+        currency: nextFilters.currency || undefined,
+        date_from: nextFilters.date_from || undefined,
+        date_to: nextFilters.date_to || undefined,
       });
-      const balancesPath = buildSearch("/api/v1/trust/balances", {
-        currency: nextCurrency,
-        client_id: queryClientId || undefined,
-        case_id: queryCaseId || undefined,
+      const balancePath = buildSearch("/api/v1/trust/balances", {
+        client_id: nextFilters.client_id || undefined,
+        case_id: nextFilters.case_id || undefined,
+        currency: nextFilters.currency || "JMD",
       });
-      const [accountRows, txRows, clientRows, matterRows, clientList, caseList, balanceRow] = await Promise.all([
+      const [accountRows, txRows, receiptRows, clientRows, matterRows, clientList, caseList, balanceRow] = await Promise.all([
         apiRequest("/api/v1/trust/accounts"),
         apiRequest(txPath),
-        apiRequest(buildSearch("/api/v1/trust/client-ledgers", { currency: nextCurrency })),
-        apiRequest(buildSearch("/api/v1/trust/matter-ledgers", { currency: nextCurrency })),
+        apiRequest(receiptPath),
+        apiRequest(buildSearch("/api/v1/trust/client-ledgers", { currency: nextFilters.currency || "JMD" })),
+        apiRequest(buildSearch("/api/v1/trust/matter-ledgers", { currency: nextFilters.currency || "JMD" })),
         apiRequest("/api/v1/clients"),
         apiRequest("/api/v1/cases").catch(() => []),
-        apiRequest(balancesPath).catch(() => null),
+        apiRequest(balancePath).catch(() => null),
       ]);
       setAccounts(accountRows || []);
       setTransactions(txRows || []);
+      setReceipts(receiptRows || []);
       setClientLedgers(clientRows || []);
       setMatterLedgers(matterRows || []);
       setClients(clientList || []);
@@ -256,115 +269,99 @@ function TrustPageInner() {
   }
 
   useEffect(() => {
-    loadData(currency, { initial: true });
+    loadData(filters, { initial: true });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   useEffect(() => {
-    if (!loading) loadData(currency);
+    if (!loading) loadData(filters);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [currency, includeVoided, queryClientId, queryCaseId]);
+  }, [filters]);
 
   useEffect(() => {
-    if (!queryAction) return;
-    if (["deposit", "disbursement", "refund", "adjustment"].includes(queryAction)) {
-      openTransactionModal(queryAction);
-    }
+    if (!queryAction || !TX_TYPES.includes(queryAction)) return;
+    openForm(queryAction);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [queryAction, clients.length, cases.length, accounts.length]);
+  }, [queryAction, accounts.length, clients.length, cases.length]);
 
-  const canManage = roleCanManage(currentUser?.role || "");
-  const unauthorized = currentUser && !["partner", "admin", "lawyer", "paralegal"].includes(currentUser.role);
+  useEffect(() => {
+    if (!modal || !TX_TYPES.includes(modal)) return;
+    if (!form.client_id || !form.case_id || !form.currency) {
+      setFormBalances(null);
+      return;
+    }
+    let cancelled = false;
+    apiRequest(buildSearch("/api/v1/trust/balances", {
+      client_id: form.client_id,
+      case_id: form.case_id,
+      trust_account_id: form.trust_account_id || undefined,
+      currency: form.currency,
+    }))
+      .then((row) => {
+        if (!cancelled) setFormBalances(row);
+      })
+      .catch(() => {
+        if (!cancelled) setFormBalances(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [modal, form]);
 
-  const clientById = useMemo(() => Object.fromEntries(clients.map((row) => [Number(row.id), row])), [clients]);
-  const caseById = useMemo(() => Object.fromEntries(cases.map((row) => [Number(row.id), row])), [cases]);
-  const accountById = useMemo(() => Object.fromEntries(accounts.map((row) => [Number(row.id), row])), [accounts]);
-
-  const filteredTransactions = useMemo(() => {
-    return transactions.filter((txn) => {
-      if ((txn.currency || "USD").toUpperCase() !== currency) return false;
-      if (queryClientId && Number(txn.client_id) !== Number(queryClientId)) return false;
-      if (queryCaseId && Number(txn.case_id) !== Number(queryCaseId)) return false;
-      return true;
+  function updateFilters(field, value) {
+    setFilters((current) => {
+      const next = { ...current, [field]: value };
+      if (field === "client_id") next.case_id = "";
+      return next;
     });
-  }, [currency, queryCaseId, queryClientId, transactions]);
-
-  const filteredClientLedgers = useMemo(() => {
-    return clientLedgers.filter((row) => (row.currency || "USD").toUpperCase() === currency);
-  }, [clientLedgers, currency]);
-
-  const filteredMatterLedgers = useMemo(() => {
-    return matterLedgers.filter((row) => {
-      if ((row.currency || "USD").toUpperCase() !== currency) return false;
-      if (queryClientId && Number(row.client_id) !== Number(queryClientId)) return false;
-      if (queryCaseId && Number(row.case_id) !== Number(queryCaseId)) return false;
-      return true;
-    });
-  }, [currency, matterLedgers, queryCaseId, queryClientId]);
-
-  const depositReceipts = useMemo(() => {
-    return filteredTransactions.filter((txn) => txn.receipt_id);
-  }, [filteredTransactions]);
-
-  const summaryTotals = useMemo(() => {
-    const totalTrustBalance = accounts
-      .filter((row) => (row.currency || "USD").toUpperCase() === currency)
-      .reduce((sum, row) => sum + Number(row.current_balance || 0), 0);
-    const clientTotal = filteredClientLedgers.reduce((sum, row) => sum + Number(row.balance || 0), 0);
-    const matterTotal = filteredMatterLedgers.reduce((sum, row) => sum + Number(row.balance || 0), 0);
-    return { totalTrustBalance, clientTotal, matterTotal };
-  }, [accounts, currency, filteredClientLedgers, filteredMatterLedgers]);
-
-  function syncModalForm(type, overrides = {}) {
-    const defaultAccount = accounts.find((row) => (row.currency || "USD").toUpperCase() === currency)?.id || "";
-    const nextClientId = queryClientId || overrides.client_id || "";
-    const nextCaseId = queryCaseId || overrides.case_id || "";
-    setForms((current) => ({
-      ...current,
-      [type]: {
-        ...MODAL_DEFAULTS[type],
-        trust_account_id: defaultAccount ? String(defaultAccount) : "",
-        client_id: nextClientId ? String(nextClientId) : "",
-        case_id: nextCaseId ? String(nextCaseId) : "",
-        currency,
-        transaction_date: today(),
-        ...overrides,
-      },
-    }));
   }
 
-  function openTransactionModal(type, overrides = {}) {
-    syncModalForm(type, overrides);
+  function resetSelection() {
     setSelectedTransaction(null);
     setSelectedReceipt(null);
-    setVoidReason("");
+    setReversalReason("");
     setFormError("");
-    setModal(type);
   }
 
   function closeModal() {
     setModal("");
-    setSelectedReceipt(null);
-    setSelectedTransaction(null);
-    setVoidReason("");
-    setFormError("");
+    resetSelection();
   }
 
-  function updateForm(type, field, value) {
-    setForms((current) => {
-      const next = { ...current[type], [field]: value };
+  function openForm(type) {
+    const relevantAccounts = accounts.filter((row) => (row.currency || "JMD").toUpperCase() === "JMD");
+    setFormType(type);
+    setForm({
+      ...FORM_DEFAULTS,
+      client_id: filters.client_id || "",
+      case_id: filters.case_id || "",
+      trust_account_id: relevantAccounts[0]?.id ? String(relevantAccounts[0].id) : "",
+      currency: "JMD",
+      transaction_date: today(),
+    });
+    setFormBalances(null);
+    setFormError("");
+    setModal(type);
+  }
+
+  function updateForm(field, value) {
+    setForm((current) => {
+      const next = { ...current, [field]: value };
+      if (field === "client_id") next.case_id = "";
+      if (field === "currency") {
+        const currencyAccounts = accounts.filter((row) => (row.currency || "JMD").toUpperCase() === value.toUpperCase());
+        next.trust_account_id = currencyAccounts[0]?.id ? String(currencyAccounts[0].id) : "";
+      }
       if (field === "trust_account_id") {
-        const account = accountById[Number(value)];
+        const account = accounts.find((row) => Number(row.id) === Number(value));
         if (account?.currency) next.currency = account.currency;
       }
-      if (field === "client_id") next.case_id = "";
-      return { ...current, [type]: next };
+      return next;
     });
   }
 
-  async function submitTransaction(event, type) {
+  async function submitTransaction(event) {
     event.preventDefault();
-    const form = forms[type];
     setSaving(true);
     setFormError("");
     try {
@@ -372,19 +369,19 @@ function TrustPageInner() {
         trust_account_id: Number(form.trust_account_id),
         client_id: Number(form.client_id),
         case_id: Number(form.case_id),
-        transaction_type: type,
+        transaction_type: formType,
         amount: Number(form.amount),
         currency: form.currency,
         transaction_date: form.transaction_date,
         payment_method: form.payment_method || null,
-        reference_number: form.reference_number || null,
+        external_reference_number: form.external_reference_number || null,
         description: form.description,
       };
-      if (type === "disbursement") {
+      if (formType === "disbursement") {
         payload.payee_name = form.payee_name || null;
         payload.payee_type = form.payee_type || null;
       }
-      if (type === "adjustment") {
+      if (formType === "adjustment") {
         payload.adjustment_direction = form.adjustment_direction;
         payload.adjustment_reason = form.adjustment_reason;
       }
@@ -392,16 +389,28 @@ function TrustPageInner() {
         method: "POST",
         body: JSON.stringify(payload),
       });
+      await loadData({ ...filters, currency: form.currency });
       closeModal();
-      await loadData(form.currency);
-      if (created.receipt_id) {
-        setSelectedReceipt(await apiRequest(`/api/v1/trust/receipts/${created.receipt_id}`));
+      if (created?.receipt?.id) {
+        const receipt = await apiRequest(`/api/v1/trust/receipts/${created.receipt.id}`);
+        setSelectedReceipt(receipt);
         setModal("receipt");
       }
     } catch (err) {
       setFormError(err.message || "Unable to save trust transaction.");
     } finally {
       setSaving(false);
+    }
+  }
+
+  async function openTransactionDetail(transactionId) {
+    setFormError("");
+    try {
+      const detail = await apiRequest(`/api/v1/trust/transactions/${transactionId}`);
+      setSelectedTransaction(detail);
+      setModal("detail");
+    } catch (err) {
+      setFormError(err.message || "Unable to load trust transaction.");
     }
   }
 
@@ -416,20 +425,20 @@ function TrustPageInner() {
     }
   }
 
-  async function submitVoid(event) {
+  async function reverseTransaction(event) {
     event.preventDefault();
     if (!selectedTransaction) return;
     setSaving(true);
     setFormError("");
     try {
-      await apiRequest(`/api/v1/trust/transactions/${selectedTransaction.id}/void`, {
+      await apiRequest(`/api/v1/trust/transactions/${selectedTransaction.id}/reverse`, {
         method: "POST",
-        body: JSON.stringify({ void_reason: voidReason }),
+        body: JSON.stringify({ reversal_reason: reversalReason }),
       });
       closeModal();
-      await loadData(currency);
+      await loadData(filters);
     } catch (err) {
-      setFormError(err.message || "Unable to void trust transaction.");
+      setFormError(err.message || "Unable to reverse trust transaction.");
     } finally {
       setSaving(false);
     }
@@ -445,22 +454,26 @@ function TrustPageInner() {
     );
   }
 
+  const summaryTotal = accounts
+    .filter((row) => (row.currency || "JMD").toUpperCase() === (filters.currency || "JMD").toUpperCase())
+    .reduce((sum, row) => sum + Number(row.current_balance || 0), 0);
+
   return (
     <section className="dashboard-page-stack trust-finance-page">
       <div className="trust-page__top">
         <div className="dashboard-page-heading">
           <h1>Trust Accounting</h1>
           <p className="trust-page__intro">
-            Client funds in trust remain separate from firm operating funds and are never treated as revenue until earned on invoice application.
+            Trust deposits stay separate from revenue. Transfers to operating are system-generated from invoice trust application only.
           </p>
         </div>
         <div className="trust-page__actions">
           {canManage ? (
             <>
-              <button type="button" className="vilo-btn vilo-btn--primary" onClick={() => openTransactionModal("deposit")}>Record Trust Deposit</button>
-              <button type="button" className="vilo-btn vilo-btn--secondary" onClick={() => openTransactionModal("disbursement")}>Record Disbursement</button>
-              <button type="button" className="vilo-btn vilo-btn--secondary" onClick={() => openTransactionModal("refund")}>Issue Refund</button>
-              <button type="button" className="vilo-btn vilo-btn--ghost" onClick={() => openTransactionModal("adjustment")}>Record Adjustment</button>
+              <button type="button" className="vilo-btn vilo-btn--primary" onClick={() => openForm("deposit")}>Record Trust Deposit</button>
+              <button type="button" className="vilo-btn vilo-btn--secondary" onClick={() => openForm("disbursement")}>Record Disbursement</button>
+              <button type="button" className="vilo-btn vilo-btn--secondary" onClick={() => openForm("refund")}>Issue Refund</button>
+              <button type="button" className="vilo-btn vilo-btn--ghost" onClick={() => openForm("adjustment")}>Record Adjustment</button>
             </>
           ) : null}
         </div>
@@ -468,7 +481,7 @@ function TrustPageInner() {
 
       <article className="dashboard-card trust-compliance-banner">
         <strong>Compliance note</strong>
-        <span>Trust balances are client funds. They are excluded from firm revenue, profit, and GCT/tax totals until transferred to operating through invoice application.</span>
+        <span>Every trust transaction must stay client-and-matter specific, cannot be edited after posting, and can only be corrected by reversal or audited adjustment.</span>
       </article>
 
       {error ? (
@@ -481,47 +494,73 @@ function TrustPageInner() {
         <article className="dashboard-card trust-stat-card">
           <div>
             <p>Total Trust Balance</p>
-            <strong>{formatMoney(summaryTotals.totalTrustBalance, currency)}</strong>
+            <strong>{formatMoney(summaryTotal, filters.currency)}</strong>
           </div>
-          <span className="trust-stat-card__meta">{currency}</span>
+          <span className="trust-stat-card__meta">{filters.currency}</span>
         </article>
         <article className="dashboard-card trust-stat-card">
           <div>
-            <p>Client Ledger Total</p>
-            <strong>{formatMoney(summaryTotals.clientTotal, currency)}</strong>
+            <p>Client Balance Snapshot</p>
+            <strong>{formatMoney(balances?.client_balance || 0, filters.currency)}</strong>
           </div>
-          <span className="trust-stat-card__meta">{filteredClientLedgers.length} clients</span>
+          <span className="trust-stat-card__meta">{filters.client_id ? "Filtered client" : "Select a client filter"}</span>
         </article>
         <article className="dashboard-card trust-stat-card">
           <div>
-            <p>Matter Ledger Total</p>
-            <strong>{formatMoney(summaryTotals.matterTotal, currency)}</strong>
+            <p>Matter Balance Snapshot</p>
+            <strong>{formatMoney(balances?.matter_balance || 0, filters.currency)}</strong>
           </div>
-          <span className="trust-stat-card__meta">{filteredMatterLedgers.length} matters</span>
+          <span className="trust-stat-card__meta">{filters.case_id ? "Filtered matter" : "Select a matter filter"}</span>
         </article>
-      </div>
-
-      <div className="trust-summary-strip">
-        <span>Currency: {currency}</span>
-        {balances?.client_balance !== null && balances?.client_balance !== undefined ? <span>Client balance snapshot {formatMoney(balances.client_balance, currency)}</span> : null}
-        {balances?.matter_balance !== null && balances?.matter_balance !== undefined ? <span>Matter balance snapshot {formatMoney(balances.matter_balance, currency)}</span> : null}
-        {queryClientId ? <span>Filtered to client #{queryClientId}</span> : null}
-        {queryCaseId ? <span>Filtered to matter #{queryCaseId}</span> : null}
-        {refreshing ? <span className="is-good">Refreshing...</span> : null}
       </div>
 
       <article className="dashboard-card trust-shell-card">
         <div className="trust-toolbar trust-toolbar--finance">
-          <div className="trust-filter-group">
-            <label className="trust-filter-field">
-              <span>Currency</span>
-              <select value={currency} onChange={(event) => setCurrency(event.target.value)}>
-                {availableCurrencies.map((option) => <option key={option} value={option}>{option}</option>)}
+          <div className="trust-filter-grid">
+            <Field label="Transaction Type">
+              <select value={filters.transaction_type} onChange={(event) => updateFilters("transaction_type", event.target.value)}>
+                <option value="">All types</option>
+                <option value="deposit">Deposit</option>
+                <option value="disbursement">Disbursement</option>
+                <option value="refund">Refund</option>
+                <option value="adjustment">Adjustment</option>
+                <option value="transfer_to_operating">Applied to Invoice</option>
               </select>
-            </label>
-            <label className="trust-toggle">
-              <input type="checkbox" checked={includeVoided} onChange={(event) => setIncludeVoided(event.target.checked)} />
-              <span>Include voided</span>
+            </Field>
+            <Field label="Client">
+              <select value={filters.client_id} onChange={(event) => updateFilters("client_id", event.target.value)}>
+                <option value="">All clients</option>
+                {clients.map((row) => <option key={row.id} value={row.id}>{row.name}</option>)}
+              </select>
+            </Field>
+            <Field label="Matter">
+              <select value={filters.case_id} onChange={(event) => updateFilters("case_id", event.target.value)}>
+                <option value="">All matters</option>
+                {casesForSelectedClient.map((row) => <option key={row.id} value={row.id}>{row.title}</option>)}
+              </select>
+            </Field>
+            <Field label="Status">
+              <select value={filters.status} onChange={(event) => updateFilters("status", event.target.value)}>
+                <option value="">All statuses</option>
+                <option value="active">Active</option>
+                <option value="reversed">Reversed</option>
+                <option value="reversal">Reversal</option>
+              </select>
+            </Field>
+            <Field label="Currency">
+              <select value={filters.currency} onChange={(event) => updateFilters("currency", event.target.value)}>
+                {SUPPORTED_CURRENCIES.map((currency) => <option key={currency} value={currency}>{currency}</option>)}
+              </select>
+            </Field>
+            <Field label="Date From">
+              <input type="date" value={filters.date_from} onChange={(event) => updateFilters("date_from", event.target.value)} />
+            </Field>
+            <Field label="Date To">
+              <input type="date" value={filters.date_to} onChange={(event) => updateFilters("date_to", event.target.value)} />
+            </Field>
+            <label className="trust-toggle trust-toggle--filters">
+              <input type="checkbox" checked={filters.include_reversed} onChange={(event) => updateFilters("include_reversed", event.target.checked)} />
+              <span>Include reversed entries</span>
             </label>
           </div>
           <div className="trust-tab-row" role="tablist" aria-label="Trust sections">
@@ -538,76 +577,89 @@ function TrustPageInner() {
           </div>
         </div>
 
+        {refreshing ? <p className="vilo-state">Refreshing trust data...</p> : null}
         {loading ? <EmptyState message="Loading trust accounting..." /> : null}
 
         {!loading && activeTab === "transactions" ? (
-          <>
-            {!filteredTransactions.length ? <EmptyState message="No trust transactions found for the current filters." /> : (
-              <div className="vilo-table-wrap">
-                <table className="team-table trust-ledger-table">
-                  <thead>
-                    <tr>
-                      <th>Date</th>
-                      <th>Type</th>
-                      <th>Client</th>
-                      <th>Matter</th>
-                      <th>Description</th>
-                      <th>Payee / Ref</th>
-                      <th>Amount</th>
-                      <th>Status</th>
-                      <th>Actions</th>
+          transactions.length ? (
+            <div className="vilo-table-wrap">
+              <table className="team-table trust-ledger-table">
+                <thead>
+                  <tr>
+                    <th>Date</th>
+                    <th>Type</th>
+                    <th>Client</th>
+                    <th>Matter</th>
+                    <th>System Ref</th>
+                    <th>Description</th>
+                    <th>Amount</th>
+                    <th>Running Balance</th>
+                    <th>Status</th>
+                    <th>Receipt</th>
+                    <th>Action</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {transactions.map((txn) => (
+                    <tr key={txn.id} className="trust-ledger-table__row trust-ledger-table__row--clickable" onClick={() => openTransactionDetail(txn.id)}>
+                      <td>{formatDate(txn.transaction_date)}</td>
+                      <td>
+                        <span className={`trust-type-badge trust-type-badge--${txTypeTone(txn)}`}>{typeDisplay(txn)}</span>
+                      </td>
+                      <td>
+                        <Link href={`/dashboard/clients/${txn.client_id}`} onClick={stopPropagation} className="trust-inline-link">
+                          {txn.client_name || `Client #${txn.client_id}`}
+                        </Link>
+                      </td>
+                      <td>
+                        <Link href={`/dashboard/cases/${txn.case_id}`} onClick={stopPropagation} className="trust-inline-link">
+                          {txn.case_title || `Matter #${txn.case_id}`}
+                        </Link>
+                      </td>
+                      <td>{txn.reference_number}</td>
+                      <td>{txn.description || "-"}</td>
+                      <td className={txDirection(txn) === "inflow" ? "trust-amount trust-amount--inflow" : "trust-amount trust-amount--outflow"}>
+                        {txDirection(txn) === "inflow" ? "+" : "-"}
+                        {formatMoney(txn.amount, txn.currency)}
+                      </td>
+                      <td>{formatMoney(txn.running_balance, txn.currency)}</td>
+                      <td><span className={`vilo-badge trust-status-badge trust-status-badge--${txn.status}`}>{txStatusLabel(txn.status)}</span></td>
+                      <td>
+                        {txn.receipt ? (
+                          <button type="button" className="vilo-btn vilo-btn--ghost vilo-btn--xs" onClick={(event) => { stopPropagation(event); openReceipt(txn.receipt.id); }}>
+                            View Receipt
+                          </button>
+                        ) : "-"}
+                      </td>
+                      <td>
+                        {canManage && txn.status === "active" && !(txn.transaction_type === "transfer_to_operating" && txn.linked_invoice_id) ? (
+                          <button
+                            type="button"
+                            className="vilo-btn vilo-btn--secondary vilo-btn--xs"
+                            onClick={(event) => {
+                              stopPropagation(event);
+                              setSelectedTransaction(txn);
+                              setReversalReason("");
+                              setFormError("");
+                              setModal("reverse");
+                            }}
+                          >
+                            Reverse Transaction
+                          </button>
+                        ) : "-"}
+                      </td>
                     </tr>
-                  </thead>
-                  <tbody>
-                    {filteredTransactions.map((txn) => (
-                      <tr key={txn.id} className={`trust-ledger-table__row trust-ledger-table__row--${txStatus(txn)}`}>
-                        <td>{formatDate(txn.transaction_date)}</td>
-                        <td className="trust-ledger-table__type-cell">
-                          <span className={`trust-money-pill trust-money-pill--${txDirection(txn)}`}>{txTypeLabel(txn)}</span>
-                        </td>
-                        <td>{clientById[Number(txn.client_id)]?.name || `Client #${txn.client_id}`}</td>
-                        <td>{caseById[Number(txn.case_id)]?.title || `Matter #${txn.case_id}`}</td>
-                        <td>{txn.description || "-"}</td>
-                        <td>{txn.payee_name || txn.reference_number || "-"}</td>
-                        <td className={txDirection(txn) === "outflow" ? "trust-amount trust-amount--outflow" : "trust-amount trust-amount--inflow"}>
-                          {txDirection(txn) === "outflow" ? "-" : "+"}
-                          {formatMoney(txn.amount, txn.currency)}
-                        </td>
-                        <td><span className={`vilo-badge trust-status-badge trust-status-badge--${txStatus(txn)}`}>{txStatus(txn)}</span></td>
-                        <td>
-                          <div className="vilo-table-actions trust-history-actions">
-                            {txn.receipt_id ? (
-                              <button type="button" className="vilo-btn vilo-btn--ghost vilo-btn--xs" onClick={() => openReceipt(txn.receipt_id)}>
-                                View receipt
-                              </button>
-                            ) : null}
-                            {canManage && !txn.voided_at && !txn.reversal_of_id ? (
-                              <button
-                                type="button"
-                                className="vilo-btn vilo-btn--secondary vilo-btn--xs"
-                                onClick={() => {
-                                  setSelectedTransaction(txn);
-                                  setVoidReason("");
-                                  setFormError("");
-                                  setModal("void");
-                                }}
-                              >
-                                Void
-                              </button>
-                            ) : null}
-                          </div>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            )}
-          </>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          ) : (
+            <EmptyState message="No trust transactions match the current filters. Adjust the active filters and try again." />
+          )
         ) : null}
 
         {!loading && activeTab === "client_ledgers" ? (
-          !filteredClientLedgers.length ? <EmptyState message="No client trust balances yet." /> : (
+          clientLedgers.length ? (
             <div className="vilo-table-wrap">
               <table className="team-table">
                 <thead>
@@ -618,9 +670,9 @@ function TrustPageInner() {
                   </tr>
                 </thead>
                 <tbody>
-                  {filteredClientLedgers.map((row) => (
+                  {clientLedgers.map((row) => (
                     <tr key={`${row.client_id}-${row.currency}`}>
-                      <td>{row.client_name}</td>
+                      <td><Link href={`/dashboard/clients/${row.client_id}`} className="trust-inline-link">{row.client_name}</Link></td>
                       <td>{row.currency}</td>
                       <td>{formatMoney(row.balance, row.currency)}</td>
                     </tr>
@@ -628,11 +680,11 @@ function TrustPageInner() {
                 </tbody>
               </table>
             </div>
-          )
+          ) : <EmptyState message="No client trust balances found for this currency." />
         ) : null}
 
         {!loading && activeTab === "matter_ledgers" ? (
-          !filteredMatterLedgers.length ? <EmptyState message="No matter trust balances yet." /> : (
+          matterLedgers.length ? (
             <div className="vilo-table-wrap">
               <table className="team-table">
                 <thead>
@@ -644,10 +696,10 @@ function TrustPageInner() {
                   </tr>
                 </thead>
                 <tbody>
-                  {filteredMatterLedgers.map((row) => (
+                  {matterLedgers.map((row) => (
                     <tr key={`${row.case_id}-${row.currency}`}>
-                      <td>{row.case_title}</td>
-                      <td>{row.client_name}</td>
+                      <td><Link href={`/dashboard/cases/${row.case_id}`} className="trust-inline-link">{row.case_title}</Link></td>
+                      <td><Link href={`/dashboard/clients/${row.client_id}`} className="trust-inline-link">{row.client_name}</Link></td>
                       <td>{row.currency}</td>
                       <td>{formatMoney(row.balance, row.currency)}</td>
                     </tr>
@@ -655,11 +707,11 @@ function TrustPageInner() {
                 </tbody>
               </table>
             </div>
-          )
+          ) : <EmptyState message="No matter trust balances found for this currency." />
         ) : null}
 
         {!loading && activeTab === "receipts" ? (
-          !depositReceipts.length ? <EmptyState message="No trust receipts have been issued yet." /> : (
+          receipts.length ? (
             <div className="vilo-table-wrap">
               <table className="team-table">
                 <thead>
@@ -669,131 +721,194 @@ function TrustPageInner() {
                     <th>Matter</th>
                     <th>Date</th>
                     <th>Amount</th>
-                    <th>Status</th>
+                    <th>System Ref</th>
                     <th>Actions</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {depositReceipts.map((txn) => (
-                    <tr key={`receipt-${txn.id}`}>
-                      <td>Receipt #{txn.receipt_id}</td>
-                      <td>{clientById[Number(txn.client_id)]?.name || `Client #${txn.client_id}`}</td>
-                      <td>{caseById[Number(txn.case_id)]?.title || `Matter #${txn.case_id}`}</td>
-                      <td>{formatDate(txn.transaction_date)}</td>
-                      <td>{formatMoney(txn.amount, txn.currency)}</td>
-                      <td><span className={`vilo-badge trust-status-badge trust-status-badge--${txStatus(txn)}`}>{txStatus(txn)}</span></td>
-                      <td>
-                        <button type="button" className="vilo-btn vilo-btn--ghost vilo-btn--xs" onClick={() => openReceipt(txn.receipt_id)}>
-                          View receipt
-                        </button>
+                  {receipts.map((receipt) => (
+                    <tr key={receipt.id}>
+                      <td>{receipt.receipt_number}</td>
+                      <td><Link href={`/dashboard/clients/${receipt.client_id}`} className="trust-inline-link">{clients.find((row) => Number(row.id) === Number(receipt.client_id))?.name || `Client #${receipt.client_id}`}</Link></td>
+                      <td><Link href={`/dashboard/cases/${receipt.case_id}`} className="trust-inline-link">{cases.find((row) => Number(row.id) === Number(receipt.case_id))?.title || `Matter #${receipt.case_id}`}</Link></td>
+                      <td>{formatDate(receipt.issued_at)}</td>
+                      <td>{formatMoney(receipt.amount, receipt.currency)}</td>
+                      <td>{receipt.reference_number || "-"}</td>
+                      <td className="trust-history-actions">
+                        <button type="button" className="vilo-btn vilo-btn--ghost vilo-btn--xs" onClick={() => openReceipt(receipt.id)}>View Receipt</button>
+                        <button type="button" className="vilo-btn vilo-btn--secondary vilo-btn--xs" onClick={() => apiDownload(`/api/v1/trust/receipts/${receipt.id}/download`).catch((err) => setFormError(err.message || "Download failed"))}>Download Receipt</button>
                       </td>
                     </tr>
                   ))}
                 </tbody>
               </table>
             </div>
-          )
-        ) : null}
-
-        {!loading && activeTab === "reconciliation" ? (
-          <div className="trust-placeholder-card">
-            <strong>Three-way reconciliation</strong>
-            <p>This phase prepares trust ledgers, balances, and receipt history. Reconciliation workflow UI will land in the next finance phase.</p>
-          </div>
+          ) : <EmptyState message="No trust receipts match the current filters." />
         ) : null}
       </article>
 
-      {["deposit", "disbursement", "refund", "adjustment"].includes(modal) ? (
-        <Modal title={modal === "deposit" ? "Record Trust Deposit" : modal === "disbursement" ? "Record Disbursement" : modal === "refund" ? "Issue Refund" : "Record Adjustment"} copy={sectionCopy(modal)} onClose={closeModal}>
+      {TX_TYPES.includes(modal) ? (
+        <Modal title={typeLabel(formType)} copy={formType === "adjustment" ? "Adjustments should only be used for corrections. They do not replace or edit existing transactions. All adjustments are audited." : "Reference Number is auto-generated after save."} onClose={closeModal}>
           {formError ? <p className="vilo-state vilo-state--error trust-modal__error">{formError}</p> : null}
-          <form className="vilo-form-grid" onSubmit={(event) => submitTransaction(event, modal)}>
-            <div className="vilo-form-row-two">
-              <select value={forms[modal].trust_account_id} onChange={(event) => updateForm(modal, "trust_account_id", event.target.value)} required>
-                <option value="">Trust account</option>
-                {accounts.filter((row) => row.currency === forms[modal].currency).map((row) => (
-                  <option key={row.id} value={row.id}>{row.name}</option>
-                ))}
-              </select>
-              <select value={forms[modal].client_id} onChange={(event) => updateForm(modal, "client_id", event.target.value)} required>
-                <option value="">Client</option>
-                {clients.map((row) => <option key={row.id} value={row.id}>{row.name}</option>)}
-              </select>
+          <form className="trust-form-shell" onSubmit={submitTransaction}>
+            <div className="trust-form-grid">
+              <Field label="Client" required>
+                <select value={form.client_id} onChange={(event) => updateForm("client_id", event.target.value)} required>
+                  <option value="">Select client</option>
+                  {clients.map((row) => <option key={row.id} value={row.id}>{row.name}</option>)}
+                </select>
+              </Field>
+              <Field label="Matter / Case" required>
+                <select value={form.case_id} onChange={(event) => updateForm("case_id", event.target.value)} required>
+                  <option value="">Select matter</option>
+                  {formCases.map((row) => <option key={row.id} value={row.id}>{row.title}</option>)}
+                </select>
+              </Field>
+              <Field label="Amount" required>
+                <input type="number" step="0.01" min="0" value={form.amount} onChange={(event) => updateForm("amount", event.target.value)} required />
+              </Field>
+              <Field label="Currency" required>
+                <select value={form.currency} onChange={(event) => updateForm("currency", event.target.value)} required>
+                  {SUPPORTED_CURRENCIES.map((currency) => <option key={currency} value={currency}>{currency}</option>)}
+                </select>
+              </Field>
+              <Field label="Date" required>
+                <input type="date" value={form.transaction_date} onChange={(event) => updateForm("transaction_date", event.target.value)} required />
+              </Field>
+              <Field label="Payment Method">
+                <input value={form.payment_method} onChange={(event) => updateForm("payment_method", event.target.value)} placeholder="Wire, cheque, cash, card" />
+              </Field>
+              <Field label="Trust Account" required helper={accountOptions.length <= 1 ? "Main Trust Account" : null}>
+                <select value={form.trust_account_id} onChange={(event) => updateForm("trust_account_id", event.target.value)} required>
+                  <option value="">Select trust account</option>
+                  {accountOptions.map((row) => <option key={row.id} value={row.id}>{row.display_name}</option>)}
+                </select>
+              </Field>
+              <Field label="Reference Number" helper="Auto-generated after save">
+                <input value="Auto-generated after save" disabled readOnly />
+              </Field>
+              <Field label="External Reference / Check Number">
+                <input value={form.external_reference_number} onChange={(event) => updateForm("external_reference_number", event.target.value)} placeholder="Optional" />
+              </Field>
+              {formType === "disbursement" ? (
+                <>
+                  <Field label="Payee Name" required>
+                    <input value={form.payee_name} onChange={(event) => updateForm("payee_name", event.target.value)} required />
+                  </Field>
+                  <Field label="Payee Type">
+                    <input value={form.payee_type} onChange={(event) => updateForm("payee_type", event.target.value)} placeholder="Third party, government, vendor" />
+                  </Field>
+                </>
+              ) : null}
+              {formType === "adjustment" ? (
+                <>
+                  <Field label="Adjustment Type" required>
+                    <select value={form.adjustment_direction} onChange={(event) => updateForm("adjustment_direction", event.target.value)} required>
+                      <option value="increase">Increase</option>
+                      <option value="decrease">Decrease</option>
+                    </select>
+                  </Field>
+                  <Field label="Reason" required>
+                    <input value={form.adjustment_reason} onChange={(event) => updateForm("adjustment_reason", event.target.value)} required />
+                  </Field>
+                </>
+              ) : null}
             </div>
-            <div className="vilo-form-row-two">
-              <select value={forms[modal].case_id} onChange={(event) => updateForm(modal, "case_id", event.target.value)} required>
-                <option value="">Matter / case</option>
-                {filteredCases
-                  .filter((row) => !forms[modal].client_id || Number(row.client_id) === Number(forms[modal].client_id))
-                  .map((row) => <option key={row.id} value={row.id}>{row.title}</option>)}
-              </select>
-              <input type="number" step="0.01" min="0" placeholder="Amount" value={forms[modal].amount} onChange={(event) => updateForm(modal, "amount", event.target.value)} required />
-            </div>
-            <div className="vilo-form-row-two">
-              <select value={forms[modal].currency} onChange={(event) => updateForm(modal, "currency", event.target.value)} required>
-                {availableCurrencies.map((option) => <option key={option} value={option}>{option}</option>)}
-              </select>
-              <input type="date" value={forms[modal].transaction_date} onChange={(event) => updateForm(modal, "transaction_date", event.target.value)} required />
-            </div>
-            {modal === "disbursement" ? (
-              <div className="vilo-form-row-two">
-                <input placeholder="Payee name" value={forms[modal].payee_name} onChange={(event) => updateForm(modal, "payee_name", event.target.value)} required />
-                <input placeholder="Payee type" value={forms[modal].payee_type} onChange={(event) => updateForm(modal, "payee_type", event.target.value)} />
-              </div>
+            <Field label="Description" required>
+              <textarea value={form.description} onChange={(event) => updateForm("description", event.target.value)} required />
+            </Field>
+            {formBalances ? (
+              <article className="trust-balance-note">
+                <strong>Available Matter Trust Balance</strong>
+                <span>{formatMoney(formBalances.matter_balance || 0, form.currency)}</span>
+              </article>
             ) : null}
-            {modal === "adjustment" ? (
-              <>
-                <div className="vilo-form-row-two">
-                  <select value={forms[modal].adjustment_direction} onChange={(event) => updateForm(modal, "adjustment_direction", event.target.value)} required>
-                    <option value="increase">Increase</option>
-                    <option value="decrease">Decrease</option>
-                  </select>
-                  <input placeholder="Adjustment reason" value={forms[modal].adjustment_reason} onChange={(event) => updateForm(modal, "adjustment_reason", event.target.value)} required />
-                </div>
-                <p className="trust-form-warning">Adjustment is an audited correction entry. It does not edit or replace an earlier trust transaction.</p>
-              </>
-            ) : null}
-            <div className="vilo-form-row-two">
-              <input placeholder="Payment method" value={forms[modal].payment_method} onChange={(event) => updateForm(modal, "payment_method", event.target.value)} />
-              <input placeholder="Reference number" value={forms[modal].reference_number} onChange={(event) => updateForm(modal, "reference_number", event.target.value)} />
-            </div>
-            <textarea placeholder="Description" value={forms[modal].description} onChange={(event) => updateForm(modal, "description", event.target.value)} required />
             <div className="vilo-table-actions trust-form-actions">
               <button type="button" className="vilo-btn vilo-btn--secondary" onClick={closeModal}>Cancel</button>
-              <button type="submit" className="vilo-btn vilo-btn--primary" disabled={saving}>{saving ? "Saving..." : "Submit"}</button>
+              <button type="submit" className="vilo-btn vilo-btn--primary" disabled={saving}>{saving ? "Saving..." : "Save Transaction"}</button>
             </div>
           </form>
         </Modal>
       ) : null}
 
-      {modal === "void" && selectedTransaction ? (
-        <Modal title="Void Trust Transaction" copy={sectionCopy("void")} onClose={closeModal}>
+      {modal === "detail" && selectedTransaction ? (
+        <Modal title={`Transaction ${selectedTransaction.reference_number}`} copy="Reversal creates a new audit entry. It does not edit or delete the original transaction." onClose={closeModal}>
+          <div className="trust-detail-grid">
+            <p><strong>Transaction Type:</strong> <span className={`trust-type-badge trust-type-badge--${txTypeTone(selectedTransaction)}`}>{typeDisplay(selectedTransaction)}</span></p>
+            <p><strong>Status:</strong> {txStatusLabel(selectedTransaction.status)}</p>
+            <p><strong>Client:</strong> <Link href={`/dashboard/clients/${selectedTransaction.client_id}`} className="trust-inline-link">{selectedTransaction.client_name || `Client #${selectedTransaction.client_id}`}</Link></p>
+            <p><strong>Matter:</strong> <Link href={`/dashboard/cases/${selectedTransaction.case_id}`} className="trust-inline-link">{selectedTransaction.case_title || `Matter #${selectedTransaction.case_id}`}</Link></p>
+            <p><strong>Amount:</strong> {formatMoney(selectedTransaction.amount, selectedTransaction.currency)}</p>
+            <p><strong>Currency:</strong> {selectedTransaction.currency}</p>
+            <p><strong>Date:</strong> {formatDate(selectedTransaction.transaction_date)}</p>
+            <p><strong>Payment Method:</strong> {selectedTransaction.payment_method || "-"}</p>
+            <p><strong>System Reference Number:</strong> {selectedTransaction.reference_number}</p>
+            <p><strong>External Reference Number:</strong> {selectedTransaction.external_reference_number || "-"}</p>
+            <p><strong>Running Balance:</strong> {formatMoney(selectedTransaction.running_balance || 0, selectedTransaction.currency)}</p>
+            <p><strong>Created By:</strong> {selectedTransaction.created_by_name || `User #${selectedTransaction.created_by_id}`}</p>
+            <p><strong>Created Timestamp:</strong> {formatDate(selectedTransaction.created_at, true)}</p>
+            <p className="trust-detail-grid__full"><strong>Description:</strong> {selectedTransaction.description || "-"}</p>
+            {selectedTransaction.linked_invoice_id ? (
+              <p className="trust-detail-grid__full">
+                <strong>Linked Invoice:</strong>{" "}
+                <Link href={`/dashboard/invoices/${selectedTransaction.linked_invoice_id}`} className="trust-inline-link">
+                  Applied to Invoice #{selectedTransaction.linked_invoice_number || selectedTransaction.linked_invoice_id}
+                </Link>
+              </p>
+            ) : null}
+            {selectedTransaction.receipt ? (
+              <p className="trust-detail-grid__full trust-history-actions">
+                <strong>Linked Receipt:</strong>{" "}
+                <button type="button" className="vilo-btn vilo-btn--ghost vilo-btn--xs" onClick={() => openReceipt(selectedTransaction.receipt.id)}>View Receipt</button>
+                <button type="button" className="vilo-btn vilo-btn--secondary vilo-btn--xs" onClick={() => apiDownload(`/api/v1/trust/receipts/${selectedTransaction.receipt.id}/download`).catch((err) => setFormError(err.message || "Download failed"))}>Download Receipt</button>
+              </p>
+            ) : null}
+            {selectedTransaction.reversal_transaction ? (
+              <p><strong>Reversal Info:</strong> Reversal #{selectedTransaction.reversal_transaction.reference_number}</p>
+            ) : null}
+            <p><strong>Reversed By:</strong> {selectedTransaction.voided_by_name || "-"}</p>
+            <p><strong>Reversal Reason:</strong> {selectedTransaction.void_reason || "-"}</p>
+            <p><strong>Reversed Timestamp:</strong> {formatDate(selectedTransaction.voided_at, true)}</p>
+          </div>
+        </Modal>
+      ) : null}
+
+      {modal === "reverse" && selectedTransaction ? (
+        <Modal title="Reverse Transaction" copy="Reversal creates a new audit entry. It does not edit or delete the original transaction." onClose={closeModal}>
           {formError ? <p className="vilo-state vilo-state--error trust-modal__error">{formError}</p> : null}
-          <form className="vilo-form-grid" onSubmit={submitVoid}>
-            <div className="trust-review-card">
-              <strong>{txTypeLabel(selectedTransaction)}</strong>
-              <span>{formatMoney(selectedTransaction.amount, selectedTransaction.currency)} on {formatDate(selectedTransaction.transaction_date)}</span>
+          <form className="trust-form-shell" onSubmit={reverseTransaction}>
+            <article className="trust-review-card">
+              <strong>{selectedTransaction.reference_number}</strong>
+              <span>{typeDisplay(selectedTransaction)} for {formatMoney(selectedTransaction.amount, selectedTransaction.currency)}</span>
               <span>{selectedTransaction.description || "No description"}</span>
-            </div>
-            <textarea placeholder="Void reason" value={voidReason} onChange={(event) => setVoidReason(event.target.value)} required />
+            </article>
+            <Field label="Reversal Reason" required>
+              <textarea value={reversalReason} onChange={(event) => setReversalReason(event.target.value)} required />
+            </Field>
             <div className="vilo-table-actions trust-form-actions">
               <button type="button" className="vilo-btn vilo-btn--secondary" onClick={closeModal}>Cancel</button>
-              <button type="submit" className="vilo-btn vilo-btn--primary" disabled={saving}>{saving ? "Voiding..." : "Void transaction"}</button>
+              <button type="submit" className="vilo-btn vilo-btn--primary" disabled={saving}>{saving ? "Reversing..." : "Reverse Transaction"}</button>
             </div>
           </form>
         </Modal>
       ) : null}
 
       {modal === "receipt" && selectedReceipt ? (
-        <Modal title={`Trust Receipt ${selectedReceipt.receipt_number}`} copy="Receipt metadata is preserved as part of the trust audit trail." onClose={closeModal}>
-          <div className="trust-receipt-grid">
-            <p><strong>Client:</strong> {clientById[Number(selectedReceipt.client_id)]?.name || `Client #${selectedReceipt.client_id}`}</p>
-            <p><strong>Matter:</strong> {caseById[Number(selectedReceipt.case_id)]?.title || `Matter #${selectedReceipt.case_id}`}</p>
-            <p><strong>Date:</strong> {formatDate(selectedReceipt.issued_at)}</p>
+        <Modal title={`Trust Receipt ${selectedReceipt.receipt_number}`} copy="Every trust deposit creates an immutable receipt." onClose={closeModal}>
+          <div className="trust-detail-grid">
+            <p><strong>Client:</strong> <Link href={`/dashboard/clients/${selectedReceipt.client_id}`} className="trust-inline-link">{clients.find((row) => Number(row.id) === Number(selectedReceipt.client_id))?.name || `Client #${selectedReceipt.client_id}`}</Link></p>
+            <p><strong>Matter:</strong> <Link href={`/dashboard/cases/${selectedReceipt.case_id}`} className="trust-inline-link">{cases.find((row) => Number(row.id) === Number(selectedReceipt.case_id))?.title || `Matter #${selectedReceipt.case_id}`}</Link></p>
             <p><strong>Amount:</strong> {formatMoney(selectedReceipt.amount, selectedReceipt.currency)}</p>
-            <p><strong>Payment method:</strong> {selectedReceipt.payment_method || "-"}</p>
-            <p><strong>Description:</strong> {selectedReceipt.description || "-"}</p>
-            <p><strong>Status:</strong> {selectedReceipt.voided_at ? "Voided" : "Active"}</p>
-            <p><strong>PDF:</strong> {selectedReceipt.pdf_available ? "Available" : "Not generated"}</p>
+            <p><strong>Currency:</strong> {selectedReceipt.currency}</p>
+            <p><strong>Date Received:</strong> {formatDate(selectedReceipt.issued_at, true)}</p>
+            <p><strong>Payment Method:</strong> {selectedReceipt.payment_method || "-"}</p>
+            <p><strong>System Reference Number:</strong> {selectedReceipt.reference_number || "-"}</p>
+            <p><strong>External Reference Number:</strong> {selectedReceipt.external_reference_number || "-"}</p>
+            <p><strong>Recorded By:</strong> {selectedReceipt.issued_by_name || `User #${selectedReceipt.issued_by_id}`}</p>
+            <p className="trust-detail-grid__full"><strong>Description:</strong> {selectedReceipt.description || "-"}</p>
+            <p className="trust-detail-grid__full trust-history-actions">
+              <button type="button" className="vilo-btn vilo-btn--ghost vilo-btn--xs" onClick={() => apiDownload(`/api/v1/trust/receipts/${selectedReceipt.id}/download`).catch((err) => setFormError(err.message || "Download failed"))}>Download Receipt</button>
+            </p>
           </div>
         </Modal>
       ) : null}

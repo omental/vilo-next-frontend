@@ -23,7 +23,9 @@ from app.models.organization import Organization
 from app.models.time_entry import TimeEntry
 from app.models.expense import Expense
 from app.models.trust_ledger import TrustLedger
+from app.models.trust_receipt import TrustReceipt
 from app.models.trust_transaction import TrustTransaction
+from app.models.user import User
 
 
 STORAGE_DIR = Path(__file__).resolve().parents[2] / "storage" / "generated"
@@ -38,6 +40,11 @@ class GeneratedPdf:
 def _money(value: Decimal | int | float | None) -> str:
     amount = Decimal(str(value or 0)).quantize(Decimal("0.01"))
     return f"${amount:,.2f}"
+
+
+def _money_with_currency(value: Decimal | int | float | None, currency: str | None) -> str:
+    amount = Decimal(str(value or 0)).quantize(Decimal("0.01"))
+    return f"{(currency or 'JMD').upper()} {amount:,.2f}"
 
 
 def _safe_text(value: str | None) -> str:
@@ -201,6 +208,83 @@ async def generate_invoice_pdf(invoice_id: int, *, db: AsyncSession, organizatio
         story.extend([Spacer(1, 12), Paragraph("Payment Account", styles["ViloH2"]), Paragraph("<br/>".join(details), styles["ViloBody"])])
     if inv.notes:
         story.extend([Spacer(1, 12), Paragraph("Notes", styles["ViloH2"]), Paragraph(_safe_text(inv.notes), styles["ViloBody"])])
+
+    doc.build(story, onFirstPage=_footer, onLaterPages=_footer)
+    return GeneratedPdf(file_path=path, filename=filename)
+
+
+async def generate_trust_receipt_pdf(receipt_id: int, *, db: AsyncSession, organization_id: int) -> GeneratedPdf:
+    receipt = await db.scalar(
+        select(TrustReceipt)
+        .where(TrustReceipt.id == receipt_id, TrustReceipt.organization_id == organization_id)
+        .options(selectinload(TrustReceipt.trust_transaction))
+    )
+    if not receipt:
+        raise HTTPException(status_code=404, detail="Trust receipt not found")
+
+    transaction = receipt.trust_transaction
+    client = await db.scalar(select(Client).where(Client.id == receipt.client_id, Client.organization_id == organization_id))
+    case = await db.scalar(select(Case).where(Case.id == receipt.case_id, Case.organization_id == organization_id))
+    issued_by = await db.scalar(select(User).where(User.id == receipt.issued_by_id))
+    org = await db.scalar(select(Organization).where(Organization.id == organization_id))
+
+    path, filename = _new_pdf_path(f"trust_receipt_{receipt.receipt_number}")
+    doc, styles = _build_doc(path)
+    story = [
+        Paragraph("VILO", styles["ViloH1"]),
+        Paragraph("Trust Deposit Receipt", styles["ViloBody"]),
+        Spacer(1, 14),
+    ]
+
+    info = Table(
+        [
+            [Paragraph("Firm", styles["ViloH2"]), Paragraph("Receipt", styles["ViloH2"])],
+            [
+                Paragraph("<br/>".join(_safe_text(line) for line in build_firm_details(org)), styles["ViloBody"]),
+                Paragraph(
+                    "<br/>".join(
+                        [
+                            f"Receipt ID: {_safe_text(receipt.receipt_number)}",
+                            f"System Ref: {_safe_text(getattr(transaction, 'reference_number', None))}",
+                            f"Date Received: {_safe_text(str(transaction.transaction_date if transaction else '-'))}",
+                            f"Created: {_safe_text(receipt.issued_at.strftime('%Y-%m-%d %H:%M UTC'))}",
+                        ]
+                    ),
+                    styles["ViloBody"],
+                ),
+            ],
+        ],
+        colWidths=[3.25 * inch, 3.25 * inch],
+    )
+    info.setStyle(TableStyle([
+        ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#eef2f8")),
+        ("BOX", (0, 0), (-1, -1), 1, colors.HexColor("#d9deea")),
+        ("INNERGRID", (0, 0), (-1, -1), 0.5, colors.HexColor("#d9deea")),
+        ("VALIGN", (0, 0), (-1, -1), "TOP"),
+        ("LEFTPADDING", (0, 0), (-1, -1), 8),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 8),
+        ("TOPPADDING", (0, 0), (-1, -1), 6),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 6),
+    ]))
+    story.extend([info, Spacer(1, 14)])
+
+    detail_rows = [
+        ["Client", client.name if client else f"Client #{receipt.client_id}"],
+        ["Matter / Case", case.title if case else f"Matter #{receipt.case_id}"],
+        ["Amount", _money_with_currency(receipt.amount, receipt.currency)],
+        ["Payment Method", receipt.payment_method or "-"],
+        ["External Reference", getattr(transaction, "external_reference_number", None) or "-"],
+        ["Description", receipt.description or "-"],
+        ["Recorded By", getattr(issued_by, "name", None) or f"User #{receipt.issued_by_id}"],
+    ]
+    detail_table = Table(detail_rows, colWidths=[1.8 * inch, 4.7 * inch])
+    detail_table.setStyle(TableStyle([
+        ("GRID", (0, 0), (-1, -1), 0.5, colors.HexColor("#d9deea")),
+        ("BACKGROUND", (0, 0), (0, -1), colors.HexColor("#f9fbff")),
+        ("FONTNAME", (0, 0), (0, -1), "Helvetica-Bold"),
+        ("VALIGN", (0, 0), (-1, -1), "TOP"),
+    ]))
+    story.append(detail_table)
 
     doc.build(story, onFirstPage=_footer, onLaterPages=_footer)
     return GeneratedPdf(file_path=path, filename=filename)

@@ -23,7 +23,7 @@ from app.schemas.invoice import (
 from app.schemas.trust import (
     TrustAccountCreate, TrustAccountResponse, TrustBalanceResponse,
     TrustClientLedgerRow, TrustMatterLedgerRow, TrustReceiptResponse, TrustReconciliationResponse,
-    TrustTransactionCreate, TrustTransactionResponse, TrustTransactionVoidRequest, TrustVoidResponse,
+    TrustTransactionCreate, TrustTransactionResponse, TrustTransactionReverseRequest, TrustReverseResponse,
 )
 from app.schemas.accounting import (
     OperatingAccountCreate, OperatingAccountResponse,
@@ -46,7 +46,7 @@ __all__ = [
     "TimeEntryCreate","TimeEntryUpdate","TimeEntryResponse","TimeEntryListResponse","ExpenseCreate","ExpenseUpdate","ExpenseResponse",
     "InvoiceCreate","InvoiceUpdate","InvoiceApplyTrustRequest","InvoicePaymentVoidRequest","InvoiceResponse","InvoiceLineItemResponse","InvoicePaymentResponse","InvoicePaymentSummaryResponse","InvoiceTrustApplyResponse","InvoicePaymentVoidResponse","InvoiceSummaryResponse",
     "TrustAccountCreate","TrustAccountResponse","TrustBalanceResponse",
-    "TrustClientLedgerRow","TrustMatterLedgerRow","TrustReceiptResponse","TrustReconciliationResponse","TrustTransactionCreate","TrustTransactionResponse","TrustTransactionVoidRequest","TrustVoidResponse",
+    "TrustClientLedgerRow","TrustMatterLedgerRow","TrustReceiptResponse","TrustReconciliationResponse","TrustTransactionCreate","TrustTransactionResponse","TrustTransactionReverseRequest","TrustReverseResponse",
     "OperatingAccountCreate","OperatingAccountResponse","OperatingTransactionResponse","AccountingCurrencySummary","AccountingSummaryResponse",
     "PortalProfileResponse","PortalCaseResponse","PortalTimelineResponse","PortalDocumentResponse",
     "PortalCaseNoteResponse","PortalInvoiceResponse","PortalInvoiceDetailResponse",

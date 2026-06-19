@@ -7154,6 +7154,150 @@ button {
   width: min(840px, calc(100vw - 2rem));
 }
 
+.trust-filter-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 0.85rem;
+  width: 100%;
+}
+
+.trust-form-shell {
+  display: grid;
+  gap: 1rem;
+}
+
+.trust-form-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.9rem 1rem;
+}
+
+.trust-form-field {
+  display: grid;
+  gap: 0.42rem;
+  color: #5c5671;
+  font-weight: 600;
+}
+
+.trust-form-field span {
+  font-size: 0.88rem;
+}
+
+.trust-form-field small {
+  color: #7b768e;
+  font-size: 0.78rem;
+  font-weight: 500;
+}
+
+.trust-form-field input,
+.trust-form-field select,
+.trust-form-field textarea {
+  width: 100%;
+}
+
+.trust-form-field textarea {
+  min-height: 120px;
+}
+
+.trust-toggle--filters {
+  margin-top: 1.55rem;
+}
+
+.trust-inline-link {
+  color: #3155c6;
+  font-weight: 600;
+  text-decoration: none;
+}
+
+.trust-inline-link:hover {
+  text-decoration: underline;
+}
+
+.trust-type-badge {
+  display: inline-flex;
+  align-items: center;
+  border-radius: 999px;
+  padding: 0.34rem 0.72rem;
+  font-size: 0.78rem;
+  font-weight: 700;
+}
+
+.trust-type-badge--deposit {
+  background: rgba(40, 199, 111, 0.14);
+  color: #168c57;
+}
+
+.trust-type-badge--disbursement {
+  background: rgba(234, 84, 85, 0.14);
+  color: #ca3e42;
+}
+
+.trust-type-badge--refund {
+  background: rgba(255, 159, 67, 0.16);
+  color: #b86a04;
+}
+
+.trust-type-badge--transfer {
+  background: rgba(0, 123, 255, 0.12);
+  color: #1f5fc7;
+}
+
+.trust-type-badge--adjustment {
+  background: rgba(255, 194, 0, 0.18);
+  color: #9a7600;
+}
+
+.trust-type-badge--reversal {
+  background: rgba(143, 95, 224, 0.14);
+  color: #6b46bd;
+}
+
+.trust-ledger-table__row--clickable {
+  cursor: pointer;
+}
+
+.trust-ledger-table__row--clickable:hover {
+  background: rgba(49, 85, 198, 0.04);
+}
+
+.trust-detail-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.9rem 1rem;
+}
+
+.trust-detail-grid p {
+  margin: 0;
+  color: #5b566f;
+}
+
+.trust-detail-grid__full {
+  grid-column: 1 / -1;
+}
+
+.trust-balance-note {
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+  border: 1px solid #dbe6ff;
+  border-radius: 12px;
+  background: #f7faff;
+  padding: 0.85rem 0.95rem;
+  color: #355389;
+}
+
+@media (max-width: 960px) {
+  .trust-filter-grid,
+  .trust-form-grid,
+  .trust-detail-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .trust-toggle--filters {
+    margin-top: 0;
+  }
+}
+
 .invoice-finance-page {
   gap: 1rem;
 }

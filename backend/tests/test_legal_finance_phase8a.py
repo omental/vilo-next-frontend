@@ -354,8 +354,11 @@ async def test_trust_deposit_increases_balances_creates_receipt_and_not_operatin
 
     created_ledger = next(obj for obj in db.added if hasattr(obj, "current_balance") and obj is not account and not isinstance(obj, TrustTransaction))
     assert txn.transaction_type == "deposit"
+    assert txn.reference_number == "TRX-2026-000100"
+    assert txn.external_reference_number == "REF-100"
     assert receipt is not None
     assert isinstance(receipt, TrustReceipt)
+    assert receipt.receipt_number == "TR-2026-000100"
     assert account.current_balance == Decimal("250.00")
     assert created_ledger.current_balance == Decimal("250.00")
     assert operating_txn is None
@@ -394,6 +397,28 @@ async def test_disbursement_decreases_balances():
 
 
 @pytest.mark.asyncio
+async def test_manual_transfer_to_operating_is_blocked_outside_invoice_workflow():
+    db = FinanceServiceDB(scalars=[_trust_account("400.00"), _client(), _case(), _ledger("300.00"), Decimal("300.00"), Decimal("300.00")])
+
+    with pytest.raises(HTTPException) as exc:
+        await create_trust_transaction(
+            db,
+            organization_id=7,
+            trust_account_id=1,
+            client_id=5,
+            case_id=9,
+            transaction_type="transfer_to_operating",
+            amount=Decimal("100.00"),
+            currency="USD",
+            transaction_date=date(2026, 6, 17),
+            created_by_id=12,
+            description="Manual transfer should fail",
+            linked_invoice_id=30,
+        )
+    assert exc.value.detail == "transfer_to_operating may only be generated from the invoice trust-application workflow"
+
+
+@pytest.mark.asyncio
 async def test_disbursement_blocked_if_insufficient_matter_balance():
     db = FinanceServiceDB(scalars=[_trust_account("400.00"), _client(), _case(), _ledger("50.00"), Decimal("50.00")])
 
@@ -412,7 +437,7 @@ async def test_disbursement_blocked_if_insufficient_matter_balance():
             description="Paid filing office",
             payee_name="Registrar General",
         )
-    assert exc.value.detail == "Insufficient matter trust balance"
+    assert exc.value.detail == "Insufficient trust balance for this client/matter/currency."
 
 
 @pytest.mark.asyncio
@@ -463,7 +488,7 @@ async def test_refund_blocked_if_insufficient_balance():
             created_by_id=12,
             description="Returned unused retainer",
         )
-    assert exc.value.detail == "Insufficient matter trust balance"
+    assert exc.value.detail == "Insufficient trust balance for this client/matter/currency."
 
 
 @pytest.mark.asyncio
@@ -621,7 +646,7 @@ async def test_void_deposit_blocked_if_reversal_would_create_negative_balance():
             void_reason="duplicate entry",
             voided_by_id=99,
         )
-    assert exc.value.detail == "Insufficient matter trust balance"
+    assert exc.value.detail == "Insufficient trust balance for this client/matter/currency."
 
 
 @pytest.mark.asyncio

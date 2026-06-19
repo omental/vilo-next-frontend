@@ -104,6 +104,7 @@ class InvoiceApplyTrustRequest(BaseModel):
     currency: str | None = None
     description: str | None = None
     reference_number: str | None = None
+    external_reference_number: str | None = None
     payment_date: date | None = None
 
 

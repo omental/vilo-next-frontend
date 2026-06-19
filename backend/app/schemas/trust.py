@@ -24,7 +24,7 @@ def _normalize_currency(value: str) -> str:
 
 class TrustAccountCreate(BaseModel):
     name: str
-    currency: str = "USD"
+    currency: str = "JMD"
     account_type: str = "pooled"
     is_default: bool = False
     opening_balance: Decimal = Decimal("0.00")
@@ -67,13 +67,13 @@ class TrustTransactionCreate(BaseModel):
     case_id: int
     transaction_type: str = "deposit"
     amount: Decimal = Field(gt=Decimal("0"))
-    currency: str = "USD"
+    currency: str = "JMD"
     transaction_date: date
     description: str
     payee_name: str | None = None
     payee_type: str | None = None
     payment_method: str | None = None
-    reference_number: str | None = None
+    external_reference_number: str | None = None
     adjustment_direction: str | None = None
     adjustment_reason: str | None = None
 
@@ -114,16 +114,27 @@ class TrustTransactionCreate(BaseModel):
         return self
 
 
-class TrustTransactionVoidRequest(BaseModel):
-    void_reason: str
+class TrustTransactionReverseRequest(BaseModel):
+    reversal_reason: str
 
-    @field_validator("void_reason")
+    @field_validator("reversal_reason")
     @classmethod
-    def validate_void_reason(cls, value: str) -> str:
+    def validate_reversal_reason(cls, value: str) -> str:
         normalized = value.strip()
         if not normalized:
-            raise ValueError("void_reason is required")
+            raise ValueError("reversal_reason is required")
         return normalized
+
+
+class TrustReferenceSummary(BaseModel):
+    id: int
+    reference_number: str
+
+
+class TrustReceiptLink(BaseModel):
+    id: int
+    receipt_number: str
+    pdf_available: bool = False
 
 
 class TrustTransactionResponse(BaseModel):
@@ -132,8 +143,9 @@ class TrustTransactionResponse(BaseModel):
     trust_account_id: int
     ledger_id: int
     client_id: int
-    case_id: int | None
+    case_id: int
     linked_invoice_id: int | None
+    linked_invoice_number: str | None = None
     transaction_type: str
     amount: Decimal
     currency: str
@@ -142,16 +154,26 @@ class TrustTransactionResponse(BaseModel):
     payee_name: str | None
     payee_type: str | None
     payment_method: str | None
-    reference_number: str | None
+    reference_number: str
+    external_reference_number: str | None
     adjustment_reason: str | None
     adjustment_direction: str | None
     reversal_of_id: int | None
     created_by_id: int
+    created_by_name: str | None = None
     created_at: datetime
     voided_at: datetime | None
     voided_by_id: int | None
+    voided_by_name: str | None = None
     void_reason: str | None
-    receipt_id: int | None = None
+    status: str
+    client_name: str | None = None
+    case_title: str | None = None
+    trust_account_name: str | None = None
+    running_balance: Decimal | None = None
+    receipt: TrustReceiptLink | None = None
+    reversal_transaction: TrustReferenceSummary | None = None
+    reversal_of_transaction: TrustReferenceSummary | None = None
 
 
 class TrustReceiptResponse(BaseModel):
@@ -164,11 +186,15 @@ class TrustReceiptResponse(BaseModel):
     currency: str
     payment_method: str | None = None
     description: str | None = None
+    reference_number: str | None = None
+    external_reference_number: str | None = None
     issued_at: datetime
     issued_by_id: int
+    issued_by_name: str | None = None
     pdf_available: bool = False
     voided_at: datetime | None = None
     voided_by_id: int | None = None
+    voided_by_name: str | None = None
     void_reason: str | None = None
 
 
@@ -199,7 +225,7 @@ class TrustMatterLedgerRow(BaseModel):
     balance: Decimal
 
 
-class TrustVoidResponse(BaseModel):
+class TrustReverseResponse(BaseModel):
     original_transaction: TrustTransactionResponse
     reversal_transaction: TrustTransactionResponse
 

@@ -59,7 +59,7 @@ INVOICE_LINE_TYPE_ALIASES = {
 
 
 def normalize_currency(value: str | None) -> str:
-    normalized = (value or "USD").strip().upper()
+    normalized = (value or "JMD").strip().upper()
     if normalized not in {"USD", "JMD"}:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Unsupported currency")
     return normalized
@@ -133,7 +133,7 @@ async def get_or_create_default_trust_account(db: AsyncSession, organization_id:
     now = utc_now()
     account = TrustAccount(
         organization_id=organization_id,
-        name=f"Default {currency} Trust Account",
+        name="Main Trust Account",
         currency=currency,
         account_type="pooled",
         is_default=True,
@@ -210,6 +210,22 @@ async def get_or_create_trust_ledger(
     return ledger
 
 
+def generate_trust_reference_number(*, transaction_date: date, transaction_id: int) -> str:
+    return f"TRX-{transaction_date.year}-{transaction_id:06d}"
+
+
+def generate_trust_receipt_number(*, transaction_date: date, transaction_id: int) -> str:
+    return f"TR-{transaction_date.year}-{transaction_id:06d}"
+
+
+def get_trust_transaction_status(transaction: TrustTransaction) -> str:
+    if transaction.reversal_of_id is not None:
+        return "reversal"
+    if transaction.voided_at is not None:
+        return "reversed"
+    return "active"
+
+
 async def validate_trust_context(
     db: AsyncSession,
     *,
@@ -249,6 +265,9 @@ async def validate_trust_context(
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invoice not found")
         if invoice.client_id != client_id or invoice.case_id != case_id:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invoice/client/case mismatch")
+        invoice_currency = getattr(invoice, "currency", None)
+        if invoice_currency and normalize_currency(invoice_currency) != currency:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invoice currency must match trust transaction currency")
     return account, client, case, invoice
 
 
@@ -311,7 +330,11 @@ async def refresh_invoice_payment_totals(db: AsyncSession, invoice: Invoice) -> 
 
 async def get_invoice_currency(db: AsyncSession, organization_id: int, invoice: Invoice, explicit_currency: str | None = None) -> str:
     if explicit_currency is not None:
-        return normalize_currency(explicit_currency)
+        normalized = normalize_currency(explicit_currency)
+        invoice_currency = getattr(invoice, "currency", None)
+        if invoice_currency and normalize_currency(invoice_currency) != normalized:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invoice currency must match trust currency")
+        return normalized
     invoice_currency = getattr(invoice, "currency", None)
     if invoice_currency:
         return normalize_currency(invoice_currency)
@@ -369,10 +392,10 @@ async def validate_sufficient_trust_balance(
 ) -> Decimal:
     balance = await get_matter_trust_balance(db, organization_id, case_id, currency)
     if balance < money(amount):
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Insufficient matter trust balance")
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Insufficient trust balance for this client/matter/currency.")
     client_balance = await get_client_trust_balance(db, organization_id, client_id, currency)
     if client_balance < money(amount):
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Insufficient client trust balance")
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Insufficient trust balance for this client/matter/currency.")
     return balance
 
 
@@ -447,7 +470,7 @@ async def create_trust_receipt(
     receipt = TrustReceipt(
         organization_id=organization_id,
         trust_transaction_id=trust_transaction.id,
-        receipt_number=f"TR-{trust_transaction.transaction_date.year}-{trust_transaction.id:06d}",
+        receipt_number=generate_trust_receipt_number(transaction_date=trust_transaction.transaction_date, transaction_id=trust_transaction.id),
         client_id=trust_transaction.client_id,
         case_id=trust_transaction.case_id,
         amount=trust_transaction.amount,
@@ -463,6 +486,14 @@ async def create_trust_receipt(
     )
     db.add(receipt)
     await db.flush()
+    from app.services.pdf import generate_trust_receipt_pdf
+
+    try:
+        generated = await generate_trust_receipt_pdf(receipt.id, db=db, organization_id=organization_id)
+    except AssertionError:
+        generated = None
+    if generated is not None:
+        receipt.pdf_path = str(generated.file_path)
     return receipt
 
 
@@ -483,18 +514,21 @@ async def create_trust_transaction(
     payee_type: str | None = None,
     payment_method: str | None = None,
     reference_number: str | None = None,
+    external_reference_number: str | None = None,
     linked_invoice_id: int | None = None,
     adjustment_direction: str | None = None,
     adjustment_reason: str | None = None,
     reversal_of_id: int | None = None,
+    allow_system_transfer: bool = False,
     audit_request: dict | None = None,
 ) -> tuple[TrustTransaction, TrustReceipt | None, OperatingTransaction | None]:
     transaction_type = transaction_type.strip().lower()
     currency = normalize_currency(currency)
+    external_reference_number = external_reference_number or reference_number
     if transaction_type not in TRUST_ALL_TYPES:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Unsupported trust transaction type")
-    if transaction_type == "transfer_to_operating" and linked_invoice_id is None:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="transfer_to_operating is reserved for Phase C invoice-linked workflow")
+    if transaction_type == "transfer_to_operating" and (linked_invoice_id is None or not allow_system_transfer):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="transfer_to_operating may only be generated from the invoice trust-application workflow")
 
     amount = money(amount)
     if amount <= ZERO:
@@ -534,6 +568,8 @@ async def create_trust_transaction(
             amount=abs(delta),
             currency=currency,
         )
+        if money(ledger.current_balance + delta) < ZERO or money(account.current_balance + delta) < ZERO:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Insufficient trust balance for this client/matter/currency.")
 
     now = utc_now()
     previous_ledger_balance = money(ledger.current_balance)
@@ -557,7 +593,8 @@ async def create_trust_transaction(
         payee_name=(payee_name or None),
         payee_type=(payee_type or None),
         payment_method=payment_method,
-        reference_number=reference_number,
+        reference_number="PENDING",
+        external_reference_number=(external_reference_number or None),
         adjustment_reason=adjustment_reason,
         adjustment_direction=adjustment_direction,
         reversal_of_id=reversal_of_id,
@@ -570,6 +607,7 @@ async def create_trust_transaction(
     )
     db.add(txn)
     await db.flush()
+    txn.reference_number = generate_trust_reference_number(transaction_date=transaction_date, transaction_id=txn.id)
 
     receipt = None
     operating_txn = None
@@ -611,6 +649,8 @@ async def create_trust_transaction(
                 "currency": currency,
                 "payee_name": payee_name,
                 "payee_type": payee_type,
+                "reference_number": txn.reference_number,
+                "external_reference_number": txn.external_reference_number,
                 "adjustment_reason": adjustment_reason,
                 "adjustment_direction": adjustment_direction,
                 "reversal_of_id": reversal_of_id,
@@ -653,16 +693,16 @@ async def void_trust_transaction(
 ) -> tuple[TrustTransaction, TrustTransaction]:
     original = await get_trust_transaction_or_404(db, organization_id, transaction_id)
     if original.voided_at is not None:
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Trust transaction already voided")
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Trust transaction already reversed")
     if original.reversal_of_id is not None:
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Reversal transactions cannot be voided")
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Reversal transactions cannot be reversed")
     if original.transaction_type == "transfer_to_operating":
         if original.linked_invoice_id is not None:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Invoice-linked trust transfers must be voided through the invoice payment void workflow",
             )
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="transfer_to_operating void workflow is reserved for invoice payment reversals")
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="transfer_to_operating reversal workflow is reserved for invoice payment reversals")
 
     now = utc_now()
     original.voided_at = now
@@ -691,7 +731,7 @@ async def void_trust_transaction(
         payee_name=original.payee_name,
         payee_type=original.payee_type,
         payment_method=original.payment_method,
-        reference_number=original.reference_number,
+        external_reference_number=original.external_reference_number,
         adjustment_direction=reversal_direction,
         adjustment_reason=REVERSAL_REASON,
         reversal_of_id=original.id,
@@ -701,12 +741,12 @@ async def void_trust_transaction(
         db,
         organization_id=organization_id,
         user_id=voided_by_id,
-        action="trust_transaction_voided",
+        action="trust_transaction_reversed",
         entity_type="trust_transaction",
         entity_id=str(original.id),
-        description=f"Voided trust transaction #{original.id}",
+        description=f"Reversed trust transaction #{original.id}",
         metadata_json={
-            "void_reason": original.void_reason,
+            "reversal_reason": original.void_reason,
             "reversal_transaction_id": reversal_txn.id,
             "receipt_voided": bool(original.receipt),
         },
@@ -922,8 +962,18 @@ def apply_transaction_filters(query: Select, *, model, filters: dict) -> Select:
         query = query.where(model.transaction_date >= filters["date_from"])
     if filters.get("date_to") is not None:
         query = query.where(model.transaction_date <= filters["date_to"])
+    if filters.get("status") is not None:
+        status_value = str(filters["status"]).strip().lower()
+        if status_value == "active":
+            query = query.where(model.voided_at.is_(None), model.reversal_of_id.is_(None))
+        elif status_value == "reversed":
+            query = query.where(model.voided_at.is_not(None), model.reversal_of_id.is_(None))
+        elif status_value == "reversal":
+            query = query.where(model.reversal_of_id.is_not(None))
     if not filters.get("include_voided"):
         query = query.where(model.voided_at.is_(None))
+    if not filters.get("include_reversed", True):
+        query = query.where(model.reversal_of_id.is_(None))
     return query
 
 
@@ -1070,8 +1120,9 @@ async def apply_trust_to_invoice(
         transaction_date=payment_date or date.today(),
         created_by_id=created_by_id,
         description=description,
-        reference_number=reference_number,
+        external_reference_number=reference_number,
         linked_invoice_id=invoice.id,
+        allow_system_transfer=True,
         audit_request=audit_request,
     )
     if operating_txn is None:
@@ -1178,7 +1229,7 @@ async def void_invoice_payment(
             created_by_id=voided_by_id,
             description=reversal_description,
             payment_method=original_trust_transaction.payment_method,
-            reference_number=original_trust_transaction.reference_number,
+            external_reference_number=original_trust_transaction.external_reference_number,
             linked_invoice_id=invoice.id,
             adjustment_direction="increase",
             adjustment_reason=REVERSAL_REASON,

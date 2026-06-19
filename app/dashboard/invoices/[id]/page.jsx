@@ -136,7 +136,7 @@ function InvoiceDetailInner() {
     amount: "",
     trust_account_id: "",
     payment_date: "",
-    reference_number: "",
+    external_reference_number: "",
     description: "",
   });
   const [voidReason, setVoidReason] = useState("");
@@ -389,12 +389,12 @@ function InvoiceDetailInner() {
           amount: Number(applyForm.amount),
           trust_account_id: applyForm.trust_account_id ? Number(applyForm.trust_account_id) : null,
           payment_date: applyForm.payment_date || null,
-          reference_number: applyForm.reference_number || null,
+          external_reference_number: applyForm.external_reference_number || null,
           description: applyForm.description || null,
         }),
       });
       closeModal();
-      setApplyForm((current) => ({ ...current, amount: "", reference_number: "" }));
+      setApplyForm((current) => ({ ...current, amount: "", external_reference_number: "" }));
       await load();
     } catch (err) {
       setFormError(err.message || "Failed to apply trust funds.");
@@ -841,7 +841,7 @@ function InvoiceDetailInner() {
             </div>
             <div className="vilo-form-row-two">
               <input type="date" value={applyForm.payment_date} onChange={(event) => setApplyForm((current) => ({ ...current, payment_date: event.target.value }))} />
-              <input placeholder="Reference number" value={applyForm.reference_number} onChange={(event) => setApplyForm((current) => ({ ...current, reference_number: event.target.value }))} />
+              <input placeholder="External reference / check number" value={applyForm.external_reference_number} onChange={(event) => setApplyForm((current) => ({ ...current, external_reference_number: event.target.value }))} />
             </div>
             <textarea placeholder="Description" value={applyForm.description} onChange={(event) => setApplyForm((current) => ({ ...current, description: event.target.value }))} />
             <div className="vilo-table-actions invoice-create-actions">
