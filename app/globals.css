@@ -4231,6 +4231,7 @@ button {
   border: 1px solid #e8e4f3;
   background: #fff;
   box-shadow: 0 20px 35px rgba(25, 19, 44, 0.2);
+  overflow: visible;
 }
 
 .vilo-modal__header {
@@ -4666,6 +4667,9 @@ button {
 
 .invoice-create-modal {
   width: min(760px, 100%);
+  max-height: calc(100vh - 48px);
+  display: flex;
+  flex-direction: column;
 }
 
 .invoice-modal-copy {
@@ -4677,6 +4681,84 @@ button {
 .invoice-create-form {
   display: grid;
   gap: 0.9rem;
+}
+
+.invoice-create-form--scrollable {
+  overflow-y: auto;
+  overflow-x: visible;
+  padding-bottom: 1.25rem;
+}
+
+.invoice-create-shell {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  flex-direction: column;
+}
+
+.invoice-create-footer,
+.vilo-modal__footer {
+  border-top: 1px solid #f0edf8;
+  padding: 0.9rem 1rem 1rem;
+  background: #fff;
+}
+
+.invoice-form-section {
+  display: grid;
+  gap: 0.7rem;
+  padding: 0.95rem 1rem;
+  border: 1px solid #ece8f5;
+  border-radius: 14px;
+  background: #fcfbff;
+}
+
+.invoice-form-section--trust {
+  border-color: rgba(79, 66, 240, 0.18);
+  background: linear-gradient(135deg, rgba(79, 66, 240, 0.04), rgba(255, 255, 255, 0.96));
+}
+
+.invoice-form-section__heading,
+.invoice-form-section__heading--with-action {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
+.invoice-form-section__heading h4,
+.invoice-form-section__heading--with-action h4 {
+  margin: 0;
+  font-size: 0.98rem;
+  color: #4f4b63;
+}
+
+.invoice-readonly-textarea {
+  min-height: 110px;
+  resize: vertical;
+  white-space: pre-wrap;
+  background: #f8f7fc;
+}
+
+.invoice-financial-summary {
+  display: grid;
+  gap: 0.65rem;
+  padding: 1rem;
+}
+
+.invoice-financial-summary div {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.invoice-financial-summary span {
+  color: #726d87;
+  font-size: 0.9rem;
+}
+
+.invoice-financial-summary strong {
+  color: #433f54;
 }
 
 .invoice-create-form label {
@@ -4715,6 +4797,12 @@ button {
 .invoice-line-item-row input,
 .invoice-line-item-row select {
   width: 100%;
+}
+
+.invoice-line-item-row__amount {
+  background: #f8f7fc;
+  color: #4d495f;
+  font-weight: 600;
 }
 
 .invoice-linked-time-row {
@@ -7098,6 +7186,8 @@ button {
 
 .invoice-finance-modal {
   width: min(760px, calc(100vw - 2rem));
+  max-height: calc(100vh - 48px);
+  overflow-y: auto;
 }
 
 .invoice-action-review {
@@ -7133,6 +7223,24 @@ button {
   margin-top: 0.35rem;
   color: #8a859c;
   font-size: 0.78rem;
+}
+
+.invoice-actions-menu {
+  width: 220px;
+  z-index: 80;
+  background: #fff;
+  border: 1px solid #e6e2f3;
+  box-shadow: 0 16px 34px rgba(25, 19, 44, 0.16);
+}
+
+.invoice-row-actions {
+  position: relative;
+  justify-content: flex-end;
+}
+
+.invoice-trust-banner--create {
+  grid-template-columns: 1fr;
+  align-items: flex-start;
 }
 
 .billing-finance-page {

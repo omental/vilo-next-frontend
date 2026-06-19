@@ -114,6 +114,16 @@ class EffectiveBillingRateResponse(BaseModel):
     rate_id: int | None = None
 
 
+class BillingTaxSettingsResponse(BaseModel):
+    invoice_tax_label: str
+    invoice_tax_rate: Decimal
+
+
+class BillingTaxSettingsUpdate(BaseModel):
+    invoice_tax_label: str = Field(min_length=1, max_length=50)
+    invoice_tax_rate: Decimal = Field(ge=Decimal("0"), le=Decimal("100"))
+
+
 class RevenueByStaffRow(BaseModel):
     staff_user_id: int
     staff_name: str

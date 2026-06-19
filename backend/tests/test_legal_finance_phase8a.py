@@ -318,11 +318,11 @@ def test_derive_invoice_status_marks_overdue_only_when_balance_remains():
 
 def test_summarize_invoice_payment_method_handles_direct_trust_mixed_and_voided():
     invoice = _invoice(total="200.00", paid_amount="0.00", status="sent")
-    assert summarize_invoice_payment_method(invoice) == "Unpaid"
+    assert summarize_invoice_payment_method(invoice) == "Not Paid"
     invoice.payments = [_payment(source="direct")]
-    assert summarize_invoice_payment_method(invoice) == "Direct"
+    assert summarize_invoice_payment_method(invoice) == "Direct Payment"
     invoice.payments = [_payment(source="trust", linked_trust_transaction_id=11)]
-    assert summarize_invoice_payment_method(invoice) == "Trust"
+    assert summarize_invoice_payment_method(invoice) == "Trust Applied"
     invoice.payments = [_payment(source="direct"), _payment(payment_id=41, source="trust", linked_trust_transaction_id=11)]
     assert summarize_invoice_payment_method(invoice) == "Mixed"
     voided = _payment(source="direct")

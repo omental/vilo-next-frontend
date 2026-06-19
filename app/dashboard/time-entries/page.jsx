@@ -246,7 +246,7 @@ function TimeEntriesPageContent() {
         } else if (rate.source === "role") {
           setRateStatus({ source: rate.source, message: "Role-based rate" });
         } else {
-          setRateStatus({ source: rate.source, message: "No billing rate configured." });
+          setRateStatus({ source: rate.source, message: "No billing rate configured. Billable time cannot be saved until a rate exists or a partner/admin overrides it." });
         }
       } catch (err) {
         if (cancelled) return;
@@ -322,6 +322,10 @@ function TimeEntriesPageContent() {
     }
     if (!durationMinutes) {
       setModalError("End time must be after start time.");
+      return;
+    }
+    if (form.billing_mode === "billable" && !canOverrideRates && rateStatus.source === "missing") {
+      setModalError("No active billing rate is configured for this staff user and currency.");
       return;
     }
 
@@ -637,7 +641,7 @@ function TimeEntriesPageContent() {
 
               <div className="time-entry-modal__actions">
                 <button type="button" className="vilo-btn vilo-btn--secondary" onClick={closeModal}>Cancel</button>
-                <button type="submit" className="vilo-btn vilo-btn--primary" disabled={saving || modalMode === "view"}>
+                <button type="submit" className="vilo-btn vilo-btn--primary" disabled={saving || modalMode === "view" || (form.billing_mode === "billable" && !canOverrideRates && rateStatus.source === "missing")}>
                   {modalMode === "edit" ? (saving ? "Saving..." : "Save") : saving ? "Saving..." : "Save"}
                 </button>
               </div>

@@ -66,7 +66,6 @@ class InvoiceCreate(BaseModel):
     currency: str = "USD"
     issue_date: date
     due_date: date | None = None
-    tax_amount: Decimal = Field(default=Decimal("0.00"), ge=Decimal("0"))
     notes: str | None = None
     payment_instructions: str | None = None
     payment_account_id: int | None = None
@@ -86,7 +85,6 @@ class InvoiceUpdate(BaseModel):
     currency: str | None = None
     issue_date: date | None = None
     due_date: date | None = None
-    tax_amount: Decimal | None = None
     notes: str | None = None
     payment_instructions: str | None = None
     payment_account_id: int | None = None
@@ -113,6 +111,10 @@ class InvoicePaymentVoidRequest(BaseModel):
     void_reason: str = Field(min_length=1)
     void_date: date | None = None
     description: str | None = None
+
+
+class InvoiceVoidRequest(BaseModel):
+    void_reason: str = Field(min_length=1)
 
 
 class InvoiceLineItemResponse(BaseModel):
@@ -173,6 +175,9 @@ class InvoiceResponse(BaseModel):
     updated_at: datetime
     payment_instructions: str | None
     payment_account_id: int | None
+    voided_at: datetime | None = None
+    voided_by_id: int | None = None
+    void_reason: str | None = None
     payment_account: InvoicePaymentAccountSummary | None = None
     organization: InvoiceOrganizationSummary
     client: InvoiceClientSummary

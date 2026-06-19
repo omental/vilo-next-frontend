@@ -2,7 +2,7 @@ from datetime import date, datetime, timezone
 from decimal import Decimal
 from pathlib import Path
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Request
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Request, status
 from fastapi.responses import FileResponse
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -28,6 +28,7 @@ from app.schemas.invoice import (
     InvoicePaymentAccountSummary,
     InvoicePaymentResponse,
     InvoicePaymentSummaryResponse,
+    InvoiceVoidRequest,
     InvoicePaymentVoidRequest,
     InvoicePaymentVoidResponse,
     InvoiceOrganizationSummary,
@@ -142,7 +143,7 @@ def inv_ser(i: Invoice, *, trust_balance_available: Decimal | None = None) -> In
         line_items=[line_ser(x) for x in i.line_items],
         payments=[payment_ser(x) for x in getattr(i, "payments", [])],
         trust_balance_available=trust_balance_available,
-        can_apply_trust=bool(i.case_id and i.balance_due > 0 and display_status not in {"paid", "cancelled"}),
+        can_apply_trust=bool(i.case_id and i.balance_due > 0 and display_status not in {"paid", "cancelled", "voided"}),
     )
 
 
@@ -196,10 +197,24 @@ async def resolve_invoice_number(db: AsyncSession, org_id: int, requested: str |
 def recalc(invoice: Invoice):
     subtotal = sum((li.amount for li in invoice.line_items), Decimal("0"))
     invoice.subtotal = subtotal
-    invoice.total = subtotal + (invoice.tax_amount or Decimal("0"))
+    invoice.total = subtotal + money(invoice.tax_amount or Decimal("0"))
     if invoice.paid_amount is None:
         invoice.paid_amount = Decimal("0")
     invoice.balance_due = max(Decimal("0"), invoice.total - invoice.paid_amount)
+
+
+async def get_organization_or_404(db: AsyncSession, organization_id: int) -> Organization:
+    organization = await db.scalar(select(Organization).where(Organization.id == organization_id))
+    if not organization:
+        raise HTTPException(status_code=404, detail="Organization not found")
+    return organization
+
+
+def calculate_invoice_tax(subtotal: Decimal, organization: Organization) -> Decimal:
+    rate = money(getattr(organization, "invoice_tax_rate", Decimal("0")) or Decimal("0"))
+    if rate <= Decimal("0"):
+        return Decimal("0.00")
+    return money(subtotal * (rate / Decimal("100")))
 
 
 async def sync_invoice_line_items(
@@ -245,6 +260,8 @@ async def sync_invoice_line_items(
                 invoice=invoice,
                 time_entry_id=item.time_entry_id,
             )
+            if time_entry.hourly_rate is None or money(time_entry.hourly_rate) <= Decimal("0"):
+                raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Billable time entries must have an active billing rate before invoicing")
             quantity = _round_quantity(time_entry.duration_minutes)
             unit_price = money(time_entry.hourly_rate)
             amount = money(quantity * unit_price)
@@ -286,6 +303,7 @@ def _round_quantity(duration_minutes: int | None) -> Decimal:
 @router.post("", response_model=InvoiceResponse)
 async def create_invoice(payload: InvoiceCreate, db: AsyncSession = Depends(get_db), current_user: User = Depends(role_guard(ALLOWED))):
     _, case = await validate_client_case(db, current_user.organization_id, payload.client_id, payload.case_id)
+    organization = await get_organization_or_404(db, current_user.organization_id)
     currency = normalize_currency(payload.currency)
     payment_account = await resolve_invoice_payment_account(
         db,
@@ -304,7 +322,7 @@ async def create_invoice(payload: InvoiceCreate, db: AsyncSession = Depends(get_
         issue_date=payload.issue_date,
         due_date=payload.due_date,
         subtotal=Decimal("0"),
-        tax_amount=payload.tax_amount,
+        tax_amount=Decimal("0"),
         total=Decimal("0"),
         paid_amount=Decimal("0"),
         balance_due=Decimal("0"),
@@ -323,6 +341,7 @@ async def create_invoice(payload: InvoiceCreate, db: AsyncSession = Depends(get_
         line_items=payload.line_items,
         created_at=now,
     )
+    inv.tax_amount = calculate_invoice_tax(sum((li.amount for li in inv.line_items), Decimal("0")), organization)
     recalc(inv)
     if case:
         await create_case_timeline_event(db, organization_id=current_user.organization_id, case_id=case.id, actor_id=current_user.id, event_type="invoice_created", title=f"Invoice created: {inv.invoice_number}", metadata_json={"invoice_id": inv.id})
@@ -334,6 +353,7 @@ async def create_invoice(payload: InvoiceCreate, db: AsyncSession = Depends(get_
 async def generate_from_case(case_id: int, db: AsyncSession = Depends(get_db), current_user: User = Depends(role_guard(ALLOWED))):
     case = await db.scalar(select(Case).where(Case.id == case_id, Case.organization_id == current_user.organization_id))
     if not case: raise HTTPException(status_code=404, detail="Case not found")
+    organization = await get_organization_or_404(db, current_user.organization_id)
     now = datetime.now(timezone.utc)
     payment_account = await resolve_invoice_payment_account(
         db,
@@ -370,6 +390,7 @@ async def generate_from_case(case_id: int, db: AsyncSession = Depends(get_db), c
         db.add(InvoiceLineItem(organization_id=current_user.organization_id, invoice_id=inv.id, line_type=validate_invoice_line_type("expense"), description=ex.description, quantity=Decimal("1"), unit_price=ex.amount, amount=ex.amount, time_entry_id=None, expense_id=ex.id, created_at=now))
 
     await db.flush(); inv = await get_invoice_or_404(db, current_user.organization_id, inv.id)
+    inv.tax_amount = calculate_invoice_tax(sum((li.amount for li in inv.line_items), Decimal("0")), organization)
     recalc(inv); inv.updated_at = now
     await create_case_timeline_event(db, organization_id=current_user.organization_id, case_id=case.id, actor_id=current_user.id, event_type="invoice_created", title=f"Invoice created: {inv.invoice_number}", metadata_json={"invoice_id": inv.id, "time_entries": len(tes), "expenses": len(exs)})
     await db.commit(); inv = await get_invoice_or_404(db, current_user.organization_id, inv.id)
@@ -438,6 +459,7 @@ async def download_invoice_pdf(invoice_id: int, db: AsyncSession = Depends(get_d
 @router.patch("/{invoice_id}", response_model=InvoiceResponse)
 async def update_invoice(invoice_id: int, payload: InvoiceUpdate, db: AsyncSession = Depends(get_db), current_user: User = Depends(role_guard(ALLOWED))):
     inv = await get_invoice_or_404(db, current_user.organization_id, invoice_id)
+    organization = await get_organization_or_404(db, current_user.organization_id)
     updates = payload.model_dump(exclude_unset=True)
     st = updates.get("status")
     if st and st not in VALID_STATUS: raise HTTPException(status_code=400, detail="Invalid invoice status")
@@ -472,6 +494,7 @@ async def update_invoice(invoice_id: int, payload: InvoiceUpdate, db: AsyncSessi
             line_items=payload.line_items or [],
             created_at=datetime.now(timezone.utc),
         )
+    inv.tax_amount = calculate_invoice_tax(sum((li.amount for li in inv.line_items), Decimal("0")), organization)
     recalc(inv); inv.updated_at = datetime.now(timezone.utc)
     await db.commit(); inv = await get_invoice_or_404(db, current_user.organization_id, invoice_id)
     return inv_ser(inv)
@@ -480,6 +503,8 @@ async def update_invoice(invoice_id: int, payload: InvoiceUpdate, db: AsyncSessi
 @router.patch("/{invoice_id}/mark-sent", response_model=InvoiceResponse)
 async def mark_sent(invoice_id: int, request: Request, background_tasks: BackgroundTasks, db: AsyncSession = Depends(get_db), current_user: User = Depends(role_guard(ALLOWED))):
     inv = await get_invoice_or_404(db, current_user.organization_id, invoice_id)
+    if inv.voided_at is not None:
+        raise HTTPException(status_code=400, detail="Voided invoices cannot be sent")
     if inv.case_id is None:
         raise HTTPException(status_code=400, detail="Invoice must be linked to a matter")
     inv.status = "sent"; inv.updated_at = datetime.now(timezone.utc)
@@ -555,6 +580,57 @@ async def mark_paid(invoice_id: int, request: Request, db: AsyncSession = Depend
         user_agent=request.headers.get("user-agent"),
     )
     await db.commit(); inv = await get_invoice_or_404(db, current_user.organization_id, invoice_id)
+    return inv_ser(inv)
+
+
+@router.post("/{invoice_id}/void", response_model=InvoiceResponse)
+async def void_invoice(
+    invoice_id: int,
+    payload: InvoiceVoidRequest,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(role_guard(ALLOWED_PAY)),
+):
+    inv = await get_invoice_or_404(db, current_user.organization_id, invoice_id)
+    if inv.voided_at is not None or (inv.status or "").strip().lower() in {"void", "voided"}:
+        raise HTTPException(status_code=409, detail="Invoice already voided")
+    active_payments = [payment for payment in getattr(inv, "payments", []) if getattr(payment, "voided_at", None) is None]
+    if active_payments:
+        raise HTTPException(status_code=409, detail="Void invoice payments first before voiding this invoice")
+
+    now = datetime.now(timezone.utc)
+    normalized_reason = payload.void_reason.strip()
+    inv.status = "voided"
+    inv.voided_at = now
+    inv.voided_by_id = current_user.id
+    inv.void_reason = normalized_reason
+    inv.updated_at = now
+    inv.paid_amount = Decimal("0.00")
+    inv.balance_due = Decimal("0.00")
+    if inv.case_id:
+        await create_case_timeline_event(
+            db,
+            organization_id=current_user.organization_id,
+            case_id=inv.case_id,
+            actor_id=current_user.id,
+            event_type="invoice_voided",
+            title=f"Invoice voided: {inv.invoice_number}",
+            metadata_json={"invoice_id": inv.id, "void_reason": normalized_reason},
+        )
+    await log_audit_event(
+        db,
+        organization_id=current_user.organization_id,
+        user_id=current_user.id,
+        action="invoice_voided",
+        entity_type="invoice",
+        entity_id=str(inv.id),
+        description=f"Invoice voided: {inv.invoice_number}",
+        metadata_json={"void_reason": normalized_reason, "case_id": inv.case_id, "client_id": inv.client_id},
+        ip_address=request.client.host if request.client else None,
+        user_agent=request.headers.get("user-agent"),
+    )
+    await db.commit()
+    inv = await get_invoice_or_404(db, current_user.organization_id, invoice_id)
     return inv_ser(inv)
 
 
@@ -646,7 +722,7 @@ async def payment_summary(invoice_id: int, db: AsyncSession = Depends(get_db), c
         paid_amount=inv.paid_amount,
         balance_due=inv.balance_due,
         trust_balance_available=trust_balance,
-        can_apply_trust=bool(inv.case_id and inv.balance_due > 0 and derive_invoice_status(inv) not in {"paid", "cancelled"}),
+        can_apply_trust=bool(inv.case_id and inv.balance_due > 0 and derive_invoice_status(inv) not in {"paid", "cancelled", "voided"}),
         payments=[payment_ser(x) for x in getattr(inv, "payments", [])],
     )
 

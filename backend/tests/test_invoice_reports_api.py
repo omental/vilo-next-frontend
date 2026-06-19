@@ -173,8 +173,8 @@ def test_invoice_reports_endpoint_separates_status_and_payment_methods():
         body = res.json()
         assert len(body["paid_invoices"]) == 1
         assert len(body["overdue_invoices"]) == 2
-        assert body["payment_method_report"]["counts"]["Direct"] == 1
-        assert body["payment_method_report"]["counts"]["Trust"] == 1
+        assert body["payment_method_report"]["counts"]["Direct Payment"] == 1
+        assert body["payment_method_report"]["counts"]["Trust Applied"] == 1
         assert body["payment_method_report"]["counts"]["Mixed"] == 1
         assert body["payment_method_report"]["counts"]["Voided/Reversed"] == 1
         assert body["revenue_by_client"][0]["amount"] == 115.0

@@ -85,11 +85,13 @@ def validate_invoice_line_type(line_type: str) -> str:
 
 def derive_invoice_status(invoice: Invoice) -> str:
     raw_status = (invoice.status or "draft").strip().lower()
+    if getattr(invoice, "voided_at", None) is not None or raw_status in {"void", "voided"}:
+        return "voided"
     balance_due = money(getattr(invoice, "balance_due", ZERO))
     paid_amount = money(getattr(invoice, "paid_amount", ZERO))
     due_date = getattr(invoice, "due_date", None)
     today = date.today()
-    if raw_status in {"cancelled", "void", "voided"}:
+    if raw_status in {"cancelled"}:
         return "cancelled"
     if balance_due <= ZERO and (paid_amount > ZERO or raw_status == "paid"):
         return "paid"
@@ -101,17 +103,19 @@ def derive_invoice_status(invoice: Invoice) -> str:
 
 
 def summarize_invoice_payment_method(invoice: Invoice) -> str:
+    if getattr(invoice, "voided_at", None) is not None or (invoice.status or "").strip().lower() in {"void", "voided"}:
+        return "Voided/Reversed"
     payments = list(getattr(invoice, "payments", []) or [])
     active_sources = {payment.payment_source for payment in payments if getattr(payment, "voided_at", None) is None}
     if "direct" in active_sources and "trust" in active_sources:
         return "Mixed"
     if "direct" in active_sources:
-        return "Direct"
+        return "Direct Payment"
     if "trust" in active_sources:
-        return "Trust"
+        return "Trust Applied"
     if payments and any(getattr(payment, "voided_at", None) is not None for payment in payments):
         return "Voided/Reversed"
-    return "Unpaid"
+    return "Not Paid"
 
 
 async def get_or_create_default_trust_account(db: AsyncSession, organization_id: int, currency: str) -> TrustAccount:
@@ -974,7 +978,7 @@ def validate_invoice_payment_amount(invoice: Invoice, amount: Decimal) -> Decima
 
 
 def validate_invoice_payable(invoice: Invoice) -> None:
-    if invoice.status in {"cancelled", "void", "voided"}:
+    if invoice.status in {"cancelled", "void", "voided"} or getattr(invoice, "voided_at", None) is not None:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Cancelled or void invoices cannot accept payments")
 
 

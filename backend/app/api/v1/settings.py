@@ -8,8 +8,11 @@ from app.api.deps import role_guard
 from app.db.session import get_db
 from app.models.billing_rate import BillingRate
 from app.models.firm_payment_account import FirmPaymentAccount
+from app.models.organization import Organization
 from app.models.user import User
 from app.schemas.billing import (
+    BillingTaxSettingsResponse,
+    BillingTaxSettingsUpdate,
     BillingRateCreate,
     BillingRateResponse,
     BillingRateUpdate,
@@ -36,6 +39,37 @@ def serialize_payment_account(account: FirmPaymentAccount) -> FirmPaymentAccount
 
 def serialize_billing_rate(rate: BillingRate) -> BillingRateResponse:
     return BillingRateResponse(**{field: getattr(rate, field) for field in BillingRateResponse.model_fields.keys()})
+
+
+def serialize_billing_tax_settings(organization: Organization | None) -> BillingTaxSettingsResponse:
+    return BillingTaxSettingsResponse(
+        invoice_tax_label=getattr(organization, "invoice_tax_label", None) or "GCT",
+        invoice_tax_rate=money((getattr(organization, "invoice_tax_rate", 0) or 0)),
+    )
+
+
+@router.get("/billing-tax", response_model=BillingTaxSettingsResponse)
+async def get_billing_tax_settings(
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(role_guard(VIEW)),
+):
+    organization = await db.scalar(select(Organization).where(Organization.id == current_user.organization_id))
+    return serialize_billing_tax_settings(organization)
+
+
+@router.patch("/billing-tax", response_model=BillingTaxSettingsResponse)
+async def update_billing_tax_settings(
+    payload: BillingTaxSettingsUpdate,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(role_guard(MANAGE)),
+):
+    organization = await db.scalar(select(Organization).where(Organization.id == current_user.organization_id))
+    if not organization:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Organization not found")
+    organization.invoice_tax_label = payload.invoice_tax_label.strip()
+    organization.invoice_tax_rate = money(payload.invoice_tax_rate)
+    await db.commit()
+    return serialize_billing_tax_settings(organization)
 
 
 @router.get("/payment-accounts", response_model=list[FirmPaymentAccountResponse])

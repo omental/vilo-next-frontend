@@ -1,5 +1,6 @@
 from datetime import datetime
-from sqlalchemy import DateTime, Enum, String
+from decimal import Decimal
+from sqlalchemy import DateTime, Enum, Numeric, String
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base
@@ -13,6 +14,8 @@ class Organization(Base):
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     slug: Mapped[str] = mapped_column(String(255), unique=True, nullable=False, index=True)
     status: Mapped[RecordStatus] = mapped_column(Enum(RecordStatus), default=RecordStatus.active, nullable=False)
+    invoice_tax_label: Mapped[str] = mapped_column(String(50), nullable=False, default="GCT")
+    invoice_tax_rate: Mapped[Decimal] = mapped_column(Numeric(5, 2), nullable=False, default=0)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 

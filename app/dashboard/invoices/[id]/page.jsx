@@ -15,6 +15,11 @@ const LINE_ITEM_TYPE_OPTIONS = [
   ["approved_billable_expense", "Approved Billable Expense"],
 ];
 
+const initialBillingTax = {
+  invoice_tax_label: "GCT",
+  invoice_tax_rate: "0.00",
+};
+
 function roleCanManage(role) {
   return role === "partner" || role === "admin";
 }
@@ -49,13 +54,31 @@ function resolveDefaultPaymentAccount(accounts, currency) {
     || null;
 }
 
+function buildPaymentInstructions(account) {
+  if (!account) return "";
+  return [
+    account.bank_name ? `Bank: ${account.bank_name}` : null,
+    account.account_name ? `Account Name: ${account.account_name}` : null,
+    account.account_number ? `Account Number: ${account.account_number}` : null,
+    account.swift_routing ? `Routing Number / SWIFT: ${account.swift_routing}` : null,
+    account.notes ? `Notes: ${account.notes}` : null,
+  ].filter(Boolean).join("\n");
+}
+
+function calculateLineAmount(quantity, unitPrice) {
+  const qty = Number(quantity || 0);
+  const price = Number(unitPrice || 0);
+  if (!Number.isFinite(qty) || !Number.isFinite(price)) return "0.00";
+  return (qty * price).toFixed(2);
+}
+
 function createTimeEntryLine(entry) {
   return {
     line_type: "hourly_work",
     description: entry.description || "Time entry",
     quantity: String(entry.duration_minutes ? Number(entry.duration_minutes) / 60 : 0),
     unit_price: String(entry.hourly_rate || 0),
-    amount: String(entry.amount || 0),
+    amount: calculateLineAmount(entry.duration_minutes ? Number(entry.duration_minutes) / 60 : 0, entry.hourly_rate || 0),
     time_entry_id: entry.id,
     hours: entry.duration_minutes ? (Number(entry.duration_minutes) / 60).toFixed(2) : "0.00",
     rate: String(entry.hourly_rate || 0),
@@ -96,6 +119,7 @@ function InvoiceDetailInner() {
   const [invoice, setInvoice] = useState(null);
   const [trustAccounts, setTrustAccounts] = useState([]);
   const [paymentAccounts, setPaymentAccounts] = useState([]);
+  const [billingTax, setBillingTax] = useState(initialBillingTax);
   const [cases, setCases] = useState([]);
   const [team, setTeam] = useState([]);
   const [billableEntries, setBillableEntries] = useState([]);
@@ -116,6 +140,7 @@ function InvoiceDetailInner() {
     description: "",
   });
   const [voidReason, setVoidReason] = useState("");
+  const [actionsOpen, setActionsOpen] = useState(false);
 
   const requestedApplyTrust = searchParams.get("apply_trust") === "1";
 
@@ -141,16 +166,18 @@ function InvoiceDetailInner() {
     setLoading(true);
     setError("");
     try {
-      const [invoiceRow, trustRows, accountRows, caseRows, teamRows] = await Promise.all([
+      const [invoiceRow, trustRows, accountRows, caseRows, teamRows, taxSettings] = await Promise.all([
         apiRequest(`/api/v1/invoices/${id}`),
         apiRequest("/api/v1/trust/accounts").catch(() => []),
         apiRequest("/api/v1/settings/payment-accounts").catch(() => []),
         apiRequest("/api/v1/cases").catch(() => []),
         apiRequest("/api/v1/team").catch(() => []),
+        apiRequest("/api/v1/settings/billing-tax").catch(() => initialBillingTax),
       ]);
       setInvoice(invoiceRow);
       setTrustAccounts(trustRows || []);
       setPaymentAccounts(accountRows || []);
+      setBillingTax(taxSettings || initialBillingTax);
       setCases(caseRows || []);
       setTeam((teamRows || []).filter((row) => row.role !== "client"));
     } catch (err) {
@@ -164,6 +191,12 @@ function InvoiceDetailInner() {
     if (!id) return;
     load();
   }, [id]);
+
+  useEffect(() => {
+    const closeMenus = () => setActionsOpen(false);
+    window.addEventListener("click", closeMenus);
+    return () => window.removeEventListener("click", closeMenus);
+  }, []);
 
   const canManage = roleCanManage(currentUser?.role || "");
   const firmLines = useMemo(() => renderFirmLines(invoice?.organization), [invoice?.organization]);
@@ -182,7 +215,7 @@ function InvoiceDetailInner() {
       && invoice
       && invoice.balance_due > 0
       && Number(invoice.trust_balance_available || 0) > 0
-      && !["paid", "cancelled"].includes(invoice.display_status || invoice.status),
+      && !["paid", "cancelled", "voided"].includes(invoice.display_status || invoice.status),
   );
   const availableBillableEntries = useMemo(() => {
     if (!editForm) return [];
@@ -201,7 +234,6 @@ function InvoiceDetailInner() {
       currency: invoice.currency || currency,
       issue_date: invoice.issue_date || "",
       due_date: invoice.due_date || "",
-      tax_amount: String(invoice.tax_amount || ""),
       notes: invoice.notes || "",
       payment_instructions: invoice.payment_instructions || "",
       payment_account_id: invoice.payment_account_id ? String(invoice.payment_account_id) : "",
@@ -234,12 +266,14 @@ function InvoiceDetailInner() {
   useEffect(() => {
     if (!editForm) return;
     const currentStillValid = filteredPaymentAccounts.some((account) => Number(account.id) === Number(editForm.payment_account_id || 0));
-    if (currentStillValid) return;
     const defaultAccount = resolveDefaultPaymentAccount(paymentAccounts, editForm.currency || "USD");
+    const resolvedAccount = currentStillValid
+      ? filteredPaymentAccounts.find((account) => Number(account.id) === Number(editForm.payment_account_id || 0))
+      : defaultAccount;
     setEditForm((current) => current ? ({
       ...current,
-      payment_account_id: defaultAccount ? String(defaultAccount.id) : "",
-      payment_instructions: current.payment_instructions || defaultAccount?.payment_instructions || "",
+      payment_account_id: currentStillValid ? current.payment_account_id : defaultAccount ? String(defaultAccount.id) : "",
+      payment_instructions: buildPaymentInstructions(resolvedAccount),
     }) : current);
   }, [editForm?.currency, filteredPaymentAccounts, paymentAccounts]);
 
@@ -302,7 +336,9 @@ function InvoiceDetailInner() {
     setEditForm((current) => {
       if (!current) return current;
       const next = [...current.line_items];
-      next[index] = { ...next[index], ...patch };
+      const updated = { ...next[index], ...patch };
+      if (!updated.time_entry_id) updated.amount = calculateLineAmount(updated.quantity, updated.unit_price);
+      next[index] = updated;
       return { ...current, line_items: next };
     });
   }
@@ -408,7 +444,6 @@ function InvoiceDetailInner() {
           currency: editForm.currency,
           issue_date: editForm.issue_date,
           due_date: editForm.due_date || null,
-          tax_amount: Number(editForm.tax_amount || 0),
           notes: editForm.notes || null,
           payment_instructions: editForm.payment_instructions || null,
           payment_account_id: Number(editForm.payment_account_id),
@@ -424,7 +459,7 @@ function InvoiceDetailInner() {
                   description: line.description.trim(),
                   quantity: Number(line.quantity || 0),
                   unit_price: Number(line.unit_price || 0),
-                  amount: Number(line.amount || 0),
+                  amount: Number(calculateLineAmount(line.quantity, line.unit_price)),
                 }
           )),
         }),
@@ -433,6 +468,28 @@ function InvoiceDetailInner() {
       await load();
     } catch (err) {
       setFormError(err.message || "Failed to update invoice.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function submitVoidInvoice(event) {
+    event.preventDefault();
+    if (!voidReason.trim()) {
+      setFormError("Void reason is required.");
+      return;
+    }
+    setSaving(true);
+    setFormError("");
+    try {
+      await apiRequest(`/api/v1/invoices/${id}/void`, {
+        method: "POST",
+        body: JSON.stringify({ void_reason: voidReason.trim() }),
+      });
+      closeModal();
+      await load();
+    } catch (err) {
+      setFormError(err.message || "Failed to void invoice.");
     } finally {
       setSaving(false);
     }
@@ -450,11 +507,29 @@ function InvoiceDetailInner() {
           <p><Link href="/dashboard/invoices">Invoices</Link> &gt; Invoice Detail</p>
         </div>
         <div className="invoice-page-actions">
-          <button className="vilo-btn vilo-btn--ghost" type="button" onClick={() => apiDownload(`/api/v1/invoices/${id}/pdf`)}>Download PDF</button>
-          {invoice.status === "draft" ? <button className="vilo-btn vilo-btn--secondary" type="button" onClick={markSent}>Send Invoice</button> : null}
-          {canManage ? <button className="vilo-btn vilo-btn--secondary" type="button" onClick={() => { setFormError(""); setModal("edit_invoice"); }}>Edit Invoice</button> : null}
-          {canManage && invoice.balance_due > 0 && !["paid", "cancelled"].includes(invoice.display_status || invoice.status) ? <button className="vilo-btn vilo-btn--secondary" type="button" onClick={() => { setFormError(""); setModal("direct_payment"); }}>Record Direct Payment</button> : null}
-          {canApplyTrust ? <button className="vilo-btn vilo-btn--primary" type="button" onClick={() => { setFormError(""); setModal("apply_trust"); }}>Apply Trust Funds</button> : null}
+          <div className="vilo-table-actions invoice-row-actions">
+            <button
+              type="button"
+              className="time-entry-actions__trigger"
+              aria-expanded={actionsOpen}
+              onClick={(event) => {
+                event.stopPropagation();
+                setActionsOpen((current) => !current);
+              }}
+            >
+              Actions
+            </button>
+            {actionsOpen ? (
+              <div className="case-actions-menu invoice-actions-menu" onClick={(event) => event.stopPropagation()}>
+                <button type="button" onClick={() => apiDownload(`/api/v1/invoices/${id}/pdf`)}>PDF</button>
+                {invoice.status === "draft" ? <button type="button" onClick={markSent}>Send Invoice</button> : null}
+                {canManage ? <button type="button" onClick={() => { setFormError(""); setModal("edit_invoice"); setActionsOpen(false); }}>Edit Invoice</button> : null}
+                {canManage && invoice.balance_due > 0 && !["paid", "cancelled", "voided"].includes(invoice.display_status || invoice.status) ? <button type="button" onClick={() => { setFormError(""); setModal("direct_payment"); setActionsOpen(false); }}>Record Payment</button> : null}
+                {canApplyTrust ? <button type="button" onClick={() => { setFormError(""); setModal("apply_trust"); setActionsOpen(false); }}>Apply Trust Funds</button> : null}
+                {canManage && !activePayments.length && !["voided", "paid"].includes(invoice.display_status || invoice.status) ? <button type="button" className="is-danger" onClick={() => { setFormError(""); setModal("void_invoice"); setActionsOpen(false); }}>Void Invoice</button> : null}
+              </div>
+            ) : null}
+          </div>
         </div>
       </div>
 
@@ -480,6 +555,7 @@ function InvoiceDetailInner() {
             <span>Due Date: {formatDate(invoice.due_date)}</span>
             <span>Matter: {invoice.matter_title || (invoice.case_id ? `#${invoice.case_id}` : "Not linked")}</span>
             <span>Payment Method: {invoice.payment_method_summary}</span>
+            {invoice.void_reason ? <span>Void Reason: {invoice.void_reason}</span> : null}
           </div>
         </div>
       </article>
@@ -490,7 +566,7 @@ function InvoiceDetailInner() {
           <strong>{formatMoney(invoice.subtotal, currency)}</strong>
         </article>
         <article className="dashboard-card invoice-summary-card">
-          <span>GCT / Tax</span>
+          <span>{billingTax.invoice_tax_label} / Tax</span>
           <strong>{formatMoney(invoice.tax_amount, currency)}</strong>
         </article>
         <article className="dashboard-card invoice-summary-card">
@@ -644,7 +720,7 @@ function InvoiceDetailInner() {
                 setEditForm((current) => current ? ({
                   ...current,
                   payment_account_id: event.target.value,
-                  payment_instructions: account?.payment_instructions || current.payment_instructions,
+                  payment_instructions: buildPaymentInstructions(account),
                 }) : current);
               }}>
                 <option value="">{filteredPaymentAccounts.length ? "Select payment account" : "No payment account configured for this currency"}</option>
@@ -658,7 +734,7 @@ function InvoiceDetailInner() {
             </div>
             <div className="vilo-form-row-two">
               <input value={editForm.client_id} readOnly placeholder="Client ID" />
-              <input type="number" step="0.01" min="0" value={editForm.tax_amount} onChange={(event) => setEditForm((current) => ({ ...current, tax_amount: event.target.value }))} placeholder="GCT / Tax" />
+              <input value={`${billingTax.invoice_tax_label}: ${Number(billingTax.invoice_tax_rate || 0).toFixed(2)}% from firm billing settings`} readOnly />
             </div>
 
             {!filteredPaymentAccounts.length ? (
@@ -668,7 +744,7 @@ function InvoiceDetailInner() {
               </article>
             ) : null}
 
-            <input value={editForm.payment_instructions} onChange={(event) => setEditForm((current) => ({ ...current, payment_instructions: event.target.value }))} placeholder="Payment instructions" />
+            <textarea value={editForm.payment_instructions} readOnly className="invoice-readonly-textarea" />
 
             <article className="dashboard-card invoice-time-entry-picker">
               <div className="invoice-line-items-editor__header">
@@ -679,7 +755,7 @@ function InvoiceDetailInner() {
               </div>
               {loadingTimeEntries ? <p className="vilo-state vilo-state--loading">Loading billable time entries...</p> : null}
               {timeEntryError ? <p className="vilo-state vilo-state--error">{timeEntryError}</p> : null}
-              {!loadingTimeEntries && !timeEntryError && !availableBillableEntries.length ? <p className="vilo-state">No unbilled billable time entries available for this matter and currency.</p> : null}
+              {!loadingTimeEntries && !timeEntryError && !availableBillableEntries.length ? <p className="vilo-state">No unbilled billable time entries found for this matter.</p> : null}
               {!!availableBillableEntries.length ? (
                 <div className="vilo-table-wrap">
                   <table className="team-table">
@@ -730,7 +806,7 @@ function InvoiceDetailInner() {
                   <input value={line.description} onChange={(event) => updateLineItem(index, { description: event.target.value })} placeholder="Description" />
                   <input type="number" step="0.01" min="0.01" value={line.quantity} onChange={(event) => updateLineItem(index, { quantity: event.target.value })} placeholder="Qty" />
                   <input type="number" step="0.01" min="0" value={line.unit_price} onChange={(event) => updateLineItem(index, { unit_price: event.target.value })} placeholder="Unit price" />
-                  <input type="number" step="0.01" min="0" value={line.amount} onChange={(event) => updateLineItem(index, { amount: event.target.value })} placeholder="Amount" />
+                  <input type="text" value={formatMoney(line.amount || 0, editForm.currency)} readOnly className="invoice-line-item-row__amount" />
                   <button type="button" className="vilo-btn vilo-btn--ghost vilo-btn--xs" onClick={() => removeLineItem(index)}>Remove</button>
                 </div>
               )
@@ -790,6 +866,25 @@ function InvoiceDetailInner() {
             <div className="vilo-table-actions invoice-create-actions">
               <button type="button" className="vilo-btn vilo-btn--secondary" onClick={closeModal}>Cancel</button>
               <button type="submit" className="vilo-btn vilo-btn--primary" disabled={saving}>{saving ? "Recording..." : "Record direct payment"}</button>
+            </div>
+          </form>
+        </Modal>
+      ) : null}
+
+      {modal === "void_invoice" ? (
+        <Modal title="Void Invoice" copy="Voiding keeps the invoice record but removes it from active receivables. This cannot be used to delete records." onClose={closeModal}>
+          {formError ? <p className="vilo-state vilo-state--error trust-modal__error">{formError}</p> : null}
+          <form className="vilo-form-grid" onSubmit={submitVoidInvoice}>
+            <div className="invoice-action-review">
+              <span>Invoice</span>
+              <strong>{invoice.invoice_number}</strong>
+              <span>Active payments</span>
+              <strong>{activePayments.length}</strong>
+            </div>
+            <textarea placeholder="Void reason" value={voidReason} onChange={(event) => setVoidReason(event.target.value)} required />
+            <div className="vilo-table-actions invoice-create-actions">
+              <button type="button" className="vilo-btn vilo-btn--secondary" onClick={closeModal}>Cancel</button>
+              <button type="submit" className="vilo-btn vilo-btn--primary" disabled={saving || !voidReason.trim()}>{saving ? "Voiding..." : "Void invoice"}</button>
             </div>
           </form>
         </Modal>

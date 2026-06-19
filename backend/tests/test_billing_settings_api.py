@@ -28,6 +28,7 @@ class DummyUser:
 class SettingsDBStub:
     def __init__(self):
         now = datetime.now(timezone.utc)
+        self.organization = SimpleNamespace(id=1, invoice_tax_label="GCT", invoice_tax_rate=Decimal("15.00"))
         self.payment_accounts = [
             SimpleNamespace(
                 id=1,
@@ -53,6 +54,8 @@ class SettingsDBStub:
     async def scalar(self, query, *args, **kwargs):
         q = str(query)
         params = query.compile().params
+        if "FROM organizations" in q:
+            return self.organization
         if "FROM firm_payment_accounts" in q:
             account_id = params.get("id_1")
             if account_id is not None:
@@ -103,6 +106,7 @@ class SettingsDBStub:
 
 def build_client(role: str, db: SettingsDBStub):
     user = DummyUser(id=5, organization_id=1, name=role, email="user@example.com", role=UserRole(role))
+    user.organization = db.organization
 
     async def _get_current_user():
         return user
@@ -195,3 +199,26 @@ def test_effective_rate_endpoint_returns_user_override():
         assert body["source"] == "user_override"
     finally:
         cleanup(client)
+
+
+def test_billing_tax_settings_can_be_read_and_updated():
+    db = SettingsDBStub()
+    reader = build_client("lawyer", db)
+    try:
+        res = reader.get("/api/v1/settings/billing-tax")
+        assert res.status_code == 200
+        assert res.json() == {"invoice_tax_label": "GCT", "invoice_tax_rate": "15.00"}
+    finally:
+        cleanup(reader)
+
+    manager = build_client("partner", db)
+    try:
+        update = manager.patch("/api/v1/settings/billing-tax", json={"invoice_tax_label": "VAT", "invoice_tax_rate": "12.50"})
+        assert update.status_code == 200
+        body = update.json()
+        assert body["invoice_tax_label"] == "VAT"
+        assert body["invoice_tax_rate"] == "12.50"
+        assert db.organization.invoice_tax_label == "VAT"
+        assert db.organization.invoice_tax_rate == Decimal("12.50")
+    finally:
+        cleanup(manager)

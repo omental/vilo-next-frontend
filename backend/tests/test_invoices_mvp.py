@@ -189,7 +189,7 @@ def test_invoice_detail_includes_safe_firm_and_client_details():
         assert body["client"]["name"] == "Jordan Miles"
         assert body["client"]["occupation"] == "Architect"
         assert body["display_status"] == "draft"
-        assert body["payment_method_summary"] == "Unpaid"
+        assert body["payment_method_summary"] == "Not Paid"
         assert body["matter_title"] == "Matter 21"
         assert body["payment_account"]["bank_name"] == "National Bank"
         assert "slug" not in body["organization"]

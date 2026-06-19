@@ -8,6 +8,7 @@ const SETTINGS_TABS = [
   { id: "firm", label: "Firm Details" },
   { id: "payment_accounts", label: "Payment Accounts" },
   { id: "billing_rates", label: "Billing Rates" },
+  { id: "billing_tax", label: "Tax / GCT" },
 ];
 
 const ROLE_OPTIONS = [
@@ -35,6 +36,11 @@ const billingRateInitial = {
   currency: "USD",
   hourly_rate: "",
   is_active: true,
+};
+
+const billingTaxInitial = {
+  invoice_tax_label: "GCT",
+  invoice_tax_rate: "0.00",
 };
 
 function roleCanViewSettings(role) {
@@ -67,15 +73,19 @@ export default function SettingsPage() {
   const [paymentAccounts, setPaymentAccounts] = useState([]);
   const [billingRates, setBillingRates] = useState([]);
   const [team, setTeam] = useState([]);
+  const [billingTax, setBillingTax] = useState(billingTaxInitial);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [unauthorized, setUnauthorized] = useState(false);
   const [savingAccount, setSavingAccount] = useState(false);
   const [savingRate, setSavingRate] = useState(false);
+  const [savingTax, setSavingTax] = useState(false);
   const [accountForm, setAccountForm] = useState(paymentAccountInitial);
   const [rateForm, setRateForm] = useState(billingRateInitial);
   const [accountEditingId, setAccountEditingId] = useState(null);
   const [rateEditingId, setRateEditingId] = useState(null);
+  const [taxError, setTaxError] = useState("");
+  const [taxSuccess, setTaxSuccess] = useState("");
   const [accountError, setAccountError] = useState("");
   const [rateError, setRateError] = useState("");
   const [accountSuccess, setAccountSuccess] = useState("");
@@ -116,15 +126,17 @@ export default function SettingsPage() {
       setError("");
       setUnauthorized(false);
       try {
-        const [accounts, rates, teamRows] = await Promise.all([
+        const [accounts, rates, teamRows, taxSettings] = await Promise.all([
           apiRequest("/api/v1/settings/payment-accounts"),
           apiRequest("/api/v1/settings/billing-rates"),
           apiRequest("/api/v1/team").catch(() => []),
+          apiRequest("/api/v1/settings/billing-tax").catch(() => billingTaxInitial),
         ]);
         if (cancelled) return;
         setPaymentAccounts(accounts || []);
         setBillingRates(rates || []);
         setTeam((teamRows || []).filter((row) => row.role !== "client"));
+        setBillingTax(taxSettings || billingTaxInitial);
       } catch (err) {
         if (cancelled) return;
         const message = normalizeError(err);
@@ -199,6 +211,11 @@ export default function SettingsPage() {
     setBillingRates(rows || []);
   }
 
+  async function reloadBillingTax() {
+    const row = await apiRequest("/api/v1/settings/billing-tax");
+    setBillingTax(row || billingTaxInitial);
+  }
+
   async function submitPaymentAccount(event) {
     event.preventDefault();
     setSavingAccount(true);
@@ -271,6 +288,28 @@ export default function SettingsPage() {
       setRateError(normalizeError(err));
     } finally {
       setSavingRate(false);
+    }
+  }
+
+  async function submitBillingTax(event) {
+    event.preventDefault();
+    setSavingTax(true);
+    setTaxError("");
+    setTaxSuccess("");
+    try {
+      await apiRequest("/api/v1/settings/billing-tax", {
+        method: "PATCH",
+        body: JSON.stringify({
+          invoice_tax_label: billingTax.invoice_tax_label.trim(),
+          invoice_tax_rate: Number(billingTax.invoice_tax_rate || 0),
+        }),
+      });
+      await reloadBillingTax();
+      setTaxSuccess("Billing tax settings updated.");
+    } catch (err) {
+      setTaxError(normalizeError(err));
+    } finally {
+      setSavingTax(false);
     }
   }
 
@@ -631,6 +670,51 @@ export default function SettingsPage() {
               ) : (
                 <div className="vilo-state-block">
                   <p className="vilo-state">View only. Partner/admin roles can manage billing rates.</p>
+                </div>
+              )}
+            </form>
+          </article>
+        </div>
+      ) : null}
+
+      {!loading && activeTab === "billing_tax" ? (
+        <div className="settings-grid">
+          <article className="dashboard-card settings-card">
+            <div className="dashboard-card__header">
+              <div>
+                <h2>Invoice Tax / GCT</h2>
+                <p className="settings-copy">This firm-level setting auto-applies to invoices. Trust deposits, escrow, and client funds remain excluded.</p>
+              </div>
+            </div>
+
+            <article className="settings-info-banner">
+              <strong>Billing control</strong>
+              <span>Invoice tax percentage is managed here only. Invoice creators can review the applied rate but cannot enter a manual percentage.</span>
+            </article>
+
+            {taxError ? <p className="vilo-state vilo-state--error">{taxError}</p> : null}
+            {taxSuccess ? <p className="vilo-state">{taxSuccess}</p> : null}
+
+            <form className="settings-form" onSubmit={submitBillingTax}>
+              <div className="vilo-form-row-two">
+                <div>
+                  <label>Tax Label</label>
+                  <input value={billingTax.invoice_tax_label} disabled={!canManage} onChange={(event) => setBillingTax((current) => ({ ...current, invoice_tax_label: event.target.value }))} />
+                </div>
+                <div>
+                  <label>Tax Percentage</label>
+                  <input type="number" min="0" step="0.01" value={billingTax.invoice_tax_rate} disabled={!canManage} onChange={(event) => setBillingTax((current) => ({ ...current, invoice_tax_rate: event.target.value }))} />
+                </div>
+              </div>
+
+              {canManage ? (
+                <div className="vilo-table-actions">
+                  <button type="button" className="vilo-btn vilo-btn--secondary" onClick={reloadBillingTax}>Reset</button>
+                  <button type="submit" className="vilo-btn vilo-btn--primary" disabled={savingTax}>{savingTax ? "Saving..." : "Save tax settings"}</button>
+                </div>
+              ) : (
+                <div className="vilo-state-block">
+                  <p className="vilo-state">View only. Partner/admin roles can update firm billing tax settings.</p>
                 </div>
               )}
             </form>

@@ -124,7 +124,7 @@ async def get_effective_hourly_rate(
     if role_rate:
         return EffectiveRate(hourly_rate=money(role_rate.hourly_rate), source="role", rate_id=role_rate.id)
 
-    return EffectiveRate(hourly_rate=ZERO, source="default", rate_id=None)
+    return EffectiveRate(hourly_rate=ZERO, source="missing", rate_id=None)
 
 
 async def validate_billing_rate_payload(

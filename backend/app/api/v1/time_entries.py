@@ -75,7 +75,7 @@ async def _resolve_rate_inputs(
     if provided_hourly_rate is not None:
         rounded_rate = money(provided_hourly_rate)
         if not can_override and effective_rate.hourly_rate == ZERO:
-            return rounded_rate, False
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="No active billing rate is configured for this staff user and currency")
         if not can_override and rounded_rate != effective_rate.hourly_rate:
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Only partner/admin can override hourly rate")
         if can_override and (provided_rate_is_manual is True or rounded_rate != effective_rate.hourly_rate):
@@ -84,6 +84,9 @@ async def _resolve_rate_inputs(
 
     if existing_rate_is_manual and not user_changed:
         return existing_hourly_rate, True
+
+    if effective_rate.hourly_rate <= ZERO:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="No active billing rate is configured for this staff user and currency")
 
     return effective_rate.hourly_rate, False
 
@@ -203,7 +206,7 @@ def _resolve_duration_and_amount(
     normalized_rate = _round_money(Decimal(str(hourly_rate))) if hourly_rate is not None else None
     if billing_type in {"non_billable", "no_charge"}:
         return duration_minutes, None if billing_type == "non_billable" else normalized_rate, ZERO
-    if normalized_rate is None or normalized_rate < 0:
+    if normalized_rate is None or normalized_rate <= 0:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Hourly rate is required for billable entries")
     amount = _round_money(_entry_hours(duration_minutes) * normalized_rate)
     return duration_minutes, normalized_rate, amount

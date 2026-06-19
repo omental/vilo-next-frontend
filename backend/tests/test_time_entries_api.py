@@ -213,12 +213,8 @@ def test_staff_can_create_time_entry_in_own_org():
             "billing_type": "professional_fee",
             "hourly_rate": "250.00",
         })
-        assert res.status_code == 200
-        body = res.json()
-        assert body["organization_id"] == 1
-        assert body["duration_minutes"] == 120
-        assert body["amount"] == "500.00"
-        assert body["client_name"] == "Kevin Brown"
+        assert res.status_code == 400
+        assert "No active billing rate is configured" in res.json()["detail"]
     finally:
         cleanup(client)
 
@@ -418,3 +414,20 @@ def test_lawyer_cannot_override_auto_rate_but_partner_can():
         assert body["rate_is_manual"] is True
     finally:
         cleanup(partner_client)
+
+
+def test_billable_time_entry_requires_active_billing_rate():
+    db = TimeEntryDBStub()
+    client = build_client("lawyer", db)
+    try:
+        res = client.post("/api/v1/time-entries", json={
+            "case_id": 21,
+            "description": "Missing rate work",
+            "duration_minutes": 60,
+            "billing_type": "professional_fee",
+            "currency": "USD",
+        })
+        assert res.status_code == 400
+        assert "No active billing rate is configured" in res.json()["detail"]
+    finally:
+        cleanup(client)
