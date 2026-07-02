@@ -66,10 +66,13 @@ function CasesPageContent() {
   useEffect(() => {
     const shouldOpen = searchParams.get("create") === "1";
     setCreateOpen(shouldOpen);
-    if (!shouldOpen) return;
+  }, [searchParams]);
+
+  useEffect(() => {
+    if (!createOpen) return;
     formCardRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
     titleInputRef.current?.focus();
-  }, [searchParams]);
+  }, [createOpen]);
 
   async function createCase(e) {
     e.preventDefault();
@@ -150,26 +153,25 @@ function CasesPageContent() {
 
   return (
     <section className="dashboard-page-stack">
-      <div className="dashboard-page-heading"><h1>Cases</h1></div>
+      <div className="dashboard-page-heading dashboard-page-heading--split">
+        <h1>Cases</h1>
+        <button
+          type="button"
+          className={createOpen ? "vilo-btn vilo-btn--secondary" : "vilo-btn vilo-btn--primary"}
+          aria-expanded={createOpen}
+          onClick={() => {
+            setCreateOpen((open) => !open);
+            setSuccess("");
+          }}
+        >
+          {createOpen ? "Hide Form" : "Create Case"}
+        </button>
+      </div>
 
       {success ? <div className="vilo-state-block"><p className="vilo-state">{success}</p></div> : null}
 
-      <article ref={formCardRef} className="dashboard-card vilo-form-card vilo-collapsible-card">
-        <div className="dashboard-card__header dashboard-card__header--action">
-          <h2>Create Case</h2>
-          <button
-            type="button"
-            className={createOpen ? "vilo-btn vilo-btn--secondary vilo-btn--xs" : "vilo-btn vilo-btn--primary vilo-btn--xs"}
-            aria-expanded={createOpen}
-            onClick={() => {
-              setCreateOpen((open) => !open);
-              setSuccess("");
-            }}
-          >
-            {createOpen ? "Hide Form" : "Create Case"}
-          </button>
-        </div>
-        {createOpen ? (
+      {createOpen ? (
+        <article ref={formCardRef} className="dashboard-card vilo-form-card vilo-collapsible-card">
           <form className="vilo-form-grid vilo-collapsible-card__body" onSubmit={createCase}>
             <input ref={titleInputRef} placeholder="Case title" value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} required />
             <textarea placeholder="Description" value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} />
@@ -218,8 +220,8 @@ function CasesPageContent() {
 
             <button type="submit" disabled={saving}>{saving ? "Creating..." : "Create Case"}</button>
           </form>
-        ) : null}
-      </article>
+        </article>
+      ) : null}
 
       <article className="dashboard-card vilo-table-card">
         <div className="dashboard-card__header"><h2>Case List</h2></div>
@@ -231,7 +233,13 @@ function CasesPageContent() {
           <div className={`vilo-table-wrap case-table-wrap${menuOpenId ? " case-table-wrap--menu-visible" : ""}`}>
             <table className="team-table">
               <thead>
-                <tr><th>Title</th><th>Status</th><th>Priority</th><th>Client</th><th>Action</th></tr>
+                <tr>
+                  <th>Title</th>
+                  <th>Status</th>
+                  <th>Priority</th>
+                  <th>Client</th>
+                  <th className="w-24 text-right">Action</th>
+                </tr>
               </thead>
               <tbody>
                 {cases.map((c) => (
@@ -240,9 +248,15 @@ function CasesPageContent() {
                     <td><span className={`vilo-badge vilo-badge--${c.status}`}>{c.status}</span></td>
                     <td><span className={`vilo-badge vilo-badge--priority-${c.priority}`}>{c.priority}</span></td>
                     <td>#{c.client_id}</td>
-                    <td onClick={(e) => e.stopPropagation()}>
+                    <td className="w-24 align-middle" onClick={(e) => e.stopPropagation()}>
                       <div className="vilo-table-actions case-row-actions">
-                        <button type="button" className="vilo-btn vilo-btn--ghost vilo-btn--xs" onClick={() => setMenuOpenId(menuOpenId === c.id ? null : c.id)}>•••</button>
+                        <button
+                          type="button"
+                          className="vilo-btn vilo-btn--ghost vilo-btn--xs inline-flex h-8 w-8 items-center justify-center p-0 text-base leading-none"
+                          onClick={() => setMenuOpenId(menuOpenId === c.id ? null : c.id)}
+                        >
+                          •••
+                        </button>
                         {menuOpenId === c.id ? (
                           <div className="case-actions-menu">
                             <Link href={`/dashboard/cases/${c.id}`}>View</Link>
