@@ -133,3 +133,42 @@ def test_dashboard_widgets_forbidden_for_client_role():
         assert res.status_code == 403
     finally:
         app.dependency_overrides.clear()
+
+
+def test_dashboard_widgets_paralegal_gets_assignment_scoped_non_financial_dashboard():
+    user = DummyUser(id=31, organization_id=77, name="Para", email="para@example.com", role=UserRole.paralegal)
+    scalars = [3, 2, 1, 0, 1, 5, 0, 1, 2, 1, 4]
+    execute_rows = [
+        [
+            SimpleNamespace(id=90, title="File affidavit", priority="high", due_date=datetime(2026, 5, 26, 10, 0, tzinfo=timezone.utc), case_id=101),
+        ],
+        [
+            SimpleNamespace(id=12, title="Assigned case hearing", event_type="court", start_at=datetime(2026, 5, 27, 12, 0, tzinfo=timezone.utc), case_id=101),
+        ],
+        [
+            SimpleNamespace(id=101, title="Assigned matter", status="active", name="Scoped Client", lead_name="Partner", next_due=datetime(2026, 5, 28, 10, 0, tzinfo=timezone.utc)),
+        ],
+    ]
+    db = DashboardDummyDB(scalars, execute_rows)
+
+    async def _get_current_user():
+        return user
+
+    async def _get_db() -> AsyncIterator[DashboardDummyDB]:
+        yield db
+
+    app.dependency_overrides[deps_module.get_current_user] = _get_current_user
+    app.dependency_overrides[deps_module.get_db] = _get_db
+
+    try:
+        client = TestClient(app)
+        res = client.get("/api/v1/reports/dashboard/widgets")
+        assert res.status_code == 200
+        body = res.json()
+        assert body["firm_snapshot"]["total_cases"] == 3
+        assert body["today_overview"]["priority_timeline"][0]["title"] == "File affidavit"
+        assert body["active_cases"][0]["client_name"] == "Scoped Client"
+        assert body["financial_overview"] is None
+        assert body["billing_overview"] is None
+    finally:
+        app.dependency_overrides.clear()

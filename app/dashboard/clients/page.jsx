@@ -46,6 +46,7 @@ function ClientsPageContent() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
+  const [success, setSuccess] = useState("");
 
   const [tab, setTab] = useState("all");
   const [searchDraft, setSearchDraft] = useState("");
@@ -88,8 +89,10 @@ function ClientsPageContent() {
   }
 
   async function handleCreate(payload, idFile) {
+    if (saving) return;
     setSaving(true);
     setError("");
+    setSuccess("");
     try {
       const created = await apiRequest("/api/v1/clients", {
         method: "POST",
@@ -98,6 +101,7 @@ function ClientsPageContent() {
       await uploadClientIdFile(created.id, idFile);
       setCreateOpen(false);
       await load();
+      setSuccess("Client created successfully.");
     } catch (err) {
       setError(err.message || "Failed to create client");
     } finally {
@@ -106,9 +110,10 @@ function ClientsPageContent() {
   }
 
   async function handleEdit(payload, idFile) {
-    if (!editClient) return;
+    if (!editClient || saving) return;
     setSaving(true);
     setError("");
+    setSuccess("");
     try {
       await apiRequest(`/api/v1/clients/${editClient.id}`, {
         method: "PATCH",
@@ -117,6 +122,7 @@ function ClientsPageContent() {
       await uploadClientIdFile(editClient.id, idFile);
       setEditClient(null);
       await load();
+      setSuccess("Client updated successfully.");
     } catch (err) {
       setError(err.message || "Failed to update client");
     } finally {
@@ -125,8 +131,10 @@ function ClientsPageContent() {
   }
 
   async function archiveClient(client) {
+    if (saving) return;
     setSaving(true);
     setError("");
+    setSuccess("");
     try {
       await apiRequest(`/api/v1/clients/${client.id}`, {
         method: "PATCH",
@@ -141,9 +149,10 @@ function ClientsPageContent() {
   }
 
   async function deleteSelectedClient() {
-    if (!deleteClient) return;
+    if (!deleteClient || saving) return;
     setSaving(true);
     setError("");
+    setSuccess("");
     try {
       await apiRequest(`/api/v1/clients/${deleteClient.id}`, { method: "DELETE" });
       setDeleteClient(null);
@@ -208,6 +217,7 @@ function ClientsPageContent() {
       </div>
 
       {error ? <div className="vilo-state-block"><p className="vilo-state vilo-state--error">{error}</p></div> : null}
+      {success ? <div className="vilo-state-block"><p className="vilo-state vilo-state--success">{success}</p></div> : null}
 
       <article className="dashboard-card clients-list-card">
         <div className="clients-tabs-row">

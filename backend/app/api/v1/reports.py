@@ -10,7 +10,7 @@ from sqlalchemy.orm import selectinload
 from app.api.deps import role_guard
 from app.db.session import get_db
 from app.models.calendar_event import CalendarEvent
-from app.models.case import Case
+from app.models.case import Case, CaseAssignment
 from app.models.case_timeline_event import CaseTimelineEvent
 from app.models.client import Client
 from app.models.expense import Expense
@@ -22,6 +22,7 @@ from app.models.time_entry import TimeEntry
 from app.models.trust_ledger import TrustLedger
 from app.models.trust_transaction import TrustTransaction
 from app.models.user import User
+from app.models.enums import UserRole
 from app.schemas.billing import RevenueByStaffRow, TimeByStaffRow
 from app.schemas.dashboard import DashboardWidgetsResponse
 from app.services.billing import build_revenue_by_staff_report, build_time_by_staff_report
@@ -30,6 +31,7 @@ from app.services.pdf import generate_report_pdf
 
 router = APIRouter(prefix="/reports", tags=["reports"])
 OPER_REPORTS = ["partner", "admin", "lawyer"]
+WIDGET_ROLES = ["partner", "admin", "lawyer", "paralegal"]
 CASE_TASK_REPORTS = ["partner", "admin", "lawyer", "paralegal"]
 OPEN_TASK_STATUSES = ["pending", "not_started", "in_progress", "waiting"]
 
@@ -78,11 +80,145 @@ def _invoice_row(inv: Invoice) -> dict:
 
 
 @router.get("/dashboard/widgets", response_model=DashboardWidgetsResponse)
-async def dashboard_widgets(db: AsyncSession = Depends(get_db), current_user=Depends(role_guard(OPER_REPORTS))):
+async def dashboard_widgets(db: AsyncSession = Depends(get_db), current_user=Depends(role_guard(WIDGET_ROLES))):
     org_id = current_user.organization_id
     now = datetime.now(timezone.utc)
     today = now.date()
     month_start, next_month_start = _month_bounds(now)
+    is_paralegal = current_user.role == UserRole.paralegal
+
+    if is_paralegal:
+        assigned_case_ids = select(CaseAssignment.case_id).where(CaseAssignment.user_id == current_user.id)
+        case_scope = [Case.organization_id == org_id, Case.id.in_(assigned_case_ids)]
+        task_scope = [Task.organization_id == org_id, Task.assigned_to == current_user.id, Task.archived_at.is_(None)]
+
+        total_cases = int((await db.scalar(select(func.count(Case.id)).where(*case_scope))) or 0)
+        active_cases = int((await db.scalar(select(func.count(Case.id)).where(*case_scope, Case.status == "active"))) or 0)
+        closed_cases = int((await db.scalar(select(func.count(Case.id)).where(*case_scope, Case.status == "closed"))) or 0)
+        pending_cases = int((await db.scalar(select(func.count(Case.id)).where(*case_scope, Case.status == "draft"))) or 0)
+        high_priority_cases = int((await db.scalar(select(func.count(Case.id)).where(*case_scope, Case.priority == "high"))) or 0)
+        total_tasks = int((await db.scalar(select(func.count(Task.id)).where(*task_scope))) or 0)
+        stalled_cases = int((await db.scalar(select(func.count(Case.id)).where(*case_scope, Case.status == "active", Case.updated_at < (now.replace(hour=0, minute=0, second=0, microsecond=0) - timedelta(days=30))))) or 0)
+        court_cases = int((await db.scalar(
+            select(func.count(func.distinct(CalendarEvent.case_id))).where(
+                CalendarEvent.organization_id == org_id,
+                CalendarEvent.case_id.in_(assigned_case_ids),
+                CalendarEvent.event_type == "court",
+            )
+        )) or 0)
+        case_status_percentage = int(round((active_cases / total_cases) * 100)) if total_cases else 0
+
+        due_today_count = int((await db.scalar(
+            select(func.count(Task.id)).where(
+                *task_scope,
+                Task.status.in_(OPEN_TASK_STATUSES),
+                Task.due_date.is_not(None),
+                func.date(Task.due_date) == today,
+            )
+        )) or 0)
+        overdue_count = int((await db.scalar(
+            select(func.count(Task.id)).where(
+                *task_scope,
+                Task.status.in_(OPEN_TASK_STATUSES),
+                Task.due_date.is_not(None),
+                Task.due_date < now,
+            )
+        )) or 0)
+        unread_messages_count = int((await db.scalar(
+            select(func.count(Notification.id)).where(
+                Notification.organization_id == org_id,
+                Notification.user_id == current_user.id,
+                Notification.is_read == False,
+            )
+        )) or 0)
+        priority_rows = (await db.execute(
+            select(Task.id, Task.title, Task.priority, Task.due_date, Task.case_id)
+            .where(*task_scope, Task.status.in_(OPEN_TASK_STATUSES))
+            .order_by(Task.due_date.asc().nullslast(), Task.created_at.desc())
+            .limit(8)
+        )).all()
+
+        upcoming_rows = (await db.execute(
+            select(CalendarEvent.id, CalendarEvent.title, CalendarEvent.event_type, CalendarEvent.start_at, CalendarEvent.case_id)
+            .where(
+                CalendarEvent.organization_id == org_id,
+                CalendarEvent.start_at >= now,
+                ((CalendarEvent.created_by == current_user.id) | (CalendarEvent.case_id.in_(assigned_case_ids))),
+            )
+            .order_by(CalendarEvent.start_at.asc())
+            .limit(12)
+        )).all()
+
+        case_rows = (await db.execute(
+            select(Case.id, Case.title, Case.status, Client.name, User.name.label("lead_name"), func.min(Task.due_date).label("next_due"))
+            .join(Client, Client.id == Case.client_id)
+            .join(User, User.id == Case.created_by)
+            .outerjoin(Task, and_(Task.case_id == Case.id, Task.organization_id == org_id, Task.assigned_to == current_user.id, Task.status.in_(OPEN_TASK_STATUSES), Task.archived_at.is_(None)))
+            .where(*case_scope, Case.status == "active")
+            .group_by(Case.id, Case.title, Case.status, Client.name, User.name)
+            .order_by(Case.updated_at.desc())
+            .limit(20)
+        )).all()
+
+        return {
+            "firm_snapshot": {
+                "total_cases": total_cases,
+                "active_cases": active_cases,
+                "court_cases": court_cases,
+                "cases_in_court": court_cases,
+                "closed_cases": closed_cases,
+                "pending_cases": pending_cases,
+                "high_priority_cases": high_priority_cases,
+                "total_tasks": total_tasks,
+                "stalled_cases": stalled_cases,
+                "case_status_percentage": case_status_percentage,
+            },
+            "today_overview": {
+                "due_today_count": due_today_count,
+                "overdue_count": overdue_count,
+                "unread_messages_count": unread_messages_count,
+                "priority_timeline": [
+                    {
+                        "id": r.id,
+                        "title": r.title,
+                        "type": "task",
+                        "priority": (r.priority or "medium"),
+                        "due_date": r.due_date,
+                        "related_case_id": r.case_id,
+                    }
+                    for r in priority_rows
+                ],
+            },
+            "calendar_overview": {
+                "month": month_start.month,
+                "year": month_start.year,
+                "upcoming_events": [
+                    {
+                        "id": r.id,
+                        "title": r.title,
+                        "type": r.event_type,
+                        "starts_at": r.start_at,
+                        "time": r.start_at.strftime("%I:%M %p"),
+                        "related_case_id": r.case_id,
+                    }
+                    for r in upcoming_rows
+                ],
+            },
+            "financial_overview": None,
+            "billing_overview": None,
+            "active_cases": [
+                {
+                    "case_id": r.id,
+                    "display_number": f"C-{r.id}",
+                    "client_name": r.name,
+                    "matter": r.title,
+                    "lead": r.lead_name,
+                    "status": r.status,
+                    "due_date": r.next_due,
+                }
+                for r in case_rows
+            ],
+        }
 
     total_cases = int((await db.scalar(select(func.count(Case.id)).where(Case.organization_id == org_id))) or 0)
     active_cases = int((await db.scalar(select(func.count(Case.id)).where(Case.organization_id == org_id, Case.status == "active"))) or 0)

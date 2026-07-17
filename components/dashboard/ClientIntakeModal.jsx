@@ -73,18 +73,45 @@ function isCorporateType(type) {
 
 export default function ClientIntakeModal({ open, mode = "create", client = null, saving = false, apiError = "", onClose, onSubmit }) {
   const [form, setForm] = useState(initialState);
+  const [initialForm, setInitialForm] = useState(initialState);
   const [idFile, setIdFile] = useState(null);
   const [errors, setErrors] = useState({});
+  const [confirmDiscard, setConfirmDiscard] = useState(false);
 
   useEffect(() => {
     if (!open) return;
     setErrors({});
     setIdFile(null);
-    setForm(client ? parseClient(client) : initialState);
+    setConfirmDiscard(false);
+    const next = client ? parseClient(client) : initialState;
+    setForm(next);
+    setInitialForm(next);
   }, [open, client]);
 
   const title = useMemo(() => (mode === "edit" ? "Edit Client" : "Client Intake Form"), [mode]);
+  const dirty = useMemo(() => JSON.stringify(form) !== JSON.stringify(initialForm) || Boolean(idFile), [form, initialForm, idFile]);
+
+  useEffect(() => {
+    if (!open) return undefined;
+    function onKeyDown(event) {
+      if (event.key !== "Escape") return;
+      event.preventDefault();
+      requestClose();
+    }
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  });
+
   if (!open) return null;
+
+  function requestClose() {
+    if (saving) return;
+    if (!dirty) {
+      onClose();
+      return;
+    }
+    setConfirmDiscard(true);
+  }
 
   function validate() {
     const corporate = isCorporateType(form.client_type);
@@ -103,6 +130,7 @@ export default function ClientIntakeModal({ open, mode = "create", client = null
 
   async function handleSubmit(e) {
     e.preventDefault();
+    if (saving) return;
     if (!validate()) return;
     await onSubmit(payloadFromState(form, client), idFile);
   }
@@ -113,11 +141,11 @@ export default function ClientIntakeModal({ open, mode = "create", client = null
   const companyLabel = corporate ? "Company Name *" : "Company Name";
 
   return (
-    <div className="vilo-modal-overlay" onClick={onClose}>
+    <div className="vilo-modal-overlay" onClick={requestClose}>
       <div className="vilo-modal vilo-modal--intake" onClick={(e) => e.stopPropagation()}>
         <div className="vilo-modal__header">
           <h3>{title}</h3>
-          <button type="button" className="vilo-btn vilo-btn--ghost vilo-btn--xs" onClick={onClose}>Close</button>
+          <button type="button" className="vilo-btn vilo-btn--ghost vilo-btn--xs" onClick={requestClose} disabled={saving}>Close</button>
         </div>
         <form className="vilo-modal__body" onSubmit={handleSubmit}>
           <div className="client-intake-type-row">
@@ -164,11 +192,25 @@ export default function ClientIntakeModal({ open, mode = "create", client = null
           {apiError ? <p className="vilo-state vilo-state--error">{apiError}</p> : null}
 
           <div className="vilo-table-actions client-intake-footer">
-            <button className="vilo-btn vilo-btn--secondary" type="button" onClick={onClose}>Cancel</button>
+            <button className="vilo-btn vilo-btn--secondary" type="button" onClick={requestClose} disabled={saving}>Cancel</button>
             <button className="vilo-btn vilo-btn--primary" type="submit" disabled={saving}>{saving ? "Saving..." : mode === "edit" ? "Save Client" : "Add Client"}</button>
           </div>
         </form>
       </div>
+      {confirmDiscard ? (
+        <div className="vilo-modal" role="dialog" aria-modal="true" onClick={(e) => e.stopPropagation()}>
+          <div className="vilo-modal__header">
+            <h3>Discard the information you entered?</h3>
+          </div>
+          <div className="vilo-modal__body">
+            <p className="vilo-state">Your unsaved client information will be lost.</p>
+            <div className="vilo-table-actions client-intake-footer">
+              <button className="vilo-btn vilo-btn--secondary" type="button" onClick={() => setConfirmDiscard(false)}>Keep editing</button>
+              <button className="vilo-btn vilo-btn--primary" type="button" onClick={onClose}>Discard</button>
+            </div>
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }

@@ -4,8 +4,10 @@ from uuid import uuid4
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, UploadFile, status
 from fastapi.responses import FileResponse
-from sqlalchemy import select
+from sqlalchemy import inspect, select
+from sqlalchemy.exc import IntegrityError, NoInspectionAvailable
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm.attributes import NO_VALUE
 from sqlalchemy.orm import selectinload
 
 from app.api.deps import role_guard
@@ -26,6 +28,12 @@ STORAGE_ROOT = Path("backend/storage/documents")
 
 
 def to_response(client: Client) -> ClientResponse:
+    try:
+        assignments_state = inspect(client).attrs.assignments
+        loaded_assignments = assignments_state.loaded_value
+        assignments = [] if loaded_assignments is NO_VALUE else loaded_assignments
+    except NoInspectionAvailable:
+        assignments = getattr(client, "assignments", [])
     assigned_users = [
         AssignedUser(
             id=assignment.user.id,
@@ -34,7 +42,7 @@ def to_response(client: Client) -> ClientResponse:
             role=assignment.user.role.value,
             status=assignment.user.status.value,
         )
-        for assignment in getattr(client, "assignments", [])
+        for assignment in assignments
         if getattr(assignment, "user", None) is not None
     ]
     return ClientResponse(
@@ -134,36 +142,36 @@ async def validate_client_user(db: AsyncSession, organization_id: int, user_id: 
 async def validate_assignments(db: AsyncSession, organization_id: int, user_ids: list[int]) -> list[User]:
     if not user_ids:
         return []
-    rows = await db.scalars(select(User).where(User.organization_id == organization_id, User.id.in_(user_ids)))
+    unique_user_ids = list(dict.fromkeys(user_ids))
+    rows = await db.scalars(select(User).where(User.organization_id == organization_id, User.id.in_(unique_user_ids)))
     users = rows.all()
-    if len(users) != len(set(user_ids)):
+    if len(users) != len(unique_user_ids):
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="One or more assigned users are invalid")
-    if any(user.role == UserRole.client for user in users):
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Assigned users must be staff members")
-    return users
+    users_by_id = {user.id: user for user in users}
+    ordered_users = [users_by_id[user_id] for user_id in unique_user_ids]
+    allowed_roles = {UserRole.partner, UserRole.admin, UserRole.lawyer, UserRole.paralegal}
+    if any(user.role not in allowed_roles for user in ordered_users):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Assigned users must be eligible staff members")
+    if any(user.status.value != "active" for user in ordered_users):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Assigned users must be active")
+    return ordered_users
 
 
 async def sync_client_assignments(client: Client, users: list[User], db: AsyncSession) -> None:
     wanted = {user.id for user in users}
-    existing_by_user = {assignment.user_id: assignment for assignment in getattr(client, "assignments", [])}
+    result = await db.execute(select(ClientAssignment).where(ClientAssignment.client_id == client.id))
+    existing_assignments = result.scalars().all()
+    existing_by_user = {assignment.user_id: assignment for assignment in existing_assignments}
 
-    kept_assignments = []
-    for assignment in list(getattr(client, "assignments", [])):
+    for assignment in existing_assignments:
         if assignment.user_id in wanted:
-            kept_assignments.append(assignment)
             continue
         await db.delete(assignment)
 
-    client.assignments = kept_assignments
     for user in users:
         if user.id in existing_by_user:
             continue
         assignment = ClientAssignment(client_id=client.id, user_id=user.id)
-        if hasattr(user, "_sa_instance_state"):
-            assignment.user = user
-        else:
-            assignment.__dict__["user"] = user
-        client.assignments.append(assignment)
         db.add(assignment)
 
 
@@ -195,9 +203,16 @@ async def create_client(
         updated_at=now,
     )
     db.add(client)
-    await db.flush()
-    await sync_client_assignments(client, assigned_users, db)
-    await db.commit()
+    try:
+        await db.flush()
+        await sync_client_assignments(client, assigned_users, db)
+        await db.commit()
+    except IntegrityError as exc:
+        await db.rollback()
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Client could not be created because of a duplicate or conflicting record") from exc
+    except Exception:
+        await db.rollback()
+        raise
     client = await get_client_for_org(db, current_user.organization_id, client.id)
     return to_response(client)
 
@@ -255,7 +270,14 @@ async def update_client(
         await sync_client_assignments(client, users, db)
     client.updated_at = datetime.now(timezone.utc)
 
-    await db.commit()
+    try:
+        await db.commit()
+    except IntegrityError as exc:
+        await db.rollback()
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Client could not be updated because of a duplicate or conflicting record") from exc
+    except Exception:
+        await db.rollback()
+        raise
     client = await get_client_for_org(db, current_user.organization_id, client.id)
     return to_response(client)
 

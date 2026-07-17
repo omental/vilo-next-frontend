@@ -133,15 +133,17 @@ export default function DashboardPage() {
               month={Number(calendar?.month || 0)}
               year={Number(calendar?.year || 0)}
             />
-            <FinancialOverview
-              revenueText={fmtCurrency(financial?.monthly_revenue)}
-              summaryItems={financialSummaryItems}
-            />
+            {financial ? (
+              <FinancialOverview
+                revenueText={fmtCurrency(financial.monthly_revenue)}
+                summaryItems={financialSummaryItems}
+              />
+            ) : null}
           </div>
 
           <div className="dashboard-row-grid dashboard-row-grid--tertiary">
             <ActiveFilesTable rows={activeCaseRows.length ? activeCaseRows : undefined} />
-            <BillingOverview series={billing?.chart_series || []} />
+            {billing ? <BillingOverview series={billing.chart_series || []} /> : null}
           </div>
         </>
       ) : null}

@@ -88,6 +88,6 @@ class DashboardWidgetsResponse(BaseModel):
     firm_snapshot: FirmSnapshot
     today_overview: TodayOverview
     calendar_overview: CalendarOverview
-    financial_overview: FinancialOverview
-    billing_overview: BillingOverview
+    financial_overview: FinancialOverview | None = None
+    billing_overview: BillingOverview | None = None
     active_cases: list[ActiveCaseRow]
