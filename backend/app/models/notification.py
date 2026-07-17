@@ -1,5 +1,5 @@
 from datetime import datetime
-from sqlalchemy import Boolean, DateTime, ForeignKey, Index, String, Text
+from sqlalchemy import Boolean, DateTime, ForeignKey, Index, String, Text, UniqueConstraint
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -10,6 +10,7 @@ class Notification(Base):
     __tablename__ = "notifications"
     __table_args__ = (
         Index("ix_notifications_user_id_is_read", "user_id", "is_read"),
+        UniqueConstraint("organization_id", "user_id", "dedupe_key", name="uq_notifications_org_user_dedupe"),
     )
 
     id: Mapped[int] = mapped_column(primary_key=True, index=True)
@@ -19,6 +20,7 @@ class Notification(Base):
     title: Mapped[str] = mapped_column(String(255), nullable=False)
     body: Mapped[str | None] = mapped_column(Text, nullable=True)
     is_read: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    dedupe_key: Mapped[str | None] = mapped_column(String(255), nullable=True)
     metadata_json: Mapped[dict | None] = mapped_column("metadata", JSONB, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 

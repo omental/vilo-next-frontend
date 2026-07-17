@@ -9,5 +9,17 @@ class UserOut(BaseModel):
     email: EmailStr
     role: str
     status: str
+    organization_name: str | None = None
+    profile_image_updated_at: datetime | None = None
     created_at: datetime
     updated_at: datetime
+
+
+class UserProfileUpdate(BaseModel):
+    name: str
+
+
+class ChangePasswordRequest(BaseModel):
+    current_password: str
+    new_password: str
+    confirm_password: str

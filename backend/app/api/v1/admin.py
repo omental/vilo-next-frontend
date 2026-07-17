@@ -10,7 +10,8 @@ from app.db.session import get_db
 from app.models.enums import RecordStatus, UserRole
 from app.models.user import User
 from app.models.user_invite import UserInvite
-from app.schemas.admin import AdminUserUpdate, InviteCreate, InviteResponse
+from app.core.security import hash_password
+from app.schemas.admin import AdminUserCreate, AdminUserUpdate, InviteCreate, InviteResponse
 from app.schemas.user import UserOut
 from app.services.audit import log_audit_event
 from app.services.email import build_invite_email
@@ -21,6 +22,7 @@ ALLOWED_ADMIN = ["partner", "admin"]
 VALID_INVITE_ROLES = {"partner", "admin", "lawyer", "paralegal"}
 VALID_USER_ROLES = {"partner", "admin", "lawyer", "paralegal", "client"}
 VALID_STATUSES = {"active", "inactive"}
+MIN_PASSWORD_LENGTH = 8
 
 
 def invite_out(inv: UserInvite) -> InviteResponse:
@@ -45,6 +47,7 @@ def user_out(user: User) -> UserOut:
         email=user.email,
         role=user.role.value,
         status=user.status.value,
+        profile_image_updated_at=getattr(user, "profile_image_updated_at", None),
         created_at=user.created_at,
         updated_at=user.updated_at,
     )
@@ -56,6 +59,7 @@ async def count_active_role(db: AsyncSession, org_id: int, role: UserRole) -> in
 
 @router.post("/invites", response_model=InviteResponse)
 async def create_invite(payload: InviteCreate, request: Request, background_tasks: BackgroundTasks, db: AsyncSession = Depends(get_db), current_user: User = Depends(role_guard(ALLOWED_ADMIN))):
+    raise HTTPException(status_code=410, detail="Invitations are disabled. Create the team member directly.")
     role = payload.role.lower()
     if role not in VALID_INVITE_ROLES:
         raise HTTPException(status_code=400, detail="Invalid invite role")
@@ -110,6 +114,7 @@ async def list_invites(db: AsyncSession = Depends(get_db), current_user: User = 
 
 @router.post("/invites/{invite_id}/resend", response_model=InviteResponse)
 async def resend_invite(invite_id: int, db: AsyncSession = Depends(get_db), current_user: User = Depends(role_guard(ALLOWED_ADMIN))):
+    raise HTTPException(status_code=410, detail="Invitation resend is disabled. Create the team member directly if needed.")
     invite = await db.scalar(select(UserInvite).where(UserInvite.id == invite_id, UserInvite.organization_id == current_user.organization_id))
     if not invite:
         raise HTTPException(status_code=404, detail="Invite not found")
@@ -150,6 +155,63 @@ async def cancel_invite(invite_id: int, request: Request, db: AsyncSession = Dep
 async def list_admin_users(db: AsyncSession = Depends(get_db), current_user: User = Depends(role_guard(ALLOWED_ADMIN))):
     rows = (await db.scalars(select(User).where(User.organization_id == current_user.organization_id).order_by(User.created_at.asc()))).all()
     return [user_out(u) for u in rows]
+
+
+@router.post("/users", response_model=UserOut)
+async def create_admin_user(
+    payload: AdminUserCreate,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(role_guard(ALLOWED_ADMIN)),
+):
+    role = payload.role.lower()
+    if role not in VALID_INVITE_ROLES:
+        raise HTTPException(status_code=400, detail="Invalid role")
+
+    status_value = payload.status.lower()
+    if status_value not in VALID_STATUSES:
+        raise HTTPException(status_code=400, detail="Invalid status")
+
+    if len(payload.password) < MIN_PASSWORD_LENGTH:
+        raise HTTPException(status_code=400, detail=f"Password must be at least {MIN_PASSWORD_LENGTH} characters")
+
+    name = payload.name.strip()
+    if not name:
+        raise HTTPException(status_code=400, detail="Full name is required")
+
+    email = str(payload.email).strip().lower()
+    existing_user = await db.scalar(select(User).where(User.email == email))
+    if existing_user:
+        raise HTTPException(status_code=409, detail="Email already belongs to a user")
+
+    now = datetime.now(timezone.utc)
+    user = User(
+        organization_id=current_user.organization_id,
+        name=name,
+        email=email,
+        hashed_password=hash_password(payload.password),
+        role=UserRole(role),
+        status=RecordStatus(status_value),
+        created_at=now,
+        updated_at=now,
+    )
+    db.add(user)
+    await db.flush()
+    await log_audit_event(
+        db,
+        organization_id=current_user.organization_id,
+        user_id=current_user.id,
+        action="team_member_created",
+        entity_type="user",
+        entity_id=str(user.id),
+        description=f"Team member created: {user.email}",
+        metadata_json={"created_user_id": user.id, "role": user.role.value},
+        ip_address=request.client.host if request.client else None,
+        user_agent=request.headers.get("user-agent"),
+    )
+    await db.commit()
+    await db.refresh(user)
+    return user_out(user)
 
 
 @router.patch("/users/{user_id}", response_model=UserOut)

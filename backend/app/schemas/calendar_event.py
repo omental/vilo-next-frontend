@@ -9,6 +9,7 @@ class CalendarEventCreate(BaseModel):
     event_type: str
     start_at: datetime
     end_at: datetime | None = None
+    reminder_at: datetime | None = None
     location: str | None = None
 
 
@@ -19,6 +20,7 @@ class CalendarEventUpdate(BaseModel):
     event_type: str | None = None
     start_at: datetime | None = None
     end_at: datetime | None = None
+    reminder_at: datetime | None = None
     location: str | None = None
 
 
@@ -33,6 +35,7 @@ class CalendarEventResponse(BaseModel):
     event_type: str
     start_at: datetime
     end_at: datetime | None
+    reminder_at: datetime | None = None
     location: str | None
     source_type: str | None = None
     source_id: int | None = None

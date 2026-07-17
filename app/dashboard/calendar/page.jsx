@@ -3,6 +3,7 @@
 import { Suspense, useEffect, useMemo, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { apiRequest } from "../../../lib/api";
+import { DiscardChangesDialog, useModalCloseGuard } from "../../../components/useModalCloseGuard";
 
 const VIEW_OPTIONS = ["month", "week", "day"];
 const FILTER_OPTIONS = [
@@ -39,10 +40,22 @@ const initialForm = {
   date: "",
   start_time: "",
   end_time: "",
+  reminder_choice: "",
+  custom_reminder_at: "",
   case_id: "",
   location: "",
   description: "",
 };
+const REMINDER_OPTIONS = [
+  { value: "", label: "No reminder" },
+  { value: "0", label: "At start time" },
+  { value: "5", label: "5 minutes before" },
+  { value: "15", label: "15 minutes before" },
+  { value: "30", label: "30 minutes before" },
+  { value: "60", label: "1 hour before" },
+  { value: "1440", label: "1 day before" },
+  { value: "custom", label: "Custom date and time" },
+];
 
 function startOfMonth(date) {
   return new Date(date.getFullYear(), date.getMonth(), 1);
@@ -84,6 +97,17 @@ function parseDateValue(value) {
   if (!value) return null;
   const parsed = new Date(`${value}T00:00:00`);
   return Number.isNaN(parsed.getTime()) ? null : parsed;
+}
+
+function computeReminderAt(form) {
+  if (!form.reminder_choice || !form.date || !form.start_time) return null;
+  if (form.reminder_choice === "custom") {
+    return form.custom_reminder_at ? new Date(form.custom_reminder_at) : null;
+  }
+  const start = new Date(`${form.date}T${form.start_time}`);
+  if (Number.isNaN(start.getTime())) return null;
+  start.setMinutes(start.getMinutes() - Number(form.reminder_choice));
+  return start;
 }
 
 function normalizeValue(value) {
@@ -173,6 +197,7 @@ function CalendarPageContent() {
   const [activeFilter, setActiveFilter] = useState("all");
   const [modalOpen, setModalOpen] = useState(false);
   const [form, setForm] = useState(initialForm);
+  const [modalInitialForm, setModalInitialForm] = useState(initialForm);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
@@ -350,12 +375,14 @@ function CalendarPageContent() {
     const d = new Date(date);
     setSelectedDate(d);
     setSelectedMonth(startOfMonth(d));
-    setForm({
+    const nextForm = {
       ...initialForm,
       date: ymd(d),
       start_time: "09:00",
       end_time: "10:00",
-    });
+    };
+    setForm(nextForm);
+    setModalInitialForm(nextForm);
     setModalOpen(true);
     if (syncQuery) {
       const params = new URLSearchParams(searchParams.toString());
@@ -367,6 +394,8 @@ function CalendarPageContent() {
 
   function closeModal() {
     setModalOpen(false);
+    setForm(initialForm);
+    setModalInitialForm(initialForm);
     const params = new URLSearchParams(searchParams.toString());
     params.delete("create");
     params.delete("date");
@@ -376,6 +405,7 @@ function CalendarPageContent() {
 
   async function createEvent(event) {
     event.preventDefault();
+    if (saving) return;
     setError("");
     setSuccess("");
 
@@ -388,6 +418,7 @@ function CalendarPageContent() {
     try {
       const startAt = new Date(`${form.date}T${form.start_time}`);
       const endAt = form.end_time ? new Date(`${form.date}T${form.end_time}`) : null;
+      const reminderAt = computeReminderAt(form);
       await apiRequest("/api/v1/calendar/events", {
         method: "POST",
         body: JSON.stringify({
@@ -397,19 +428,23 @@ function CalendarPageContent() {
           event_type: form.event_type,
           start_at: startAt.toISOString(),
           end_at: endAt ? endAt.toISOString() : null,
+          reminder_at: reminderAt ? reminderAt.toISOString() : null,
           location: form.location || null,
         }),
       });
 
-      setSuccess("Event created successfully.");
+      setSuccess(reminderAt ? "Event created with reminder." : "Event created successfully.");
       closeModal();
       await load();
-    } catch {
-      setError("Unable to create event. Please review the form and try again.");
+    } catch (err) {
+      setError(err.message || "Unable to create event. Please review the form and try again.");
     } finally {
       setSaving(false);
     }
   }
+
+  const eventFormDirty = modalOpen && JSON.stringify(form) !== JSON.stringify(modalInitialForm);
+  const eventCloseGuard = useModalCloseGuard({ open: modalOpen, isDirty: eventFormDirty, isSubmitting: saving, onClose: closeModal });
 
   const monthSummary = `${monthCounts.items} scheduled items in ${monthLabel(selectedMonth)}.`;
   const filterLabel = getCategoryLabel(activeFilter);
@@ -680,14 +715,14 @@ function CalendarPageContent() {
       </div>
 
       {modalOpen ? (
-        <div className="vilo-modal-overlay" onClick={closeModal}>
+        <div className="vilo-modal-overlay" onClick={eventCloseGuard.requestClose}>
           <div className="vilo-modal calendar-event-modal" onClick={(event) => event.stopPropagation()}>
             <div className="vilo-modal__header calendar-event-modal__header">
               <div>
                 <h3>Add Event</h3>
                 <p className="calendar-event-modal__copy">Create an event for {form.date || selectedDateKey}.</p>
               </div>
-              <button className="calendar-event-modal__close" type="button" onClick={closeModal} aria-label="Close add event form">×</button>
+              <button className="calendar-event-modal__close" type="button" onClick={eventCloseGuard.requestClose} aria-label="Close add event form">×</button>
             </div>
 
             <form onSubmit={createEvent}>
@@ -710,6 +745,21 @@ function CalendarPageContent() {
                       {EVENT_TYPE_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
                     </select>
                   </div>
+                </div>
+
+                <div className="calendar-event-modal__grid">
+                  <div className="calendar-event-modal__field">
+                    <label htmlFor="calendar-event-reminder">Reminder</label>
+                    <select id="calendar-event-reminder" value={form.reminder_choice} onChange={(event) => setForm({ ...form, reminder_choice: event.target.value, custom_reminder_at: "" })}>
+                      {REMINDER_OPTIONS.map((option) => <option key={option.value || "none"} value={option.value}>{option.label}</option>)}
+                    </select>
+                  </div>
+                  {form.reminder_choice === "custom" ? (
+                    <div className="calendar-event-modal__field">
+                      <label htmlFor="calendar-event-custom-reminder">Custom reminder</label>
+                      <input id="calendar-event-custom-reminder" type="datetime-local" value={form.custom_reminder_at} onChange={(event) => setForm({ ...form, custom_reminder_at: event.target.value })} />
+                    </div>
+                  ) : <div className="calendar-event-modal__field" />}
                 </div>
 
                 <div className="calendar-event-modal__grid">
@@ -744,11 +794,12 @@ function CalendarPageContent() {
               </div>
 
               <div className="calendar-event-modal__footer">
-                <button type="button" className="vilo-btn vilo-btn--secondary" onClick={closeModal}>Cancel</button>
+                <button type="button" className="vilo-btn vilo-btn--secondary" onClick={eventCloseGuard.requestClose} disabled={saving}>Cancel</button>
                 <button type="submit" className="vilo-btn vilo-btn--primary" disabled={saving}>{saving ? "Saving..." : "Create Event"}</button>
               </div>
             </form>
           </div>
+          <DiscardChangesDialog open={eventCloseGuard.confirmDiscard} onKeepEditing={eventCloseGuard.keepEditing} onDiscard={eventCloseGuard.discard} />
         </div>
       ) : null}
     </section>

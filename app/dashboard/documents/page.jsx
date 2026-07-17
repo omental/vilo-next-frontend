@@ -4,6 +4,7 @@ import { Suspense, useEffect, useMemo, useRef, useState } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { apiDownload, apiRequest, apiUpload } from "../../../lib/api";
 import { getCachedUser } from "../../../lib/auth";
+import { DiscardChangesDialog, useModalCloseGuard } from "../../../components/useModalCloseGuard";
 
 const initialForm = {
   client_id: "",
@@ -60,6 +61,7 @@ function DocumentsPageContent() {
   const [replaceNotes, setReplaceNotes] = useState("");
   const [editTarget, setEditTarget] = useState(null);
   const [editContent, setEditContent] = useState("");
+  const [editInitialContent, setEditInitialContent] = useState("");
   const [editVersionNote, setEditVersionNote] = useState("");
   const [editWarning, setEditWarning] = useState("");
   const [editLoading, setEditLoading] = useState(false);
@@ -89,6 +91,19 @@ function DocumentsPageContent() {
   const currentUser = useMemo(() => getCachedUser(), []);
   const onlyOfficeContainerId = onlyOfficeTarget ? `${ONLYOFFICE_EDITOR_ID_PREFIX}-${onlyOfficeTarget.id}` : null;
   const onlyOfficeDisplayTitle = onlyOfficeTarget?.title || onlyOfficeTarget?.file_name || "Untitled document";
+  const uploadDirty = uploadOpen && (
+    form.title !== initialForm.title ||
+    form.description !== initialForm.description ||
+    form.category !== initialForm.category ||
+    form.case_id !== initialForm.case_id ||
+    Boolean(form.file) ||
+    (requestedClientId ? form.client_id !== requestedClientId : form.client_id !== initialForm.client_id)
+  );
+  const uploadCloseGuard = useModalCloseGuard({ open: uploadOpen, isDirty: uploadDirty, isSubmitting: saving, onClose: closeUploadModal });
+  const replaceDirty = Boolean(replaceTarget) && (Boolean(replaceFile) || Boolean(replaceNotes.trim()));
+  const replaceCloseGuard = useModalCloseGuard({ open: Boolean(replaceTarget), isDirty: replaceDirty, isSubmitting: saving, onClose: closeReplaceModal });
+  const editDirty = Boolean(editTarget) && (editContent !== editInitialContent || Boolean(editVersionNote.trim()));
+  const editCloseGuard = useModalCloseGuard({ open: Boolean(editTarget), isDirty: editDirty, isSubmitting: saving || editLoading, onClose: closeEditModal });
 
   async function load() {
     setLoading(true);
@@ -157,24 +172,12 @@ function DocumentsPageContent() {
         setMenuOpenId(null);
         return;
       }
-      if (replaceTarget) {
-        closeReplaceModal();
-        return;
-      }
       if (onlyOfficeTarget) {
         closeOnlyOfficeModal();
         return;
       }
-      if (editTarget) {
-        closeEditModal();
-        return;
-      }
       if (versionTarget) {
         setVersionTarget(null);
-        return;
-      }
-      if (uploadOpen) {
-        closeUploadModal();
       }
     }
 
@@ -440,6 +443,7 @@ function DocumentsPageContent() {
   async function openEditModal(document) {
     setEditTarget(document);
     setEditContent("");
+    setEditInitialContent("");
     setEditVersionNote("");
     setEditWarning("");
     setEditLoading(true);
@@ -455,6 +459,7 @@ function DocumentsPageContent() {
         return;
       }
       setEditContent(response.content || "");
+      setEditInitialContent(response.content || "");
       setEditWarning(response.warning || "");
     } catch (err) {
       setEditTarget(null);
@@ -494,6 +499,7 @@ function DocumentsPageContent() {
   function closeEditModal() {
     setEditTarget(null);
     setEditContent("");
+    setEditInitialContent("");
     setEditVersionNote("");
     setEditWarning("");
     setEditLoading(false);
@@ -789,11 +795,11 @@ function DocumentsPageContent() {
       </article>
 
       {uploadOpen ? (
-        <div className="vilo-modal-overlay" onClick={closeUploadModal}>
+        <div className="vilo-modal-overlay" onClick={uploadCloseGuard.requestClose}>
           <div className="vilo-modal documents-intake-modal" onClick={(event) => event.stopPropagation()}>
             <div className="vilo-modal__header documents-intake-modal__header">
               <h3>Document Intake Form</h3>
-              <button type="button" className="documents-intake-modal__close" onClick={closeUploadModal} aria-label="Close document intake form">
+              <button type="button" className="documents-intake-modal__close" onClick={uploadCloseGuard.requestClose} aria-label="Close document intake form" disabled={saving}>
                 <CloseIcon />
               </button>
             </div>
@@ -897,7 +903,7 @@ function DocumentsPageContent() {
                 </div>
 
                 <div className="vilo-table-actions documents-intake-form__actions">
-                  <button type="button" className="vilo-btn vilo-btn--secondary" onClick={closeUploadModal}>
+                  <button type="button" className="vilo-btn vilo-btn--secondary" onClick={uploadCloseGuard.requestClose} disabled={saving}>
                     Cancel
                   </button>
                   <button type="submit" className="vilo-btn vilo-btn--primary" disabled={saving}>
@@ -907,15 +913,16 @@ function DocumentsPageContent() {
               </form>
             </div>
           </div>
+          <DiscardChangesDialog open={uploadCloseGuard.confirmDiscard} onKeepEditing={uploadCloseGuard.keepEditing} onDiscard={uploadCloseGuard.discard} />
         </div>
       ) : null}
 
       {replaceTarget ? (
-        <div className="vilo-modal-overlay" onClick={closeReplaceModal}>
+        <div className="vilo-modal-overlay" onClick={replaceCloseGuard.requestClose}>
           <div className="vilo-modal" onClick={(event) => event.stopPropagation()}>
             <div className="vilo-modal__header">
               <h3>Replace Document</h3>
-              <button type="button" className="vilo-btn vilo-btn--ghost vilo-btn--xs" onClick={closeReplaceModal}>Close</button>
+              <button type="button" className="vilo-btn vilo-btn--ghost vilo-btn--xs" onClick={replaceCloseGuard.requestClose} disabled={saving}>Close</button>
             </div>
             <div className="vilo-modal__body">
               <form className="vilo-form-grid" onSubmit={replaceDocument}>
@@ -923,21 +930,22 @@ function DocumentsPageContent() {
                 <input type="file" accept=".pdf,.doc,.docx,.jpg,.jpeg,.png,.txt" onChange={(event) => setReplaceFile(event.target.files?.[0] || null)} required />
                 <textarea placeholder="Version notes (optional)" value={replaceNotes} onChange={(event) => setReplaceNotes(event.target.value)} />
                 <div className="vilo-table-actions">
-                  <button type="button" className="vilo-btn vilo-btn--secondary" onClick={closeReplaceModal}>Cancel</button>
+                  <button type="button" className="vilo-btn vilo-btn--secondary" onClick={replaceCloseGuard.requestClose} disabled={saving}>Cancel</button>
                   <button type="submit" className="vilo-btn vilo-btn--primary" disabled={saving}>{saving ? "Replacing..." : "Replace Document"}</button>
                 </div>
               </form>
             </div>
           </div>
+          <DiscardChangesDialog open={replaceCloseGuard.confirmDiscard} onKeepEditing={replaceCloseGuard.keepEditing} onDiscard={replaceCloseGuard.discard} />
         </div>
       ) : null}
 
       {editTarget ? (
-        <div className="vilo-modal-overlay" onClick={closeEditModal}>
+        <div className="vilo-modal-overlay" onClick={editCloseGuard.requestClose}>
           <div className="vilo-modal documents-edit-modal" onClick={(event) => event.stopPropagation()}>
             <div className="vilo-modal__header">
               <h3>Edit DOCX Content</h3>
-              <button type="button" className="vilo-btn vilo-btn--ghost vilo-btn--xs" onClick={closeEditModal}>Close</button>
+              <button type="button" className="vilo-btn vilo-btn--ghost vilo-btn--xs" onClick={editCloseGuard.requestClose} disabled={editLoading || saving}>Close</button>
             </div>
             <div className="vilo-modal__body">
               <form className="vilo-form-grid documents-edit-form" onSubmit={saveEditedContent}>
@@ -968,7 +976,7 @@ function DocumentsPageContent() {
                   />
                 </label>
                 <div className="vilo-table-actions">
-                  <button type="button" className="vilo-btn vilo-btn--secondary" onClick={closeEditModal}>Cancel</button>
+                  <button type="button" className="vilo-btn vilo-btn--secondary" onClick={editCloseGuard.requestClose} disabled={editLoading || saving}>Cancel</button>
                   <button type="submit" className="vilo-btn vilo-btn--primary" disabled={editLoading || saving}>
                     {editLoading ? "Loading..." : saving ? "Saving..." : "Save as New Version"}
                   </button>
@@ -976,6 +984,7 @@ function DocumentsPageContent() {
               </form>
             </div>
           </div>
+          <DiscardChangesDialog open={editCloseGuard.confirmDiscard} onKeepEditing={editCloseGuard.keepEditing} onDiscard={editCloseGuard.discard} />
         </div>
       ) : null}
 

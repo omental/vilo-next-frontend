@@ -5,6 +5,7 @@ import { Suspense, useEffect, useMemo, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { getCachedUser, setCachedUser } from "../../../lib/auth";
 import { apiDownload, apiRequest } from "../../../lib/api";
+import { DiscardChangesDialog, useModalCloseGuard } from "../../../components/useModalCloseGuard";
 
 const LINE_ITEM_TYPE_OPTIONS = [
   ["legal_fee", "Legal Fee"],
@@ -126,6 +127,7 @@ function InvoicesPageContent() {
   const [voidingInvoice, setVoidingInvoice] = useState(null);
   const [voidReason, setVoidReason] = useState("");
   const [form, setForm] = useState(initialForm);
+  const [createInitialForm, setCreateInitialForm] = useState(initialForm);
   const requestedClientId = searchParams.get("client_id") || "";
   const requestedCaseId = searchParams.get("case_id") || "";
 
@@ -313,13 +315,15 @@ function InvoicesPageContent() {
   function openCreateModal() {
     setCreateError("");
     const defaultAccount = resolveDefaultPaymentAccount(paymentAccounts, "USD");
-    setForm({
+    const nextForm = {
       ...initialForm,
       client_id: requestedClientId,
       case_id: requestedCaseId,
       payment_account_id: defaultAccount ? String(defaultAccount.id) : "",
       payment_instructions: buildPaymentInstructions(defaultAccount),
-    });
+    };
+    setForm(nextForm);
+    setCreateInitialForm(nextForm);
     setCreateOpen(true);
   }
 
@@ -328,13 +332,15 @@ function InvoicesPageContent() {
     setCreateError("");
     setTimeEntryError("");
     const defaultAccount = resolveDefaultPaymentAccount(paymentAccounts, "USD");
-    setForm({
+    const nextForm = {
       ...initialForm,
       client_id: requestedClientId,
       case_id: requestedCaseId,
       payment_account_id: defaultAccount ? String(defaultAccount.id) : "",
       payment_instructions: buildPaymentInstructions(defaultAccount),
-    });
+    };
+    setForm(nextForm);
+    setCreateInitialForm(nextForm);
     if (searchParams.get("create") === "1") {
       const params = new URLSearchParams(searchParams.toString());
       params.delete("create");
@@ -413,6 +419,7 @@ function InvoicesPageContent() {
 
   async function handleCreate(event) {
     event.preventDefault();
+    if (saving) return;
     if (!form.client_id || !form.case_id || !form.issue_date) {
       setCreateError("Client, matter, and issue date are required.");
       return;
@@ -502,6 +509,8 @@ function InvoicesPageContent() {
       total: subtotal + taxAmount,
     };
   }, [billingTax.invoice_tax_rate, form.line_items]);
+  const createFormDirty = createOpen && JSON.stringify(form) !== JSON.stringify(createInitialForm);
+  const createCloseGuard = useModalCloseGuard({ open: createOpen, isDirty: createFormDirty, isSubmitting: saving, onClose: closeCreateModal });
 
   return (
     <section className="dashboard-page-stack">
@@ -622,14 +631,14 @@ function InvoicesPageContent() {
       ) : null}
 
       {createOpen ? (
-        <div className="vilo-modal-overlay" onClick={closeCreateModal}>
+        <div className="vilo-modal-overlay" onClick={createCloseGuard.requestClose}>
           <div className="vilo-modal invoice-create-modal" onClick={(event) => event.stopPropagation()}>
             <div className="vilo-modal__header">
               <div>
                 <h3>Create Invoice</h3>
                 <p className="invoice-modal-copy">Firm billing only. Billable/legal line items belong here; trust deposits and client funds do not.</p>
               </div>
-              <button type="button" className="vilo-btn vilo-btn--ghost vilo-btn--xs" onClick={closeCreateModal}>Close</button>
+              <button type="button" className="vilo-btn vilo-btn--ghost vilo-btn--xs" onClick={createCloseGuard.requestClose} disabled={saving}>Close</button>
             </div>
             <form className="invoice-create-shell" onSubmit={handleCreate}>
               <div className="vilo-modal__body invoice-create-form invoice-create-form--scrollable">
@@ -808,12 +817,13 @@ function InvoicesPageContent() {
 
               <div className="vilo-modal__footer invoice-create-footer">
                 <div className="vilo-table-actions invoice-create-actions">
-                  <button className="vilo-btn vilo-btn--secondary" type="button" onClick={closeCreateModal}>Cancel</button>
+                  <button className="vilo-btn vilo-btn--secondary" type="button" onClick={createCloseGuard.requestClose} disabled={saving}>Cancel</button>
                   <button className="vilo-btn vilo-btn--primary" type="submit" disabled={saving || !form.payment_account_id}>{saving ? "Creating..." : "Create Invoice"}</button>
                 </div>
               </div>
             </form>
           </div>
+          <DiscardChangesDialog open={createCloseGuard.confirmDiscard} onKeepEditing={createCloseGuard.keepEditing} onDiscard={createCloseGuard.discard} />
         </div>
       ) : null}
 

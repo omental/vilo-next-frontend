@@ -1,9 +1,12 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
 import { apiRequest } from "../../lib/api";
+import UserAvatar from "../UserAvatar";
 
 export function Navbar({ onMenuClick, user, onLogout }) {
+  const router = useRouter();
   const [open, setOpen] = useState(false);
   const [items, setItems] = useState([]);
   const [unreadCount, setUnreadCount] = useState(0);
@@ -31,6 +34,12 @@ export function Navbar({ onMenuClick, user, onLogout }) {
       body: JSON.stringify({ notification_ids: [id] }),
     });
     loadNotifications();
+  }
+
+  async function openNotification(item) {
+    await markRead(item.id);
+    const href = resolveNotificationHref(item);
+    if (href) router.push(href);
   }
 
   async function markAllRead() {
@@ -78,7 +87,7 @@ export function Navbar({ onMenuClick, user, onLogout }) {
             <div className="dashboard-navbar__notifications-list">
               {items.length === 0 ? <p>No notifications yet.</p> : null}
               {items.map((item) => (
-                <button key={item.id} type="button" className="dashboard-navbar__notification-item" onClick={() => markRead(item.id)}>
+                <button key={item.id} type="button" className="dashboard-navbar__notification-item" onClick={() => openNotification(item)}>
                   <div>
                     <strong>{item.title}</strong>
                     {item.body ? <span>{item.body}</span> : null}
@@ -90,20 +99,28 @@ export function Navbar({ onMenuClick, user, onLogout }) {
             </div>
           </div>
         ) : null}
-        <button type="button" className="dashboard-navbar__avatar-button" aria-label="User profile">
-          <span className="dashboard-navbar__avatar">
-            <AvatarIcon />
-          </span>
+        <button type="button" className="dashboard-navbar__avatar-button" aria-label="Profile Settings" onClick={() => router.push("/dashboard/settings")}>
+          <UserAvatar user={user} size="sm" />
           <span className="dashboard-navbar__online-dot" />
         </button>
-        <div className="dashboard-navbar__identity">
+        <button type="button" className="dashboard-navbar__identity dashboard-navbar__identity--button" onClick={() => router.push("/dashboard/settings")}>
           <strong>{user?.name || "Loading..."}</strong>
           <span>{user?.role || ""}</span>
-        </div>
+        </button>
         <button type="button" className="vilo-btn vilo-btn--secondary vilo-btn--xs" onClick={onLogout}>Logout</button>
       </div>
     </header>
   );
+}
+
+function resolveNotificationHref(item) {
+  const meta = item?.metadata || {};
+  if (meta.link) return meta.link;
+  if (meta.task_id) return `/dashboard/tasks/${meta.task_id}`;
+  if (meta.calendar_event_id) return `/dashboard/calendar?event_id=${meta.calendar_event_id}`;
+  if (meta.case_id) return `/dashboard/cases/${meta.case_id}`;
+  if (meta.client_id) return `/dashboard/clients/${meta.client_id}`;
+  return "";
 }
 
 function MenuIcon() {
@@ -170,23 +187,5 @@ function BellIcon() {
       <path d="M10 19.4a2.3 2.3 0 0 0 4 0" />
       <path d="M18 17c-1-1.1-1.6-2.7-1.6-4.7 0-2.8-1.8-5-4.4-5s-4.4 2.2-4.4 5C7.6 14.3 7 15.9 6 17" />
     </IconBase>
-  );
-}
-
-function AvatarIcon() {
-  return (
-    <svg viewBox="0 0 32 32" aria-hidden="true" className="dashboard-navbar__avatar-art">
-      <defs>
-        <linearGradient id="avatar-bg" x1="0%" x2="100%" y1="0%" y2="100%">
-          <stop offset="0%" stopColor="#7b70ff" />
-          <stop offset="100%" stopColor="#5d46f6" />
-        </linearGradient>
-      </defs>
-      <circle cx="16" cy="16" r="16" fill="url(#avatar-bg)" />
-      <circle cx="16" cy="12.3" r="5.1" fill="#ffcfb6" />
-      <path d="M8.8 26.2c1.9-4.6 5.1-6.9 7.2-6.9 2.1 0 5.3 2.3 7.2 6.9" fill="#f5f6fb" />
-      <path d="M11.2 12.4c.1-3 2.2-5.2 4.8-5.2 2.9 0 5 2.3 5 5.4v1.2h-1.8v-1c0-1.2-.9-2.1-2-2.1H15c-1.1 0-2 .9-2 2.1v1h-1.8z" fill="#2d243f" />
-      <path d="M11.5 11.4c1.3-2.7 3.5-4.1 6.3-4.1 1.2 0 2.2.3 3 .8-1-1.9-2.8-3.1-4.8-3.1-2.7 0-4.8 2.1-4.8 4.8 0 .5.1 1.1.3 1.6z" fill="#2d243f" opacity=".92" />
-    </svg>
   );
 }

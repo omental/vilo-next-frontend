@@ -1,10 +1,39 @@
+import asyncio
+from contextlib import asynccontextmanager, suppress
+
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import Response
 
 from app.api.v1 import api_router
+from app.db.session import SessionLocal
+from app.services.reminders import REMINDER_POLL_INTERVAL_SECONDS, process_due_reminders
 
-app = FastAPI(title="VILO API", version="1.0.0")
+
+async def _reminder_loop() -> None:
+    while True:
+        try:
+            async with SessionLocal() as db:
+                await process_due_reminders(db)
+        except Exception:
+            # The request-time notification processor is a fallback if the startup loop
+            # temporarily cannot reach the database.
+            pass
+        await asyncio.sleep(REMINDER_POLL_INTERVAL_SECONDS)
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    task = asyncio.create_task(_reminder_loop())
+    try:
+        yield
+    finally:
+        task.cancel()
+        with suppress(asyncio.CancelledError):
+            await task
+
+
+app = FastAPI(title="VILO API", version="1.0.0", lifespan=lifespan)
 
 origins = [
     "http://localhost:3000",

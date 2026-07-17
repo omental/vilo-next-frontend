@@ -30,6 +30,14 @@ export default function DashboardShell({ children }) {
     load();
   }, [router]);
 
+  useEffect(() => {
+    function handleUserUpdated(event) {
+      setUser(event.detail || getCachedUser());
+    }
+    window.addEventListener("vilo:user-updated", handleUserUpdated);
+    return () => window.removeEventListener("vilo:user-updated", handleUserUpdated);
+  }, []);
+
   function logout() {
     clearAuth();
     router.push("/login");

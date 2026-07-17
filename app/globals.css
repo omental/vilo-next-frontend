@@ -30,13 +30,44 @@ body {
   font-family: var(--font-family-base);
 }
 
-::-webkit-scrollbar {
-  width: 5px;
-}
+@media (hover: hover) and (pointer: fine) {
+  html,
+  body,
+  .dashboard-shell,
+  .dashboard-main,
+  .sidebar,
+  .dashboard-content-container,
+  .dashboard-page-stack,
+  .vilo-table-wrap,
+  .vilo-modal__body,
+  .invoice-create-form--scrollable,
+  .calendar-selected-list,
+  .calendar-upcoming-list,
+  .documents-content,
+  .documents-folders,
+  .case-actions-menu {
+    scrollbar-color: #b7b1cb #f1eff7;
+    scrollbar-width: auto;
+  }
 
-::-webkit-scrollbar-thumb {
-  background: #d6d3e5;
-  border-radius: 4px;
+  *:not(.documents-onlyoffice-editor):not(.documents-onlyoffice-editor *)::-webkit-scrollbar {
+    width: 11px;
+    height: 11px;
+  }
+
+  *:not(.documents-onlyoffice-editor):not(.documents-onlyoffice-editor *)::-webkit-scrollbar-track {
+    background: #f1eff7;
+  }
+
+  *:not(.documents-onlyoffice-editor):not(.documents-onlyoffice-editor *)::-webkit-scrollbar-thumb {
+    background: #b7b1cb;
+    border: 2px solid #f1eff7;
+    border-radius: 8px;
+  }
+
+  *:not(.documents-onlyoffice-editor):not(.documents-onlyoffice-editor *)::-webkit-scrollbar-thumb:hover {
+    background: #8f88ab;
+  }
 }
 
 button,
@@ -139,6 +170,13 @@ button {
   display: grid;
   gap: 0.1rem;
   text-align: right;
+}
+
+.dashboard-navbar__identity--button {
+  border: 0;
+  background: transparent;
+  padding: 0;
+  color: inherit;
 }
 
 .dashboard-navbar__identity strong {
@@ -285,6 +323,45 @@ button {
   width: 100%;
   height: 100%;
   display: block;
+}
+
+.user-avatar {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  overflow: hidden;
+  border-radius: 999px;
+  background: linear-gradient(135deg, #7367f0 0%, #4b3bd8 100%);
+  color: #fff;
+  font-weight: 700;
+  letter-spacing: 0;
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.3);
+}
+
+.user-avatar img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.user-avatar--sm {
+  width: 32px;
+  height: 32px;
+  font-size: 0.72rem;
+}
+
+.user-avatar--md {
+  width: 42px;
+  height: 42px;
+  font-size: 0.9rem;
+}
+
+.user-avatar--xl {
+  width: 112px;
+  height: 112px;
+  font-size: 2rem;
 }
 
 .dashboard-navbar__online-dot {
@@ -7593,6 +7670,28 @@ button {
   margin: 0.35rem 0 0;
   color: #8a859c;
   font-size: 0.82rem;
+}
+
+.settings-profile-photo {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  padding: 1rem;
+  border: 1px solid rgba(226, 229, 238, 0.9);
+  border-radius: 8px;
+  background: #fbfbfe;
+  margin-bottom: 1rem;
+}
+
+.settings-profile-photo__actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.65rem;
+}
+
+.settings-profile-photo__actions .settings-helper-text {
+  flex-basis: 100%;
 }
 
 .settings-bullet-list {

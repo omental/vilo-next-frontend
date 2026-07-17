@@ -22,6 +22,7 @@ async def get_team(current_user: User = Depends(get_current_user), db: AsyncSess
             email=u.email,
             role=u.role.value,
             status=u.status.value,
+            profile_image_updated_at=getattr(u, "profile_image_updated_at", None),
             created_at=u.created_at,
             updated_at=u.updated_at,
         )

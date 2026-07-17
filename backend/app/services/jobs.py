@@ -31,6 +31,7 @@ def enqueue_notification(
     title: str,
     body: str | None = None,
     metadata_json: dict | None = None,
+    dedupe_key: str | None = None,
 ) -> None:
     background_tasks.add_task(
         create_notification,
@@ -41,4 +42,5 @@ def enqueue_notification(
         title=title,
         body=body,
         metadata_json=metadata_json,
+        dedupe_key=dedupe_key,
     )

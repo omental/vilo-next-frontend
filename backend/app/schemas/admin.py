@@ -24,6 +24,14 @@ class AdminUserUpdate(BaseModel):
     status: str | None = None
 
 
+class AdminUserCreate(BaseModel):
+    name: str
+    email: EmailStr
+    password: str
+    role: str
+    status: str = "active"
+
+
 class AcceptInviteRequest(BaseModel):
     token: str
     name: str

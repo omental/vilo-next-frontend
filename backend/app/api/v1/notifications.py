@@ -7,6 +7,7 @@ from app.db.session import get_db
 from app.models.notification import Notification
 from app.models.user import User
 from app.schemas.notification import MarkNotificationsReadRequest, NotificationListResponse, NotificationResponse
+from app.services.reminders import process_due_reminders
 
 router = APIRouter(prefix="/notifications", tags=["notifications"])
 
@@ -18,6 +19,7 @@ async def list_notifications(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
+    await process_due_reminders(db)
     base_filters = [
         Notification.organization_id == current_user.organization_id,
         Notification.user_id == current_user.id,

@@ -14,7 +14,6 @@ from app.schemas.auth import LoginRequest, RegisterRequest, TokenResponse
 from app.schemas.admin import AcceptInviteRequest
 from app.schemas.user import UserOut
 from app.services.audit import log_audit_event
-from app.services.jobs import enqueue_email
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
@@ -78,7 +77,8 @@ async def login(payload: LoginRequest, request: Request, db: AsyncSession = Depe
 
 
 @router.get("/me", response_model=UserOut)
-async def me(current_user: User = Depends(get_current_user)):
+async def me(db: AsyncSession = Depends(get_db), current_user: User = Depends(get_current_user)):
+    org_name = await db.scalar(select(Organization.name).where(Organization.id == current_user.organization_id))
     return UserOut(
         id=current_user.id,
         organization_id=current_user.organization_id,
@@ -86,6 +86,8 @@ async def me(current_user: User = Depends(get_current_user)):
         email=current_user.email,
         role=current_user.role.value,
         status=current_user.status.value,
+        organization_name=org_name,
+        profile_image_updated_at=getattr(current_user, "profile_image_updated_at", None),
         created_at=current_user.created_at,
         updated_at=current_user.updated_at,
     )
@@ -131,11 +133,4 @@ async def accept_invite(payload: AcceptInviteRequest, request: Request, backgrou
     )
     await db.commit()
     await db.refresh(user)
-    enqueue_email(
-        background_tasks,
-        to_email=user.email,
-        subject="Welcome to VILO",
-        html_body=f"<h2>Welcome, {user.name}</h2><p>Your account is ready. You can now sign in to VILO.</p>",
-        text_body=f"Welcome, {user.name}. Your account is ready.",
-    )
     return TokenResponse(access_token=create_access_token(str(user.id)))

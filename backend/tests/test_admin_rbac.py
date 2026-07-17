@@ -160,23 +160,63 @@ def test_non_admin_roles_blocked_from_admin_users(role):
 
 
 @pytest.mark.parametrize("role", ["partner", "admin"])
-def test_partner_admin_can_create_invite(role):
+def test_partner_admin_can_create_team_member(role):
     db = AdminDBStub(scalar_values=[None])
     client = build_client(role, db)
     try:
-        res = client.post("/api/v1/admin/invites", json={"email": "new@example.com", "role": "lawyer"})
+        res = client.post("/api/v1/admin/users", json={"name": "New User", "email": "new@example.com", "password": "secret123", "role": "lawyer"})
         assert res.status_code == 200
+        created_user = db.added[0]
+        assert created_user.organization_id == 1
+        assert created_user.role == UserRole.lawyer
+        assert created_user.hashed_password != "secret123"
+        assert "hashed_password" not in res.json()
     finally:
         cleanup_client(client)
 
 
-@pytest.mark.parametrize("role", ["lawyer", "paralegal", "client"])
-def test_non_admin_roles_blocked_from_creating_invites(role):
+@pytest.mark.parametrize("role", ["lawyer", "associate", "paralegal", "client"])
+def test_non_admin_roles_blocked_from_creating_team_members(role):
     db = AdminDBStub()
+    if role == "associate":
+        role = "lawyer"
     client = build_client(role, db)
     try:
-        res = client.post("/api/v1/admin/invites", json={"email": "new@example.com", "role": "lawyer"})
+        res = client.post("/api/v1/admin/users", json={"name": "New User", "email": "new@example.com", "password": "secret123", "role": "lawyer"})
         assert res.status_code == 403
+    finally:
+        cleanup_client(client)
+
+
+def test_duplicate_team_member_email_returns_conflict():
+    db = AdminDBStub(scalar_values=[user_obj()])
+    client = build_client("partner", db)
+    try:
+        res = client.post("/api/v1/admin/users", json={"name": "New User", "email": "target@example.com", "password": "secret123", "role": "lawyer"})
+        assert res.status_code == 409
+        assert res.json()["detail"] == "Email already belongs to a user"
+    finally:
+        cleanup_client(client)
+
+
+def test_team_member_create_validates_role_and_password():
+    db = AdminDBStub()
+    client = build_client("admin", db)
+    try:
+        bad_role = client.post("/api/v1/admin/users", json={"name": "New User", "email": "new@example.com", "password": "secret123", "role": "owner"})
+        assert bad_role.status_code == 400
+        short_password = client.post("/api/v1/admin/users", json={"name": "New User", "email": "new@example.com", "password": "short", "role": "lawyer"})
+        assert short_password.status_code == 400
+    finally:
+        cleanup_client(client)
+
+
+def test_new_invite_creation_is_disabled():
+    db = AdminDBStub()
+    client = build_client("partner", db)
+    try:
+        res = client.post("/api/v1/admin/invites", json={"email": "new@example.com", "role": "lawyer"})
+        assert res.status_code == 410
     finally:
         cleanup_client(client)
 

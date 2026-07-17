@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Suspense, useEffect, useRef, useState } from "react";
 import { apiRequest } from "../../../lib/api";
+import { DiscardChangesDialog, useModalCloseGuard } from "../../../components/useModalCloseGuard";
 
 const initialForm = {
   title: "",
@@ -35,6 +36,7 @@ function CasesPageContent() {
   const [saving, setSaving] = useState(false);
   const [menuOpenId, setMenuOpenId] = useState(null);
   const [editCase, setEditCase] = useState(null);
+  const [editInitialCase, setEditInitialCase] = useState(null);
   const [archiveCase, setArchiveCase] = useState(null);
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
@@ -76,6 +78,7 @@ function CasesPageContent() {
 
   async function createCase(e) {
     e.preventDefault();
+    if (saving) return;
     setSaving(true);
     setError("");
     setSuccess("");
@@ -110,7 +113,7 @@ function CasesPageContent() {
 
   async function updateCase(e) {
     e.preventDefault();
-    if (!editCase) return;
+    if (!editCase || saving) return;
     setSaving(true);
     setError("");
     try {
@@ -124,6 +127,7 @@ function CasesPageContent() {
         }),
       });
       setEditCase(null);
+      setEditInitialCase(null);
       await load();
     } catch (err) {
       setError(err.message);
@@ -150,6 +154,20 @@ function CasesPageContent() {
       setSaving(false);
     }
   }
+
+  function openEditCase(caseRow) {
+    setEditCase(caseRow);
+    setEditInitialCase(caseRow);
+    setMenuOpenId(null);
+  }
+
+  function closeEditCase() {
+    setEditCase(null);
+    setEditInitialCase(null);
+  }
+
+  const editCaseDirty = Boolean(editCase) && JSON.stringify(editCase) !== JSON.stringify(editInitialCase);
+  const editCloseGuard = useModalCloseGuard({ open: Boolean(editCase), isDirty: editCaseDirty, isSubmitting: saving, onClose: closeEditCase });
 
   return (
     <section className="dashboard-page-stack">
@@ -260,7 +278,7 @@ function CasesPageContent() {
                         {menuOpenId === c.id ? (
                           <div className="case-actions-menu">
                             <Link href={`/dashboard/cases/${c.id}`}>View</Link>
-                            <button type="button" onClick={() => { setEditCase(c); setMenuOpenId(null); }}>Edit</button>
+                            <button type="button" onClick={() => openEditCase(c)}>Edit</button>
                             <button type="button" className="is-danger" onClick={() => setArchiveCase(c)}>Archive</button>
                           </div>
                         ) : null}
@@ -275,11 +293,11 @@ function CasesPageContent() {
       </article>
 
       {editCase ? (
-        <div className="vilo-modal-overlay" onClick={() => setEditCase(null)}>
+        <div className="vilo-modal-overlay" onClick={editCloseGuard.requestClose}>
           <div className="vilo-modal" onClick={(e) => e.stopPropagation()}>
             <div className="vilo-modal__header">
               <h3>Edit Case</h3>
-              <button type="button" className="vilo-btn vilo-btn--ghost vilo-btn--xs" onClick={() => setEditCase(null)}>Close</button>
+              <button type="button" className="vilo-btn vilo-btn--ghost vilo-btn--xs" onClick={editCloseGuard.requestClose} disabled={saving}>Close</button>
             </div>
             <div className="vilo-modal__body">
               <form className="vilo-form-grid" onSubmit={updateCase}>
@@ -298,10 +316,14 @@ function CasesPageContent() {
                     <option value="high">high</option>
                   </select>
                 </div>
-                <button type="submit" className="vilo-btn vilo-btn--primary" disabled={saving}>{saving ? "Saving..." : "Save Changes"}</button>
+                <div className="vilo-table-actions">
+                  <button type="button" className="vilo-btn vilo-btn--secondary" onClick={editCloseGuard.requestClose} disabled={saving}>Cancel</button>
+                  <button type="submit" className="vilo-btn vilo-btn--primary" disabled={saving}>{saving ? "Saving..." : "Save Changes"}</button>
+                </div>
               </form>
             </div>
           </div>
+          <DiscardChangesDialog open={editCloseGuard.confirmDiscard} onKeepEditing={editCloseGuard.keepEditing} onDiscard={editCloseGuard.discard} />
         </div>
       ) : null}
 

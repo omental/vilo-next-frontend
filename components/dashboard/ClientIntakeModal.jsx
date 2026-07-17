@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import { DiscardChangesDialog, useModalCloseGuard } from "../useModalCloseGuard";
 
 const initialState = {
   client_type: "individual",
@@ -76,13 +77,11 @@ export default function ClientIntakeModal({ open, mode = "create", client = null
   const [initialForm, setInitialForm] = useState(initialState);
   const [idFile, setIdFile] = useState(null);
   const [errors, setErrors] = useState({});
-  const [confirmDiscard, setConfirmDiscard] = useState(false);
 
   useEffect(() => {
     if (!open) return;
     setErrors({});
     setIdFile(null);
-    setConfirmDiscard(false);
     const next = client ? parseClient(client) : initialState;
     setForm(next);
     setInitialForm(next);
@@ -90,28 +89,9 @@ export default function ClientIntakeModal({ open, mode = "create", client = null
 
   const title = useMemo(() => (mode === "edit" ? "Edit Client" : "Client Intake Form"), [mode]);
   const dirty = useMemo(() => JSON.stringify(form) !== JSON.stringify(initialForm) || Boolean(idFile), [form, initialForm, idFile]);
-
-  useEffect(() => {
-    if (!open) return undefined;
-    function onKeyDown(event) {
-      if (event.key !== "Escape") return;
-      event.preventDefault();
-      requestClose();
-    }
-    window.addEventListener("keydown", onKeyDown);
-    return () => window.removeEventListener("keydown", onKeyDown);
-  });
+  const closeGuard = useModalCloseGuard({ open, isDirty: dirty, isSubmitting: saving, onClose });
 
   if (!open) return null;
-
-  function requestClose() {
-    if (saving) return;
-    if (!dirty) {
-      onClose();
-      return;
-    }
-    setConfirmDiscard(true);
-  }
 
   function validate() {
     const corporate = isCorporateType(form.client_type);
@@ -141,11 +121,11 @@ export default function ClientIntakeModal({ open, mode = "create", client = null
   const companyLabel = corporate ? "Company Name *" : "Company Name";
 
   return (
-    <div className="vilo-modal-overlay" onClick={requestClose}>
+    <div className="vilo-modal-overlay" onClick={closeGuard.requestClose}>
       <div className="vilo-modal vilo-modal--intake" onClick={(e) => e.stopPropagation()}>
         <div className="vilo-modal__header">
           <h3>{title}</h3>
-          <button type="button" className="vilo-btn vilo-btn--ghost vilo-btn--xs" onClick={requestClose} disabled={saving}>Close</button>
+          <button type="button" className="vilo-btn vilo-btn--ghost vilo-btn--xs" onClick={closeGuard.requestClose} disabled={saving}>Close</button>
         </div>
         <form className="vilo-modal__body" onSubmit={handleSubmit}>
           <div className="client-intake-type-row">
@@ -192,25 +172,12 @@ export default function ClientIntakeModal({ open, mode = "create", client = null
           {apiError ? <p className="vilo-state vilo-state--error">{apiError}</p> : null}
 
           <div className="vilo-table-actions client-intake-footer">
-            <button className="vilo-btn vilo-btn--secondary" type="button" onClick={requestClose} disabled={saving}>Cancel</button>
+            <button className="vilo-btn vilo-btn--secondary" type="button" onClick={closeGuard.requestClose} disabled={saving}>Cancel</button>
             <button className="vilo-btn vilo-btn--primary" type="submit" disabled={saving}>{saving ? "Saving..." : mode === "edit" ? "Save Client" : "Add Client"}</button>
           </div>
         </form>
       </div>
-      {confirmDiscard ? (
-        <div className="vilo-modal" role="dialog" aria-modal="true" onClick={(e) => e.stopPropagation()}>
-          <div className="vilo-modal__header">
-            <h3>Discard the information you entered?</h3>
-          </div>
-          <div className="vilo-modal__body">
-            <p className="vilo-state">Your unsaved client information will be lost.</p>
-            <div className="vilo-table-actions client-intake-footer">
-              <button className="vilo-btn vilo-btn--secondary" type="button" onClick={() => setConfirmDiscard(false)}>Keep editing</button>
-              <button className="vilo-btn vilo-btn--primary" type="button" onClick={onClose}>Discard</button>
-            </div>
-          </div>
-        </div>
-      ) : null}
+      <DiscardChangesDialog open={closeGuard.confirmDiscard} onKeepEditing={closeGuard.keepEditing} onDiscard={closeGuard.discard} />
     </div>
   );
 }

@@ -13,6 +13,7 @@ async def create_notification(
     title: str,
     body: str | None = None,
     metadata_json: dict | None = None,
+    dedupe_key: str | None = None,
 ) -> Notification:
     notification = Notification(
         organization_id=organization_id,
@@ -21,6 +22,7 @@ async def create_notification(
         title=title,
         body=body,
         is_read=False,
+        dedupe_key=dedupe_key,
         metadata_json=metadata_json,
         created_at=datetime.now(timezone.utc),
     )
@@ -38,6 +40,7 @@ async def bulk_create_notifications(
     title: str,
     body: str | None = None,
     metadata_json: dict | None = None,
+    dedupe_key_prefix: str | None = None,
 ) -> list[Notification]:
     now = datetime.now(timezone.utc)
     notifications: list[Notification] = []
@@ -49,6 +52,7 @@ async def bulk_create_notifications(
             title=title,
             body=body,
             is_read=False,
+            dedupe_key=f"{dedupe_key_prefix}:user:{user_id}" if dedupe_key_prefix else None,
             metadata_json=metadata_json,
             created_at=now,
         )

@@ -36,7 +36,7 @@ export default function RegisterPage() {
           <Image src="/assets/vilo-logo.png" alt="VILO" width={132} height={40} className="auth-brand__logo" priority />
         </div>
         <h1>Create your firm workspace</h1>
-        <p className="auth-subtitle">Start with owner access and invite your team later.</p>
+        <p className="auth-subtitle">Start with owner access and add your team later.</p>
         <input placeholder="Organization name" value={form.organization_name} onChange={(e) => setForm({ ...form, organization_name: e.target.value })} required />
         <input placeholder="Organization slug" value={form.organization_slug} onChange={(e) => setForm({ ...form, organization_slug: e.target.value })} required />
         <input placeholder="Your name" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} required />

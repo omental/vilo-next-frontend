@@ -2,9 +2,12 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { getCachedUser, setCachedUser } from "../../../lib/auth";
-import { apiRequest } from "../../../lib/api";
+import { apiRequest, apiUpload } from "../../../lib/api";
+import UserAvatar from "../../../components/UserAvatar";
+import { DiscardChangesDialog } from "../../../components/useModalCloseGuard";
 
 const SETTINGS_TABS = [
+  { id: "profile", label: "Profile" },
   { id: "firm", label: "Firm Details" },
   { id: "payment_accounts", label: "Payment Accounts" },
   { id: "billing_rates", label: "Billing Rates" },
@@ -43,6 +46,12 @@ const billingTaxInitial = {
   invoice_tax_rate: "0.00",
 };
 
+const passwordInitial = {
+  current_password: "",
+  new_password: "",
+  confirm_password: "",
+};
+
 function roleCanViewSettings(role) {
   return ["partner", "admin", "lawyer", "paralegal"].includes(role);
 }
@@ -69,7 +78,20 @@ function DefaultBadge() {
 
 export default function SettingsPage() {
   const [currentUser, setCurrentUser] = useState(getCachedUser());
-  const [activeTab, setActiveTab] = useState("payment_accounts");
+  const [activeTab, setActiveTab] = useState("profile");
+  const [profileForm, setProfileForm] = useState({ name: "" });
+  const [profileInitial, setProfileInitial] = useState({ name: "" });
+  const [profileError, setProfileError] = useState("");
+  const [profileSuccess, setProfileSuccess] = useState("");
+  const [savingProfile, setSavingProfile] = useState(false);
+  const [savingPicture, setSavingPicture] = useState(false);
+  const [selectedPicture, setSelectedPicture] = useState(null);
+  const [picturePreview, setPicturePreview] = useState("");
+  const [passwordForm, setPasswordForm] = useState(passwordInitial);
+  const [passwordError, setPasswordError] = useState("");
+  const [passwordSuccess, setPasswordSuccess] = useState("");
+  const [savingPassword, setSavingPassword] = useState(false);
+  const [discardDialog, setDiscardDialog] = useState(null);
   const [paymentAccounts, setPaymentAccounts] = useState([]);
   const [billingRates, setBillingRates] = useState([]);
   const [team, setTeam] = useState([]);
@@ -94,6 +116,9 @@ export default function SettingsPage() {
   const canManage = roleCanManageSettings(currentUser?.role || "");
   const canView = currentUser ? roleCanViewSettings(currentUser.role) : true;
   const staffUsers = useMemo(() => (team || []).filter((row) => row.role !== "client"), [team]);
+  const profileDirty = JSON.stringify(profileForm) !== JSON.stringify(profileInitial) || Boolean(selectedPicture);
+  const passwordDirty = Object.values(passwordForm).some(Boolean);
+  const settingsDirty = profileDirty || passwordDirty;
 
   useEffect(() => {
     if (currentUser) return;
@@ -112,6 +137,29 @@ export default function SettingsPage() {
       cancelled = true;
     };
   }, [currentUser]);
+
+  useEffect(() => {
+    if (!currentUser) return;
+    const next = { name: currentUser.name || "" };
+    setProfileForm(next);
+    setProfileInitial(next);
+  }, [currentUser?.id, currentUser?.name]);
+
+  useEffect(() => {
+    return () => {
+      if (picturePreview) URL.revokeObjectURL(picturePreview);
+    };
+  }, [picturePreview]);
+
+  useEffect(() => {
+    if (!settingsDirty) return undefined;
+    function handleBeforeUnload(event) {
+      event.preventDefault();
+      event.returnValue = "";
+    }
+    window.addEventListener("beforeunload", handleBeforeUnload);
+    return () => window.removeEventListener("beforeunload", handleBeforeUnload);
+  }, [settingsDirty]);
 
   useEffect(() => {
     if (currentUser && !roleCanViewSettings(currentUser.role)) {
@@ -160,6 +208,159 @@ export default function SettingsPage() {
     setAccountError("");
     setAccountSuccess("");
     setAccountForm(paymentAccountInitial);
+  }
+
+  function guardedSetActiveTab(tabId) {
+    if (tabId === activeTab) return;
+    if (!settingsDirty) {
+      setActiveTab(tabId);
+      return;
+    }
+    setDiscardDialog({ type: "tab", tabId });
+  }
+
+  function resetProfileForm() {
+    setProfileForm(profileInitial);
+    setSelectedPicture(null);
+    if (picturePreview) URL.revokeObjectURL(picturePreview);
+    setPicturePreview("");
+    setProfileError("");
+    setProfileSuccess("");
+  }
+
+  function resetPasswordForm() {
+    setPasswordForm(passwordInitial);
+    setPasswordError("");
+    setPasswordSuccess("");
+  }
+
+  function confirmDiscard() {
+    const action = discardDialog;
+    setDiscardDialog(null);
+    resetProfileForm();
+    resetPasswordForm();
+    if (action?.type === "tab") setActiveTab(action.tabId);
+  }
+
+  function keepEditing() {
+    setDiscardDialog(null);
+  }
+
+  function selectPicture(file) {
+    setProfileError("");
+    setProfileSuccess("");
+    if (!file) {
+      setSelectedPicture(null);
+      if (picturePreview) URL.revokeObjectURL(picturePreview);
+      setPicturePreview("");
+      return;
+    }
+    if (!["image/jpeg", "image/png", "image/webp"].includes(file.type)) {
+      setProfileError("Use a JPEG, PNG, or WebP image.");
+      return;
+    }
+    if (file.size > 2 * 1024 * 1024) {
+      setProfileError("Profile image must be 2MB or smaller.");
+      return;
+    }
+    if (picturePreview) URL.revokeObjectURL(picturePreview);
+    setSelectedPicture(file);
+    setPicturePreview(URL.createObjectURL(file));
+  }
+
+  async function reloadMe() {
+    const me = await apiRequest("/api/v1/auth/me");
+    setCurrentUser(me);
+    setCachedUser(me);
+    return me;
+  }
+
+  async function submitProfile(event) {
+    event.preventDefault();
+    if (savingProfile) return;
+    setSavingProfile(true);
+    setProfileError("");
+    setProfileSuccess("");
+    try {
+      const updated = await apiRequest("/api/v1/users/me", {
+        method: "PATCH",
+        body: JSON.stringify({ name: profileForm.name }),
+      });
+      setCurrentUser(updated);
+      setCachedUser(updated);
+      setProfileInitial({ name: updated.name || "" });
+      setProfileSuccess("Profile updated.");
+    } catch (err) {
+      setProfileError(normalizeError(err));
+    } finally {
+      setSavingProfile(false);
+    }
+  }
+
+  async function uploadProfilePicture() {
+    if (!selectedPicture || savingPicture) return;
+    setSavingPicture(true);
+    setProfileError("");
+    setProfileSuccess("");
+    try {
+      const data = new FormData();
+      data.append("file", selectedPicture);
+      const updated = await apiUpload("/api/v1/users/me/profile-picture", data);
+      setCurrentUser(updated);
+      setCachedUser(updated);
+      setSelectedPicture(null);
+      if (picturePreview) URL.revokeObjectURL(picturePreview);
+      setPicturePreview("");
+      setProfileSuccess("Profile picture updated.");
+    } catch (err) {
+      setProfileError(normalizeError(err));
+    } finally {
+      setSavingPicture(false);
+    }
+  }
+
+  async function removeProfilePicture() {
+    if (savingPicture) return;
+    setSavingPicture(true);
+    setProfileError("");
+    setProfileSuccess("");
+    try {
+      const updated = await apiRequest("/api/v1/users/me/profile-picture", { method: "DELETE" });
+      setCurrentUser(updated);
+      setCachedUser(updated);
+      setSelectedPicture(null);
+      if (picturePreview) URL.revokeObjectURL(picturePreview);
+      setPicturePreview("");
+      setProfileSuccess("Profile picture removed.");
+    } catch (err) {
+      setProfileError(normalizeError(err));
+    } finally {
+      setSavingPicture(false);
+    }
+  }
+
+  async function submitPassword(event) {
+    event.preventDefault();
+    if (savingPassword) return;
+    setSavingPassword(true);
+    setPasswordError("");
+    setPasswordSuccess("");
+    try {
+      if (passwordForm.new_password !== passwordForm.confirm_password) {
+        throw new Error("New passwords do not match.");
+      }
+      await apiRequest("/api/v1/users/me/password", {
+        method: "POST",
+        body: JSON.stringify(passwordForm),
+      });
+      setPasswordForm(passwordInitial);
+      setPasswordSuccess("Password changed successfully.");
+      await reloadMe();
+    } catch (err) {
+      setPasswordError(normalizeError(err));
+    } finally {
+      setSavingPassword(false);
+    }
   }
 
   function resetRateForm() {
@@ -365,12 +566,12 @@ export default function SettingsPage() {
     <section className="dashboard-page-stack settings-page">
       <div className="dashboard-page-heading">
         <h1>Settings</h1>
-        <p className="invoice-page-intro">Configure invoice display accounts and billing rates without changing trust or accounting logic.</p>
+        <p className="invoice-page-intro">Manage your profile and firm billing settings without configuring email delivery.</p>
       </div>
 
       <article className="dashboard-card settings-banner">
-        <strong>Compliance note</strong>
-        <span>Payment accounts are displayed on invoices only. They do not affect accounting logic.</span>
+        <strong>Email delivery is not configured</strong>
+        <span>Profile, password, and team-member actions do not send emails in this phase.</span>
       </article>
 
       <article className="dashboard-card settings-tabs-card">
@@ -382,7 +583,7 @@ export default function SettingsPage() {
               role="tab"
               aria-selected={activeTab === tab.id}
               className={activeTab === tab.id ? "settings-tab is-active" : "settings-tab"}
-              onClick={() => setActiveTab(tab.id)}
+              onClick={() => guardedSetActiveTab(tab.id)}
             >
               {tab.label}
             </button>
@@ -392,6 +593,109 @@ export default function SettingsPage() {
 
       {error ? <div className="vilo-state-block"><p className="vilo-state vilo-state--error">{error}</p></div> : null}
       {loading ? <div className="vilo-state-block"><p className="vilo-state vilo-state--loading">Loading settings...</p></div> : null}
+
+      {!loading && activeTab === "profile" ? (
+        <div className="settings-grid">
+          <article className="dashboard-card settings-card">
+            <div className="dashboard-card__header">
+              <div>
+                <h2>Profile</h2>
+                <p className="settings-copy">Update your display name and profile picture. Email changes are deferred until VILO email verification is configured.</p>
+              </div>
+            </div>
+
+            {profileError ? <p className="vilo-state vilo-state--error">{profileError}</p> : null}
+            {profileSuccess ? <p className="vilo-state">{profileSuccess}</p> : null}
+
+            <div className="settings-profile-photo">
+              {picturePreview ? (
+                <span className="user-avatar user-avatar--xl"><img src={picturePreview} alt="Selected profile preview" /></span>
+              ) : (
+                <UserAvatar user={currentUser} size="xl" />
+              )}
+              <div className="settings-profile-photo__actions">
+                <label className="vilo-btn vilo-btn--secondary">
+                  Select picture
+                  <input type="file" accept="image/jpeg,image/png,image/webp" hidden onChange={(event) => selectPicture(event.target.files?.[0] || null)} />
+                </label>
+                <button type="button" className="vilo-btn vilo-btn--primary" disabled={!selectedPicture || savingPicture} onClick={uploadProfilePicture}>
+                  {savingPicture ? "Uploading..." : "Save picture"}
+                </button>
+                <button type="button" className="vilo-btn vilo-btn--ghost" disabled={savingPicture || (!currentUser?.profile_image_updated_at && !selectedPicture)} onClick={selectedPicture ? () => selectPicture(null) : removeProfilePicture}>
+                  {selectedPicture ? "Clear selection" : "Remove picture"}
+                </button>
+                <p className="settings-helper-text">JPEG, PNG, or WebP. Maximum 2MB.</p>
+              </div>
+            </div>
+
+            <form className="settings-form" onSubmit={submitProfile}>
+              <div>
+                <label>Full Name</label>
+                <input value={profileForm.name} onChange={(event) => setProfileForm((current) => ({ ...current, name: event.target.value }))} required />
+              </div>
+              <div>
+                <label>Email Address</label>
+                <input value={currentUser?.email || ""} readOnly />
+                <p className="settings-helper-text">Email is read-only until verification email support is configured.</p>
+              </div>
+              <div className="vilo-form-row-two">
+                <div>
+                  <label>Phone Number</label>
+                  <input value="Not supported yet" readOnly />
+                </div>
+                <div>
+                  <label>Job Title</label>
+                  <input value="Managed by team policy" readOnly />
+                </div>
+              </div>
+              <div className="vilo-table-actions">
+                <button type="button" className="vilo-btn vilo-btn--secondary" onClick={() => setDiscardDialog({ type: "profile" })} disabled={savingProfile || !profileDirty}>Cancel</button>
+                <button type="submit" className="vilo-btn vilo-btn--primary" disabled={savingProfile || !profileDirty}>{savingProfile ? "Saving..." : "Save profile"}</button>
+              </div>
+            </form>
+          </article>
+
+          <article className="dashboard-card settings-card">
+            <div className="dashboard-card__header"><h2>Account Information</h2></div>
+            <div className="settings-form">
+              <div>
+                <label>Role</label>
+                <input value={currentUser?.role || ""} readOnly />
+              </div>
+              <div>
+                <label>Organization</label>
+                <input value={currentUser?.organization_name || "Current organization"} readOnly />
+              </div>
+              <div>
+                <label>Account Status</label>
+                <input value={currentUser?.status || ""} readOnly />
+              </div>
+            </div>
+          </article>
+
+          <article className="dashboard-card settings-card">
+            <div className="dashboard-card__header">
+              <div>
+                <h2>Security</h2>
+                <p className="settings-copy">Change your password by confirming your current password. No email is sent.</p>
+              </div>
+            </div>
+            {passwordError ? <p className="vilo-state vilo-state--error">{passwordError}</p> : null}
+            {passwordSuccess ? <p className="vilo-state">{passwordSuccess}</p> : null}
+            <form className="settings-form" onSubmit={submitPassword}>
+              <input type="password" placeholder="Current password" value={passwordForm.current_password} onChange={(event) => setPasswordForm((current) => ({ ...current, current_password: event.target.value }))} required />
+              <div className="vilo-form-row-two">
+                <input type="password" placeholder="New password" value={passwordForm.new_password} onChange={(event) => setPasswordForm((current) => ({ ...current, new_password: event.target.value }))} minLength={8} required />
+                <input type="password" placeholder="Confirm new password" value={passwordForm.confirm_password} onChange={(event) => setPasswordForm((current) => ({ ...current, confirm_password: event.target.value }))} minLength={8} required />
+              </div>
+              <div className="vilo-table-actions">
+                <button type="button" className="vilo-btn vilo-btn--secondary" onClick={() => setDiscardDialog({ type: "password" })} disabled={savingPassword || !passwordDirty}>Cancel</button>
+                <button type="submit" className="vilo-btn vilo-btn--primary" disabled={savingPassword || !passwordDirty}>{savingPassword ? "Saving..." : "Change password"}</button>
+              </div>
+            </form>
+          </article>
+        </div>
+      ) : null}
 
       {!loading && activeTab === "firm" ? (
         <div className="settings-grid">
@@ -721,6 +1025,7 @@ export default function SettingsPage() {
           </article>
         </div>
       ) : null}
+      <DiscardChangesDialog open={Boolean(discardDialog)} onKeepEditing={keepEditing} onDiscard={confirmDiscard} />
     </section>
   );
 }

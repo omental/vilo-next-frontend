@@ -5,6 +5,7 @@ import Link from "next/link";
 import { createPortal } from "react-dom";
 import { useRouter, useSearchParams } from "next/navigation";
 import { apiRequest } from "../../../lib/api";
+import { DiscardChangesDialog, useModalCloseGuard } from "../../../components/useModalCloseGuard";
 
 const STATUS_OPTIONS = ["not_started", "in_progress", "waiting", "completed"];
 const PRIORITY_OPTIONS = ["low", "medium", "high", "urgent"];
@@ -31,8 +32,20 @@ const initialForm = {
   priority: "medium",
   due_date: "",
   reminder_at: "",
+  reminder_choice: "",
+  custom_reminder_at: "",
   notes: "",
 };
+const REMINDER_OPTIONS = [
+  { value: "", label: "No reminder" },
+  { value: "0", label: "At due time" },
+  { value: "5", label: "5 minutes before" },
+  { value: "15", label: "15 minutes before" },
+  { value: "30", label: "30 minutes before" },
+  { value: "60", label: "1 hour before" },
+  { value: "1440", label: "1 day before" },
+  { value: "custom", label: "Custom date and time" },
+];
 
 function formatDateTime(value) {
   if (!value) return "-";
@@ -89,6 +102,17 @@ function buildTaskDetailHref(taskId, searchParams, extra = {}) {
   return `/dashboard/tasks/${taskId}${query ? `?${query}` : ""}`;
 }
 
+function computeTaskReminderAt(form) {
+  if (!form.reminder_choice || !form.due_date) return null;
+  if (form.reminder_choice === "custom") {
+    return form.custom_reminder_at ? new Date(form.custom_reminder_at) : null;
+  }
+  const due = new Date(form.due_date);
+  if (Number.isNaN(due.getTime())) return null;
+  due.setMinutes(due.getMinutes() - Number(form.reminder_choice));
+  return due;
+}
+
 export default function TasksPage() {
   return (
     <Suspense fallback={<section className="dashboard-page-stack"><div className="vilo-state-block"><p className="vilo-state vilo-state--loading">Loading tasks...</p></div></section>}>
@@ -107,6 +131,7 @@ function TasksPageContent() {
   const [clients, setClients] = useState([]);
   const [team, setTeam] = useState([]);
   const [form, setForm] = useState(initialForm);
+  const [createInitialForm, setCreateInitialForm] = useState(initialForm);
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
@@ -167,12 +192,16 @@ function TasksPageContent() {
     const linkedCase = requestedCaseId ? casesById.get(requestedCaseId) : null;
     const derivedClientId = linkedCase ? Number(linkedCase.client_id || 0) : requestedClientId;
 
-    setForm((current) => ({
+    setForm((current) => {
+      const next = {
       ...current,
       client_id: derivedClientId ? String(derivedClientId) : current.client_id,
       case_id: requestedCaseId ? String(requestedCaseId) : current.case_id,
       due_date: requestedDueDate && !current.due_date ? `${requestedDueDate}T09:00` : current.due_date,
-    }));
+      };
+      setCreateInitialForm(next);
+      return next;
+    });
   }, [casesById, requestedCaseId, requestedClientId, requestedDueDate, searchParams]);
 
   useEffect(() => {
@@ -263,12 +292,14 @@ function TasksPageContent() {
   }
 
   function handleOpenCreate() {
+    setCreateInitialForm(initialForm);
     updateQuery({ create: "1" });
   }
 
   function handleCloseCreate() {
     setCreateOpen(false);
     setForm(initialForm);
+    setCreateInitialForm(initialForm);
     updateQuery({ create: null, case_id: requestedTaskId ? null : searchParams.get("case_id"), due_date: null });
   }
 
@@ -279,6 +310,7 @@ function TasksPageContent() {
     setSuccess("");
 
     try {
+      const reminderAt = computeTaskReminderAt(form);
       await apiRequest("/api/v1/tasks", {
         method: "POST",
         body: JSON.stringify({
@@ -291,13 +323,14 @@ function TasksPageContent() {
           status: form.status,
           priority: form.priority,
           due_date: form.due_date ? new Date(form.due_date).toISOString() : null,
-          reminder_at: form.reminder_at ? new Date(form.reminder_at).toISOString() : null,
+          reminder_at: reminderAt ? reminderAt.toISOString() : null,
           notes: form.notes || null,
         }),
       });
 
-      setSuccess("Task created successfully.");
+      setSuccess(reminderAt ? "Task created with reminder." : "Task created successfully.");
       setForm(initialForm);
+      setCreateInitialForm(initialForm);
       setCreateOpen(false);
       updateQuery({ create: null });
       await load();
@@ -541,6 +574,7 @@ function TasksPageContent() {
           onClose={handleCloseCreate}
           onSubmit={createTask}
           titleInputRef={titleInputRef}
+          dirty={JSON.stringify(form) !== JSON.stringify(createInitialForm)}
         />
       ) : null}
     </section>
@@ -560,16 +594,18 @@ function TaskEditorModal({
   onClose,
   onSubmit,
   titleInputRef,
+  dirty,
 }) {
+  const closeGuard = useModalCloseGuard({ open: true, isDirty: dirty, isSubmitting: submitting, onClose });
   return (
-    <div className="vilo-modal-overlay" onClick={onClose}>
+    <div className="vilo-modal-overlay" onClick={closeGuard.requestClose}>
       <div className="vilo-modal task-editor-modal" onClick={(event) => event.stopPropagation()}>
         <div className="vilo-modal__header">
           <div>
             <h3>{title}</h3>
             <p className="precedents-modal__copy">Capture the task owner, links, due date, and internal notes in one place.</p>
           </div>
-          <button type="button" className="vilo-btn vilo-btn--ghost vilo-btn--xs" onClick={onClose}>Close</button>
+          <button type="button" className="vilo-btn vilo-btn--ghost vilo-btn--xs" onClick={closeGuard.requestClose} disabled={submitting}>Close</button>
         </div>
 
         <form className="vilo-modal__body task-editor-modal__body" onSubmit={onSubmit}>
@@ -643,12 +679,21 @@ function TaskEditorModal({
                 onChange={(event) => setForm((current) => ({ ...current, due_date: event.target.value }))}
                 required
               />
+              <select
+                value={form.reminder_choice}
+                onChange={(event) => setForm((current) => ({ ...current, reminder_choice: event.target.value, custom_reminder_at: "" }))}
+              >
+                {REMINDER_OPTIONS.map((option) => <option key={option.value || "none"} value={option.value}>{option.label}</option>)}
+              </select>
+            </div>
+
+            {form.reminder_choice === "custom" ? (
               <input
                 type="datetime-local"
-                value={form.reminder_at}
-                onChange={(event) => setForm((current) => ({ ...current, reminder_at: event.target.value }))}
+                value={form.custom_reminder_at}
+                onChange={(event) => setForm((current) => ({ ...current, custom_reminder_at: event.target.value }))}
               />
-            </div>
+            ) : null}
 
             <textarea
               placeholder="Internal notes"
@@ -660,11 +705,12 @@ function TaskEditorModal({
           {error ? <p className="vilo-state vilo-state--error">{error}</p> : null}
 
           <div className="vilo-table-actions">
-            <button type="button" className="vilo-btn vilo-btn--secondary" onClick={onClose}>Cancel</button>
+            <button type="button" className="vilo-btn vilo-btn--secondary" onClick={closeGuard.requestClose} disabled={submitting}>Cancel</button>
             <button type="submit" className="vilo-btn vilo-btn--primary" disabled={submitting}>{submitLabel}</button>
           </div>
         </form>
       </div>
+      <DiscardChangesDialog open={closeGuard.confirmDiscard} onKeepEditing={closeGuard.keepEditing} onDiscard={closeGuard.discard} />
     </div>
   );
 }
