@@ -4311,6 +4311,59 @@ button {
   overflow: visible;
 }
 
+.vilo-discard-overlay {
+  position: fixed !important;
+  inset: 0 !important;
+  z-index: 10000 !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  padding: 24px !important;
+}
+
+.vilo-discard-backdrop {
+  position: absolute;
+  inset: 0;
+  border: 0;
+  padding: 0;
+  background: rgba(25, 19, 44, 0.55);
+  cursor: default;
+}
+
+.vilo-discard-card {
+  position: relative !important;
+  inset: auto !important;
+  top: auto !important;
+  right: auto !important;
+  bottom: auto !important;
+  left: auto !important;
+  margin: 0 !important;
+  transform: none !important;
+  flex: none !important;
+  align-self: center !important;
+  z-index: 1;
+  width: min(100%, 480px);
+  border: 1px solid #e8e4f3;
+  border-radius: 14px;
+  background: #fff;
+  box-shadow: 0 24px 60px rgba(25, 19, 44, 0.28);
+  overflow: visible;
+}
+
+.vilo-discard-card__header {
+  border-bottom: 1px solid #f0edf8;
+  padding: 0.95rem 1rem;
+}
+
+.vilo-discard-card__header h3 {
+  margin: 0;
+  color: #494460;
+}
+
+.vilo-discard-card__body {
+  padding: 1rem;
+}
+
 .vilo-modal__header {
   display: flex;
   align-items: center;

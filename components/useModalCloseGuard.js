@@ -1,6 +1,7 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 
 export function useModalCloseGuard({ open, isDirty, isSubmitting = false, onClose, onDiscard }) {
   const [confirmDiscard, setConfirmDiscard] = useState(false);
@@ -33,12 +34,25 @@ export function useModalCloseGuard({ open, isDirty, isSubmitting = false, onClos
     function handleKeyDown(event) {
       if (event.key !== "Escape") return;
       event.preventDefault();
+      if (confirmDiscard) {
+        setConfirmDiscard(false);
+        return;
+      }
       requestClose();
     }
 
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [open, requestClose]);
+  }, [confirmDiscard, open, requestClose]);
+
+  useEffect(() => {
+    if (!open && !confirmDiscard) return undefined;
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      document.body.style.overflow = previousOverflow;
+    };
+  }, [confirmDiscard, open]);
 
   return {
     confirmDiscard,
@@ -49,19 +63,88 @@ export function useModalCloseGuard({ open, isDirty, isSubmitting = false, onClos
 }
 
 export function DiscardChangesDialog({ open, onKeepEditing, onDiscard }) {
-  if (!open) return null;
+  const [mounted, setMounted] = useState(false);
+  const dialogRef = useRef(null);
+  const keepButtonRef = useRef(null);
+  const previousFocusRef = useRef(null);
 
-  return (
-    <div className="vilo-modal" role="dialog" aria-modal="true" onClick={(event) => event.stopPropagation()}>
-      <div className="vilo-modal__header">
-        <h3>Discard the information you entered?</h3>
-      </div>
-      <div className="vilo-modal__body">
-        <div className="vilo-table-actions">
-          <button className="vilo-btn vilo-btn--secondary" type="button" onClick={onKeepEditing}>Keep editing</button>
-          <button className="vilo-btn vilo-btn--primary" type="button" onClick={onDiscard}>Discard</button>
+  useEffect(() => {
+    setMounted(true);
+  }, []);
+
+  useEffect(() => {
+    if (!open) return undefined;
+    previousFocusRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    const timer = window.setTimeout(() => {
+      keepButtonRef.current?.focus();
+    }, 0);
+
+    return () => {
+      window.clearTimeout(timer);
+      previousFocusRef.current?.focus?.();
+    };
+  }, [open]);
+
+  if (!open || !mounted) return null;
+
+  function handleKeyDown(event) {
+    if (event.key === "Escape") {
+      event.preventDefault();
+      event.stopPropagation();
+      onKeepEditing();
+      return;
+    }
+
+    if (event.key !== "Tab") return;
+
+    const focusable = dialogRef.current
+      ? Array.from(dialogRef.current.querySelectorAll("button, [href], input, select, textarea, [tabindex]:not([tabindex='-1'])"))
+          .filter((node) => !node.disabled && node.getAttribute("aria-hidden") !== "true")
+      : [];
+    if (!focusable.length) return;
+
+    const first = focusable[0];
+    const last = focusable[focusable.length - 1];
+    if (event.shiftKey && document.activeElement === first) {
+      event.preventDefault();
+      last.focus();
+    } else if (!event.shiftKey && document.activeElement === last) {
+      event.preventDefault();
+      first.focus();
+    }
+  }
+
+  return createPortal(
+    <div
+      className="vilo-discard-overlay"
+      role="presentation"
+      onClick={(event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        onKeepEditing();
+      }}
+      onKeyDown={handleKeyDown}
+    >
+      <button className="vilo-discard-backdrop" type="button" aria-label="Keep editing" onClick={onKeepEditing} />
+      <div
+        ref={dialogRef}
+        className="vilo-discard-card"
+        role="alertdialog"
+        aria-modal="true"
+        aria-labelledby="discard-dialog-title"
+        onClick={(event) => event.stopPropagation()}
+      >
+        <div className="vilo-discard-card__header">
+          <h3 id="discard-dialog-title">Discard the information you entered?</h3>
+        </div>
+        <div className="vilo-discard-card__body">
+          <div className="vilo-table-actions">
+            <button ref={keepButtonRef} className="vilo-btn vilo-btn--secondary" type="button" onClick={onKeepEditing}>Keep editing</button>
+            <button className="vilo-btn vilo-btn--primary" type="button" onClick={onDiscard}>Discard</button>
+          </div>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }
