@@ -84,10 +84,21 @@ function DocumentsPageContent() {
   const [page, setPage] = useState(1);
   const [dragActive, setDragActive] = useState(false);
   const [folderNotice, setFolderNotice] = useState("");
+  const [filterCase, setFilterCase] = useState("");
+  const [filterClient, setFilterClient] = useState("");
+  const [filterUploader, setFilterUploader] = useState("");
+  const [filterVisibility, setFilterVisibility] = useState("");
+  const [filterType, setFilterType] = useState("");
+  const [filterFrom, setFilterFrom] = useState("");
+  const [filterTo, setFilterTo] = useState("");
+  const [uploaders, setUploaders] = useState([]);
+  const [serverTotal, setServerTotal] = useState(0);
+  const [serverTotalPages, setServerTotalPages] = useState(1);
   const onlyOfficeEditorRef = useRef(null);
   const onlyOfficeInitKeyRef = useRef(null);
   const uploadOpen = searchParams.get("upload") === "1";
   const requestedClientId = searchParams.get("client_id") || "";
+  const requestedDocumentId = searchParams.get("document_id") || "";
   const currentUser = useMemo(() => getCachedUser(), []);
   const onlyOfficeContainerId = onlyOfficeTarget ? `${ONLYOFFICE_EDITOR_ID_PREFIX}-${onlyOfficeTarget.id}` : null;
   const onlyOfficeDisplayTitle = onlyOfficeTarget?.title || onlyOfficeTarget?.file_name || "Untitled document";
@@ -109,18 +120,34 @@ function DocumentsPageContent() {
     setLoading(true);
     setError("");
     try {
-      const [docs, caseData, clientData] = await Promise.all([
-        apiRequest("/api/v1/documents"),
+      const params = new URLSearchParams({ page: String(page), per_page: String(perPage), sort_by: sortBy });
+      if (searchQuery.trim()) params.set("search", searchQuery.trim());
+      if (activeFolder !== "all") params.set("category", activeFolder);
+      if (activeTab === "mine" && currentUser?.id) params.set("uploaded_by", String(currentUser.id));
+      if (filterCase) params.set("case_id", filterCase);
+      if (filterClient) params.set("client_id", filterClient);
+      if (filterUploader) params.set("uploaded_by", filterUploader);
+      if (filterVisibility) params.set("visibility", filterVisibility);
+      if (filterType) params.set("file_type", filterType);
+      if (filterFrom) params.set("created_from", filterFrom);
+      if (filterTo) params.set("created_to", filterTo);
+      if (requestedDocumentId) params.set("document_id", requestedDocumentId);
+      const [docs, caseData, clientData, teamData] = await Promise.all([
+        apiRequest(`/api/v1/documents/query?${params.toString()}`),
         apiRequest("/api/v1/cases"),
         apiRequest("/api/v1/clients"),
+        apiRequest("/api/v1/team"),
       ]);
-      setDocuments(docs || []);
+      setDocuments(docs.items || []);
+      setServerTotal(docs.total || 0);
+      setServerTotalPages(docs.total_pages || 1);
       setVersionTarget((current) => {
         if (!current) return current;
-        return (docs || []).find((row) => Number(row.id) === Number(current.id)) || current;
+        return (docs.items || []).find((row) => Number(row.id) === Number(current.id)) || current;
       });
       setCases(caseData || []);
       setClients(clientData || []);
+      setUploaders((teamData || []).filter((member) => member.role !== "client"));
     } catch (err) {
       setError(err.message || "Failed to load documents");
     } finally {
@@ -134,7 +161,12 @@ function DocumentsPageContent() {
 
   useEffect(() => {
     load();
-  }, []);
+  }, [activeFolder, activeTab, filterCase, filterClient, filterFrom, filterTo, filterType, filterUploader, filterVisibility, page, perPage, requestedDocumentId, searchQuery, sortBy]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => setSearchQuery(draftSearch), 300);
+    return () => window.clearTimeout(timer);
+  }, [draftSearch]);
 
   useEffect(() => {
     if (!uploadOpen) return;
@@ -163,7 +195,7 @@ function DocumentsPageContent() {
 
   useEffect(() => {
     setPage(1);
-  }, [searchQuery, activeFolder, activeTab, sortBy, perPage]);
+  }, [searchQuery, activeFolder, activeTab, sortBy, perPage, filterCase, filterClient, filterFrom, filterTo, filterType, filterUploader, filterVisibility]);
 
   useEffect(() => {
     function handleKeydown(event) {
@@ -349,11 +381,8 @@ function DocumentsPageContent() {
     return rows;
   }, [casesById, filteredDocuments, sortBy]);
 
-  const totalPages = Math.max(1, Math.ceil(sortedDocuments.length / perPage));
-  const pageRows = useMemo(() => {
-    const start = (page - 1) * perPage;
-    return sortedDocuments.slice(start, start + perPage);
-  }, [page, perPage, sortedDocuments]);
+  const totalPages = serverTotalPages;
+  const pageRows = sortedDocuments;
 
   useEffect(() => {
     if (page <= totalPages) return;
@@ -661,10 +690,7 @@ function DocumentsPageContent() {
                   type="search"
                   placeholder="Search documents"
                   value={draftSearch}
-                  onChange={(event) => {
-                    setDraftSearch(event.target.value);
-                    setSearchQuery(event.target.value);
-                  }}
+                  onChange={(event) => setDraftSearch(event.target.value)}
                   aria-label="Search documents"
                 />
               </form>
@@ -689,6 +715,16 @@ function DocumentsPageContent() {
                   </select>
                 </label>
               </div>
+            </div>
+            <div className="documents-advanced-filters">
+              <label><span>Case</span><select value={filterCase} onChange={(event) => setFilterCase(event.target.value)}><option value="">All cases</option>{cases.map((row) => <option key={row.id} value={row.id}>{row.title}</option>)}</select></label>
+              <label><span>Client</span><select value={filterClient} onChange={(event) => setFilterClient(event.target.value)}><option value="">All clients</option>{clients.map((row) => <option key={row.id} value={row.id}>{row.name}</option>)}</select></label>
+              <label><span>Uploaded by</span><select value={filterUploader} onChange={(event) => setFilterUploader(event.target.value)}><option value="">Anyone</option>{uploaders.map((row) => <option key={row.id} value={row.id}>{row.name}</option>)}</select></label>
+              <label><span>Status</span><select value={filterVisibility} onChange={(event) => setFilterVisibility(event.target.value)}><option value="">Any status</option><option value="internal">Internal</option><option value="client_visible">Client visible</option></select></label>
+              <label><span>File type</span><select value={filterType} onChange={(event) => setFilterType(event.target.value)}><option value="">All types</option><option value="pdf">PDF</option><option value="word">Word</option><option value="image">Image</option></select></label>
+              <label><span>Uploaded from</span><input type="date" value={filterFrom} onChange={(event) => setFilterFrom(event.target.value)} /></label>
+              <label><span>Uploaded to</span><input type="date" value={filterTo} onChange={(event) => setFilterTo(event.target.value)} /></label>
+              <button type="button" className="vilo-btn vilo-btn--secondary vilo-btn--xs" onClick={() => { setDraftSearch(""); setSearchQuery(""); setActiveFolder("all"); setActiveTab("all"); setFilterCase(""); setFilterClient(""); setFilterUploader(""); setFilterVisibility(""); setFilterType(""); setFilterFrom(""); setFilterTo(""); setPage(1); const params = new URLSearchParams(searchParams.toString()); params.delete("document_id"); router.replace(params.toString() ? `${pathname}?${params.toString()}` : pathname); }}>Clear filters</button>
             </div>
 
             {loading ? (
@@ -774,7 +810,7 @@ function DocumentsPageContent() {
 
                 <div className="documents-footer">
                   <span className="documents-footer__summary">
-                    Showing {Math.min((page - 1) * perPage + 1, sortedDocuments.length)}-{Math.min(page * perPage, sortedDocuments.length)} of {sortedDocuments.length} documents
+                    Showing {serverTotal ? (page - 1) * perPage + 1 : 0}-{Math.min(page * perPage, serverTotal)} of {serverTotal} documents
                   </span>
                   <div className="files-pagination">
                     <button type="button" className="files-pagination__button is-arrow" disabled={page === 1} onClick={() => setPage((current) => Math.max(1, current - 1))}>

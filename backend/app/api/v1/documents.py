@@ -1,5 +1,5 @@
 import hashlib
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from io import BytesIO
 from pathlib import Path
 from typing import Any
@@ -8,8 +8,9 @@ import httpx
 from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, Request, UploadFile, status
 from fastapi.responses import FileResponse
 from jose import JWTError, jwt
-from sqlalchemy import select
+from sqlalchemy import String, and_, cast, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from app.api.deps import role_guard
 from app.core.config import settings
@@ -22,6 +23,7 @@ from app.models.user import User
 from app.schemas.document import (
     DocumentEditableContentResponse,
     DocumentEditableContentUpdate,
+    DocumentListResponse,
     DocumentResponse,
     DocumentUpdate,
     DocumentVersionResponse,
@@ -33,6 +35,7 @@ from app.services.email import build_document_shared_email
 from app.services.jobs import enqueue_email
 from app.services.notifications import create_notification
 from app.services.timeline import create_case_timeline_event
+from app.services.access import accessible_case_condition
 
 router = APIRouter(prefix="/documents", tags=["documents"])
 ALLOWED_STAFF = ["partner", "admin", "lawyer", "paralegal"]
@@ -45,6 +48,7 @@ ONLYOFFICE_SAVE_STATUSES = {2, 6}
 
 
 def to_response(document: Document) -> DocumentResponse:
+    loaded = getattr(document, "__dict__", {})
     return DocumentResponse(
         id=document.id,
         organization_id=document.organization_id,
@@ -63,6 +67,9 @@ def to_response(document: Document) -> DocumentResponse:
         version_note=getattr(document, "version_note", None),
         created_at=document.created_at,
         updated_at=document.updated_at,
+        case_title=getattr(loaded.get("case"), "title", None),
+        client_name=getattr(loaded.get("client"), "name", None),
+        uploader_name=getattr(loaded.get("uploader"), "name", None),
     )
 
 
@@ -83,8 +90,15 @@ def to_version_response(version: DocumentVersion) -> DocumentVersionResponse:
     )
 
 
-async def get_org_document(db: AsyncSession, document_id: int, organization_id: int) -> Document | None:
-    return await db.scalar(select(Document).where(Document.id == document_id, Document.organization_id == organization_id))
+async def get_org_document(db: AsyncSession, document_id: int, organization_or_user: int | User) -> Document | None:
+    organization_id = organization_or_user.organization_id if isinstance(organization_or_user, User) else organization_or_user
+    query = select(Document).outerjoin(Case, Case.id == Document.case_id).where(
+        Document.id == document_id,
+        Document.organization_id == organization_id,
+    ).options(selectinload(Document.case), selectinload(Document.client), selectinload(Document.uploader))
+    if isinstance(organization_or_user, User):
+        query = query.where(or_(Document.case_id.is_(None), accessible_case_condition(organization_or_user)))
+    return await db.scalar(query)
 
 
 def is_docx_document(document: Document) -> bool:
@@ -267,10 +281,10 @@ def get_onlyoffice_actor_user_id(payload: dict[str, Any], fallback_user_id: int)
     return fallback_user_id
 
 
-async def validate_case(db: AsyncSession, organization_id: int, case_id: int | None):
+async def validate_case(db: AsyncSession, current_user: User, case_id: int | None):
     if case_id is None:
         return None
-    case = await db.scalar(select(Case).where(Case.id == case_id, Case.organization_id == organization_id))
+    case = await db.scalar(select(Case).where(Case.id == case_id, Case.organization_id == current_user.organization_id, accessible_case_condition(current_user)))
     if not case:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Case must belong to your organization")
     return case
@@ -301,7 +315,7 @@ async def upload_document(
 ):
     if visibility not in VALID_VISIBILITY:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid visibility")
-    case = await validate_case(db, current_user.organization_id, case_id)
+    case = await validate_case(db, current_user, case_id)
     client = await validate_client(db, current_user.organization_id, client_id)
     if case is not None and client is not None and case.client_id != client.id:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Case does not belong to client")
@@ -393,13 +407,86 @@ async def list_documents(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(role_guard(ALLOWED_STAFF)),
 ):
-    query = select(Document).where(Document.organization_id == current_user.organization_id)
+    query = select(Document).outerjoin(Case, Case.id == Document.case_id).where(
+        Document.organization_id == current_user.organization_id,
+        or_(Document.case_id.is_(None), accessible_case_condition(current_user)),
+    )
     if case_id is not None:
         query = query.where(Document.case_id == case_id)
     if client_id is not None:
         query = query.where(Document.client_id == client_id)
-    rows = await db.scalars(query.order_by(Document.created_at.desc()))
+    rows = await db.scalars(query.options(selectinload(Document.case), selectinload(Document.client), selectinload(Document.uploader)).order_by(Document.created_at.desc()))
     return [to_response(d) for d in rows.all()]
+
+
+@router.get("/query", response_model=DocumentListResponse)
+async def query_documents(
+    document_id: int | None = None,
+    search: str | None = None,
+    case_id: int | None = None,
+    client_id: int | None = None,
+    category: str | None = None,
+    file_type: str | None = None,
+    uploaded_by: int | None = None,
+    created_from: date | None = None,
+    created_to: date | None = None,
+    visibility: str | None = None,
+    sort_by: str = "updated",
+    page: int = 1,
+    per_page: int = 10,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(role_guard(ALLOWED_STAFF)),
+):
+    if page < 1 or per_page < 1 or per_page > 100:
+        raise HTTPException(status_code=422, detail="Invalid pagination")
+    if visibility and visibility not in VALID_VISIBILITY:
+        raise HTTPException(status_code=400, detail="Invalid document status")
+    filters = [
+        Document.organization_id == current_user.organization_id,
+        or_(Document.case_id.is_(None), accessible_case_condition(current_user)),
+    ]
+    if document_id is not None:
+        filters.append(Document.id == document_id)
+    if case_id is not None:
+        filters.append(Document.case_id == case_id)
+    if client_id is not None:
+        filters.append(or_(Document.client_id == client_id, Case.client_id == client_id))
+    if category:
+        filters.append(Document.category == category.strip())
+    if file_type:
+        filters.append(Document.file_type.ilike(f"%{file_type.strip()}%"))
+    if uploaded_by is not None:
+        filters.append(Document.uploaded_by == uploaded_by)
+    if visibility:
+        filters.append(Document.visibility == visibility)
+    if created_from:
+        filters.append(Document.created_at >= datetime.combine(created_from, datetime.min.time(), tzinfo=timezone.utc))
+    if created_to:
+        filters.append(Document.created_at < datetime.combine(created_to, datetime.min.time(), tzinfo=timezone.utc) + timedelta(days=1))
+    if search and search.strip():
+        term = f"%{search.strip()[:100]}%"
+        filters.append(or_(Document.title.ilike(term), Document.file_name.ilike(term), Case.title.ilike(term), Client.name.ilike(term), cast(Document.id, String).ilike(term)))
+
+    joins = select(Document).outerjoin(Case, Case.id == Document.case_id).outerjoin(Client, Client.id == func.coalesce(Document.client_id, Case.client_id))
+    count_query = select(func.count(Document.id)).select_from(Document).outerjoin(Case, Case.id == Document.case_id).outerjoin(Client, Client.id == func.coalesce(Document.client_id, Case.client_id))
+    total = int((await db.scalar(count_query.where(and_(*filters)))) or 0)
+    order_map = {
+        "name": Document.title.asc(),
+        "created": Document.created_at.desc(),
+        "case": Case.title.asc().nullslast(),
+        "size": Document.file_size.desc().nullslast(),
+        "updated": Document.updated_at.desc(),
+    }
+    rows = await db.scalars(
+        joins.where(and_(*filters))
+        .options(selectinload(Document.case), selectinload(Document.client), selectinload(Document.uploader))
+        .order_by(order_map.get(sort_by, Document.updated_at.desc()), Document.id.desc())
+        .offset((page - 1) * per_page).limit(per_page)
+    )
+    return DocumentListResponse(
+        items=[to_response(document) for document in rows.all()], total=total, page=page,
+        per_page=per_page, total_pages=max(1, (total + per_page - 1) // per_page),
+    )
 
 
 @router.get("/{document_id}", response_model=DocumentResponse)
@@ -408,7 +495,7 @@ async def get_document(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(role_guard(ALLOWED_STAFF)),
 ):
-    doc = await get_org_document(db, document_id, current_user.organization_id)
+    doc = await get_org_document(db, document_id, current_user)
     if not doc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document not found")
     return to_response(doc)
@@ -428,7 +515,7 @@ async def create_onlyoffice_session(
             detail="Online editor is not configured. Use basic editor or Replace File.",
         )
 
-    doc = await get_org_document(db, document_id, current_user.organization_id)
+    doc = await get_org_document(db, document_id, current_user)
     if not doc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document not found")
     if not is_docx_document(doc):
@@ -515,7 +602,7 @@ async def download_document(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(role_guard(ALLOWED_STAFF)),
 ):
-    doc = await get_org_document(db, document_id, current_user.organization_id)
+    doc = await get_org_document(db, document_id, current_user)
     if not doc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document not found")
     path = Path(doc.file_path)
@@ -532,7 +619,7 @@ async def update_document(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(role_guard(ALLOWED_STAFF)),
 ):
-    doc = await get_org_document(db, document_id, current_user.organization_id)
+    doc = await get_org_document(db, document_id, current_user)
     if not doc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document not found")
 
@@ -589,7 +676,7 @@ async def replace_document(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(role_guard(ALLOWED_STAFF)),
 ):
-    doc = await get_org_document(db, document_id, current_user.organization_id)
+    doc = await get_org_document(db, document_id, current_user)
     if not doc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document not found")
 
@@ -652,7 +739,7 @@ async def get_document_editable_content(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(role_guard(ALLOWED_STAFF)),
 ):
-    doc = await get_org_document(db, document_id, current_user.organization_id)
+    doc = await get_org_document(db, document_id, current_user)
     if not doc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document not found")
 
@@ -686,7 +773,7 @@ async def save_document_editable_content(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(role_guard(ALLOWED_STAFF)),
 ):
-    doc = await get_org_document(db, document_id, current_user.organization_id)
+    doc = await get_org_document(db, document_id, current_user)
     if not doc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document not found")
     if not is_docx_document(doc):
@@ -836,7 +923,7 @@ async def list_document_versions(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(role_guard(ALLOWED_STAFF)),
 ):
-    doc = await get_org_document(db, document_id, current_user.organization_id)
+    doc = await get_org_document(db, document_id, current_user)
     if not doc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document not found")
     rows = await db.scalars(
@@ -854,7 +941,7 @@ async def download_document_version(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(role_guard(ALLOWED_STAFF)),
 ):
-    doc = await get_org_document(db, document_id, current_user.organization_id)
+    doc = await get_org_document(db, document_id, current_user)
     if not doc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document not found")
     version = await db.scalar(
@@ -879,7 +966,7 @@ async def delete_document(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(role_guard(ALLOWED_STAFF)),
 ):
-    doc = await get_org_document(db, document_id, current_user.organization_id)
+    doc = await get_org_document(db, document_id, current_user)
     if not doc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document not found")
 

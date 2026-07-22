@@ -334,6 +334,7 @@ def test_client_role_cannot_access_internal_time_entry_management():
     try:
         res = client.get("/api/v1/time-entries")
         assert res.status_code == 403
+        assert client.get("/api/v1/time-entries/active-timer").status_code == 403
     finally:
         cleanup(client)
 

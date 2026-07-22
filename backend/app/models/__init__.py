@@ -29,9 +29,10 @@ from app.models.message_case_reference import MessageCaseReference
 from app.models.user_invite import UserInvite
 from app.models.notification import Notification
 from app.models.audit_log import AuditLog
+from app.models.active_timer import ActiveTimer
 
 __all__ = [
     "Organization","User","Client","ClientAssignment","Case","CaseAssignment","Task","CalendarEvent","CaseTimelineEvent",
     "Document","DocumentVersion","Precedent","CaseNote","TimeEntry","Expense","Invoice","InvoicePayment","InvoiceLineItem","FirmPaymentAccount","BillingRate",
-    "TrustAccount","TrustLedger","TrustTransaction","TrustReceipt","TrustReconciliation","OperatingAccount","OperatingTransaction","ClientIntake","Conversation","ConversationParticipant","Message","MessageCaseReference","UserInvite","Notification","AuditLog",
+    "TrustAccount","TrustLedger","TrustTransaction","TrustReceipt","TrustReconciliation","OperatingAccount","OperatingTransaction","ClientIntake","Conversation","ConversationParticipant","Message","MessageCaseReference","UserInvite","Notification","AuditLog","ActiveTimer",
 ]

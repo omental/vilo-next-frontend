@@ -41,19 +41,34 @@ function CasesPageContent() {
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
   const [createOpen, setCreateOpen] = useState(searchParams.get("create") === "1");
+  const [statusFilter, setStatusFilter] = useState(searchParams.get("status") || "active");
+  const [staffFilter, setStaffFilter] = useState(searchParams.get("assigned_user_id") || "");
+  const [clientFilter, setClientFilter] = useState(searchParams.get("client_id") || "");
+  const [createdFrom, setCreatedFrom] = useState(searchParams.get("created_from") || "");
+  const [createdTo, setCreatedTo] = useState(searchParams.get("created_to") || "");
+  const [searchDraft, setSearchDraft] = useState(searchParams.get("search") || "");
+  const [search, setSearch] = useState(searchParams.get("search") || "");
+  const [page, setPage] = useState(Number(searchParams.get("page") || 1));
+  const [perPage, setPerPage] = useState(10);
+  const [total, setTotal] = useState(0);
+  const [totalPages, setTotalPages] = useState(1);
+  const [counts, setCounts] = useState({});
 
-  async function load() {
+  async function loadCases() {
     setLoading(true);
     setError("");
     try {
-      const [caseData, clientData, teamData] = await Promise.all([
-        apiRequest("/api/v1/cases"),
-        apiRequest("/api/v1/clients"),
-        apiRequest("/api/v1/team"),
-      ]);
-      setCases(caseData);
-      setClients(clientData);
-      setTeam(teamData.filter((u) => u.role !== "client"));
+      const params = new URLSearchParams({ page: String(page), per_page: String(perPage), status: statusFilter });
+      if (staffFilter) params.set("assigned_user_id", staffFilter);
+      if (clientFilter) params.set("client_id", clientFilter);
+      if (createdFrom) params.set("created_from", createdFrom);
+      if (createdTo) params.set("created_to", createdTo);
+      if (search.trim()) params.set("search", search.trim());
+      const caseData = await apiRequest(`/api/v1/cases/query?${params.toString()}`);
+      setCases(caseData.items || []);
+      setTotal(caseData.total || 0);
+      setTotalPages(caseData.total_pages || 1);
+      setCounts(Object.fromEntries((caseData.counts || []).map((item) => [item.status, item.count])));
     } catch (err) {
       setError(err.message);
     } finally {
@@ -62,8 +77,42 @@ function CasesPageContent() {
   }
 
   useEffect(() => {
-    load();
+    Promise.all([apiRequest("/api/v1/clients"), apiRequest("/api/v1/team")])
+      .then(([clientData, teamData]) => {
+        setClients(clientData || []);
+        setTeam((teamData || []).filter((u) => u.role !== "client"));
+      })
+      .catch((err) => setError(err.message));
   }, []);
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => setSearch(searchDraft), 300);
+    return () => window.clearTimeout(timer);
+  }, [searchDraft]);
+
+  useEffect(() => {
+    loadCases();
+    const params = new URLSearchParams(searchParams.toString());
+    [["status", statusFilter], ["assigned_user_id", staffFilter], ["client_id", clientFilter], ["created_from", createdFrom], ["created_to", createdTo], ["search", search]].forEach(([key, value]) => value ? params.set(key, value) : params.delete(key));
+    page > 1 ? params.set("page", String(page)) : params.delete("page");
+    router.replace(`/dashboard/cases${params.toString() ? `?${params.toString()}` : ""}`, { scroll: false });
+  }, [clientFilter, createdFrom, createdTo, page, perPage, search, staffFilter, statusFilter]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  function changeFilter(setter, value) {
+    setPage(1);
+    setter(value);
+  }
+
+  function clearFilters() {
+    setStatusFilter("all");
+    setStaffFilter("");
+    setClientFilter("");
+    setCreatedFrom("");
+    setCreatedTo("");
+    setSearchDraft("");
+    setSearch("");
+    setPage(1);
+  }
 
   useEffect(() => {
     const shouldOpen = searchParams.get("create") === "1";
@@ -93,7 +142,7 @@ function CasesPageContent() {
       setForm(initialForm);
       setCreateOpen(false);
       setSuccess("Case created successfully.");
-      await load();
+      await loadCases();
     } catch (err) {
       setError(err.message);
     } finally {
@@ -128,7 +177,7 @@ function CasesPageContent() {
       });
       setEditCase(null);
       setEditInitialCase(null);
-      await load();
+      await loadCases();
     } catch (err) {
       setError(err.message);
     } finally {
@@ -147,7 +196,25 @@ function CasesPageContent() {
       });
       setArchiveCase(null);
       setMenuOpenId(null);
-      await load();
+      await loadCases();
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function restoreCase(caseRow) {
+    setSaving(true);
+    setError("");
+    try {
+      await apiRequest(`/api/v1/cases/${caseRow.id}`, {
+        method: "PATCH",
+        body: JSON.stringify({ status: "active" }),
+      });
+      setMenuOpenId(null);
+      setSuccess("Case restored to Active.");
+      await loadCases();
     } catch (err) {
       setError(err.message);
     } finally {
@@ -243,9 +310,26 @@ function CasesPageContent() {
 
       <article className="dashboard-card vilo-table-card">
         <div className="dashboard-card__header"><h2>Case List</h2></div>
+        <div className="cases-status-tabs" role="tablist" aria-label="Case status">
+          {[
+            ["active", "Active"], ["draft", "Draft"], ["closed", "Closed"], ["archived", "Archived"], ["all", "All"],
+          ].map(([value, label]) => (
+            <button key={value} type="button" role="tab" aria-selected={statusFilter === value} className={`case-tab-btn${statusFilter === value ? " is-active" : ""}`} onClick={() => changeFilter(setStatusFilter, value)}>
+              {label} <span>{value === "all" ? Object.values(counts).reduce((sum, count) => sum + count, 0) : counts[value] || 0}</span>
+            </button>
+          ))}
+        </div>
+        <div className="cases-filter-grid">
+          <label><span>Search</span><input type="search" value={searchDraft} onChange={(event) => changeFilter(setSearchDraft, event.target.value)} placeholder="Name, number, or client" /></label>
+          <label><span>Assigned staff</span><select value={staffFilter} onChange={(event) => changeFilter(setStaffFilter, event.target.value)}><option value="">All staff</option>{team.map((member) => <option key={member.id} value={member.id}>{member.name}</option>)}</select></label>
+          <label><span>Client</span><select value={clientFilter} onChange={(event) => changeFilter(setClientFilter, event.target.value)}><option value="">All clients</option>{clients.map((client) => <option key={client.id} value={client.id}>{client.name}</option>)}</select></label>
+          <label><span>Created from</span><input type="date" value={createdFrom} onChange={(event) => changeFilter(setCreatedFrom, event.target.value)} /></label>
+          <label><span>Created to</span><input type="date" value={createdTo} onChange={(event) => changeFilter(setCreatedTo, event.target.value)} /></label>
+          <button type="button" className="vilo-btn vilo-btn--secondary" onClick={clearFilters}>Clear filters</button>
+        </div>
         {loading ? <p className="vilo-state">Loading cases...</p> : null}
         {error ? <p className="vilo-state vilo-state--error">{error}</p> : null}
-        {!loading && !error && cases.length === 0 ? <p className="vilo-state">No cases yet. Create one above.</p> : null}
+        {!loading && !error && cases.length === 0 ? <p className="vilo-state">No cases match the current filters.</p> : null}
 
         {!loading && !error && cases.length > 0 ? (
           <div className={`vilo-table-wrap case-table-wrap${menuOpenId ? " case-table-wrap--menu-visible" : ""}`}>
@@ -265,7 +349,7 @@ function CasesPageContent() {
                     <td><Link href={`/dashboard/cases/${c.id}`} className="cases-title-link">{c.title}</Link></td>
                     <td><span className={`vilo-badge vilo-badge--${c.status}`}>{c.status}</span></td>
                     <td><span className={`vilo-badge vilo-badge--priority-${c.priority}`}>{c.priority}</span></td>
-                    <td>#{c.client_id}</td>
+                    <td>{c.client_name || `#${c.client_id}`}</td>
                     <td className="w-24 align-middle" onClick={(e) => e.stopPropagation()}>
                       <div className="vilo-table-actions case-row-actions">
                         <button
@@ -279,7 +363,7 @@ function CasesPageContent() {
                           <div className="case-actions-menu">
                             <Link href={`/dashboard/cases/${c.id}`}>View</Link>
                             <button type="button" onClick={() => openEditCase(c)}>Edit</button>
-                            <button type="button" className="is-danger" onClick={() => setArchiveCase(c)}>Archive</button>
+                            {c.status === "archived" ? <button type="button" onClick={() => restoreCase(c)}>Restore</button> : <button type="button" className="is-danger" onClick={() => setArchiveCase(c)}>Archive</button>}
                           </div>
                         ) : null}
                       </div>
@@ -288,6 +372,17 @@ function CasesPageContent() {
                 ))}
               </tbody>
             </table>
+          </div>
+        ) : null}
+        {!loading && !error && total > 0 ? (
+          <div className="case-pagination-row cases-list-pagination">
+            <span>Showing {(page - 1) * perPage + 1}-{Math.min(page * perPage, total)} of {total}</span>
+            <div className="vilo-table-actions">
+              <select aria-label="Cases per page" value={perPage} onChange={(event) => { setPage(1); setPerPage(Number(event.target.value)); }}><option value="10">10</option><option value="25">25</option><option value="50">50</option></select>
+              <button type="button" className="vilo-btn vilo-btn--secondary vilo-btn--xs" disabled={page <= 1} onClick={() => setPage((value) => value - 1)}>Previous</button>
+              <span>Page {page} of {totalPages}</span>
+              <button type="button" className="vilo-btn vilo-btn--secondary vilo-btn--xs" disabled={page >= totalPages} onClick={() => setPage((value) => value + 1)}>Next</button>
+            </div>
           </div>
         ) : null}
       </article>

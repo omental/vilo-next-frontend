@@ -46,3 +46,19 @@ class CaseResponse(BaseModel):
     assigned_users: list[AssignedUser]
     created_at: datetime
     updated_at: datetime
+    client_name: str | None = None
+    case_number: str | None = None
+
+
+class CaseStatusCount(BaseModel):
+    status: str
+    count: int
+
+
+class CaseListResponse(BaseModel):
+    items: list[CaseResponse] = Field(default_factory=list)
+    total: int
+    page: int
+    per_page: int
+    total_pages: int
+    counts: list[CaseStatusCount] = Field(default_factory=list)

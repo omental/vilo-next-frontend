@@ -1,6 +1,6 @@
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
-from sqlalchemy import select
+from sqlalchemy import and_, cast, func, or_, select, String
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -10,19 +10,20 @@ from app.models.case import Case, CaseAssignment
 from app.models.case_timeline_event import CaseTimelineEvent
 from app.models.client import Client
 from app.models.user import User
-from app.schemas.case import AssignedUser, CaseAssignmentRequest, CaseCreate, CaseResponse, CaseUpdate
+from app.schemas.case import AssignedUser, CaseAssignmentRequest, CaseCreate, CaseListResponse, CaseResponse, CaseStatusCount, CaseUpdate
 from app.schemas.timeline import CaseTimelineResponse, TimelineEventCreate, TimelineEventUpdate
 from app.services.audit import log_audit_event
+from app.services.access import accessible_case_condition, scope_cases
 
 router = APIRouter(prefix="/cases", tags=["cases"])
 ALLOWED_STAFF = ["partner", "admin", "lawyer", "paralegal"]
 
 
-async def get_case_or_404(db: AsyncSession, case_id: int, organization_id: int) -> Case:
+async def get_case_or_404(db: AsyncSession, case_id: int, current_user: User) -> Case:
     case = await db.scalar(
-        select(Case)
-        .where(Case.id == case_id, Case.organization_id == organization_id)
-        .options(selectinload(Case.assignments).selectinload(CaseAssignment.user))
+        scope_cases(select(Case), current_user)
+        .where(Case.id == case_id)
+        .options(selectinload(Case.client), selectinload(Case.assignments).selectinload(CaseAssignment.user))
     )
     if not case:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Case not found")
@@ -52,6 +53,8 @@ def serialize_case(case: Case) -> CaseResponse:
         assigned_users=assigned_users,
         created_at=case.created_at,
         updated_at=case.updated_at,
+        client_name=getattr(getattr(case, "client", None), "name", None),
+        case_number=f"C-{case.id}",
     )
 
 
@@ -116,8 +119,66 @@ async def create_case(
     )
 
     await db.commit()
-    reloaded = await get_case_or_404(db, case.id, current_user.organization_id)
+    reloaded = await get_case_or_404(db, case.id, current_user)
     return serialize_case(reloaded)
+
+
+@router.get("/query", response_model=CaseListResponse)
+async def query_cases(
+    search: str | None = Query(default=None, min_length=1, max_length=100),
+    status_filter: str | None = Query(default=None, alias="status"),
+    assigned_user_id: int | None = Query(default=None, ge=1),
+    client_id: int | None = Query(default=None, ge=1),
+    created_from: date | None = Query(default=None),
+    created_to: date | None = Query(default=None),
+    page: int = Query(default=1, ge=1),
+    per_page: int = Query(default=10, ge=1, le=100),
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(role_guard(ALLOWED_STAFF)),
+):
+    valid_statuses = {"draft", "active", "closed", "archived"}
+    if status_filter and status_filter not in valid_statuses | {"all"}:
+        raise HTTPException(status_code=400, detail="Invalid case status")
+
+    filters = [Case.organization_id == current_user.organization_id, accessible_case_condition(current_user)]
+    if status_filter and status_filter != "all":
+        filters.append(Case.status == status_filter)
+    if assigned_user_id is not None:
+        assigned = select(CaseAssignment.case_id).where(CaseAssignment.user_id == assigned_user_id)
+        filters.append(Case.id.in_(assigned))
+    if client_id is not None:
+        filters.append(Case.client_id == client_id)
+    if created_from is not None:
+        filters.append(Case.created_at >= datetime.combine(created_from, datetime.min.time(), tzinfo=timezone.utc))
+    if created_to is not None:
+        filters.append(Case.created_at < datetime.combine(created_to, datetime.min.time(), tzinfo=timezone.utc) + timedelta(days=1))
+    if search and search.strip():
+        normalized_search = search.strip()
+        numeric_reference = normalized_search[2:] if normalized_search.lower().startswith("c-") else normalized_search
+        term = f"%{normalized_search}%"
+        filters.append(or_(Case.title.ilike(term), Client.name.ilike(term), cast(Case.id, String).ilike(f"%{numeric_reference}%")))
+
+    base = select(Case).join(Client, Client.id == Case.client_id).where(and_(*filters))
+    total = int((await db.scalar(select(func.count(Case.id)).join(Client, Client.id == Case.client_id).where(and_(*filters)))) or 0)
+    rows = await db.scalars(
+        base.options(
+            selectinload(Case.client),
+            selectinload(Case.assignments).selectinload(CaseAssignment.user),
+        ).order_by(Case.created_at.desc(), Case.id.desc()).offset((page - 1) * per_page).limit(per_page)
+    )
+    count_filters = [Case.organization_id == current_user.organization_id, accessible_case_condition(current_user)]
+    count_rows = (await db.execute(
+        select(Case.status, func.count(Case.id)).where(and_(*count_filters)).group_by(Case.status)
+    )).all()
+    counts = [CaseStatusCount(status=getattr(row[0], "value", row[0]), count=int(row[1])) for row in count_rows]
+    return CaseListResponse(
+        items=[serialize_case(case) for case in rows.all()],
+        total=total,
+        page=page,
+        per_page=per_page,
+        total_pages=max(1, (total + per_page - 1) // per_page),
+        counts=counts,
+    )
 
 
 @router.get("", response_model=list[CaseResponse])
@@ -126,9 +187,8 @@ async def list_cases(
     current_user: User = Depends(role_guard(ALLOWED_STAFF)),
 ):
     rows = await db.scalars(
-        select(Case)
-        .where(Case.organization_id == current_user.organization_id)
-        .options(selectinload(Case.assignments).selectinload(CaseAssignment.user))
+        scope_cases(select(Case), current_user)
+        .options(selectinload(Case.client), selectinload(Case.assignments).selectinload(CaseAssignment.user))
         .order_by(Case.created_at.desc())
     )
     return [serialize_case(c) for c in rows.all()]
@@ -140,7 +200,7 @@ async def get_case(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(role_guard(ALLOWED_STAFF)),
 ):
-    case = await get_case_or_404(db, case_id, current_user.organization_id)
+    case = await get_case_or_404(db, case_id, current_user)
     return serialize_case(case)
 
 
@@ -152,7 +212,7 @@ async def update_case(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(role_guard(ALLOWED_STAFF)),
 ):
-    case = await get_case_or_404(db, case_id, current_user.organization_id)
+    case = await get_case_or_404(db, case_id, current_user)
 
     if payload.client_id is not None:
         client = await db.scalar(
@@ -192,7 +252,7 @@ async def update_case(
         user_agent=request.headers.get("user-agent"),
     )
     await db.commit()
-    reloaded = await get_case_or_404(db, case.id, current_user.organization_id)
+    reloaded = await get_case_or_404(db, case.id, current_user)
     return serialize_case(reloaded)
 
 
@@ -203,7 +263,7 @@ async def delete_case(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(role_guard(ALLOWED_STAFF)),
 ):
-    case = await get_case_or_404(db, case_id, current_user.organization_id)
+    case = await get_case_or_404(db, case_id, current_user)
     await log_audit_event(
         db,
         organization_id=current_user.organization_id,
@@ -227,7 +287,7 @@ async def assign_case_team(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(role_guard(ALLOWED_STAFF)),
 ):
-    case = await get_case_or_404(db, case_id, current_user.organization_id)
+    case = await get_case_or_404(db, case_id, current_user)
     users = await validate_assignments(db, current_user.organization_id, payload.user_ids)
 
     existing = {a.user_id for a in case.assignments}
@@ -237,7 +297,7 @@ async def assign_case_team(
 
     case.updated_at = datetime.now(timezone.utc)
     await db.commit()
-    reloaded = await get_case_or_404(db, case.id, current_user.organization_id)
+    reloaded = await get_case_or_404(db, case.id, current_user)
     return serialize_case(reloaded)
 
 
@@ -247,7 +307,7 @@ async def get_case_team(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(role_guard(ALLOWED_STAFF)),
 ):
-    case = await get_case_or_404(db, case_id, current_user.organization_id)
+    case = await get_case_or_404(db, case_id, current_user)
     return [
         AssignedUser(
             id=a.user.id,
@@ -272,7 +332,7 @@ async def get_case_timeline(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(role_guard(ALLOWED_STAFF)),
 ):
-    case = await get_case_or_404(db, case_id, current_user.organization_id)
+    case = await get_case_or_404(db, case_id, current_user)
     rows = await db.scalars(
         select(CaseTimelineEvent)
         .where(
@@ -332,7 +392,7 @@ async def create_case_timeline_event(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(role_guard(ALLOWED_STAFF)),
 ):
-    case = await get_case_or_404(db, case_id, current_user.organization_id)
+    case = await get_case_or_404(db, case_id, current_user)
     now = datetime.now(timezone.utc)
     meta = {
         "status": payload.status or "active",
@@ -391,7 +451,7 @@ async def update_case_timeline_event(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(role_guard(ALLOWED_STAFF)),
 ):
-    case = await get_case_or_404(db, case_id, current_user.organization_id)
+    case = await get_case_or_404(db, case_id, current_user)
     row = await db.scalar(
         select(CaseTimelineEvent).where(
             CaseTimelineEvent.id == event_id,
@@ -463,7 +523,7 @@ async def delete_case_timeline_event(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(role_guard(ALLOWED_STAFF)),
 ):
-    case = await get_case_or_404(db, case_id, current_user.organization_id)
+    case = await get_case_or_404(db, case_id, current_user)
     row = await db.scalar(
         select(CaseTimelineEvent).where(
             CaseTimelineEvent.id == event_id,

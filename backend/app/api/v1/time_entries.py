@@ -3,6 +3,7 @@ from decimal import Decimal, ROUND_HALF_UP
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import String, and_, cast, func, or_, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -13,11 +14,13 @@ from app.models.client import Client
 from app.models.invoice import Invoice
 from app.models.invoice_line_item import InvoiceLineItem
 from app.models.time_entry import TimeEntry
+from app.models.active_timer import ActiveTimer
 from app.models.user import User
-from app.schemas.time_entry import TimeEntryCreate, TimeEntryListResponse, TimeEntryResponse, TimeEntryUpdate
+from app.schemas.time_entry import ActiveTimerResponse, TimerStartRequest, TimerUpdateRequest, TimeEntryCreate, TimeEntryListResponse, TimeEntryResponse, TimeEntryUpdate
 from app.services.billing import get_effective_hourly_rate
 from app.services.finance import money, normalize_currency
 from app.services.timeline import create_case_timeline_event
+from app.services.access import accessible_case_condition
 
 router = APIRouter(prefix="/time-entries", tags=["time-entries"])
 ALLOWED = ["partner", "admin", "lawyer", "paralegal"]
@@ -182,6 +185,42 @@ async def _validate_related_records(
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invoice does not belong to client")
 
     return case, client, user, invoice
+
+
+def _timer_elapsed(timer: ActiveTimer, now: datetime) -> int:
+    endpoint = timer.paused_at if timer.is_paused and timer.paused_at else now
+    return max(0, int((endpoint - timer.started_at).total_seconds()) - max(0, timer.paused_seconds))
+
+
+def _serialize_timer(timer: ActiveTimer, now: datetime | None = None) -> ActiveTimerResponse:
+    server_now = now or datetime.now(timezone.utc)
+    return ActiveTimerResponse(
+        id=timer.id,
+        case_id=timer.case_id,
+        client_id=timer.client_id,
+        description=timer.description,
+        billable=timer.billing_type == "professional_fee",
+        currency=timer.currency,
+        is_paused=timer.is_paused,
+        started_at=timer.started_at,
+        paused_at=timer.paused_at,
+        paused_seconds=timer.paused_seconds,
+        server_now=server_now,
+        elapsed_seconds=_timer_elapsed(timer, server_now),
+        case_title=getattr(getattr(timer, "case", None), "title", None),
+        client_name=getattr(getattr(timer, "client", None), "name", None),
+    )
+
+
+async def _get_active_timer(db: AsyncSession, current_user: User, *, lock: bool = False) -> ActiveTimer | None:
+    query = (
+        select(ActiveTimer)
+        .where(ActiveTimer.organization_id == current_user.organization_id, ActiveTimer.user_id == current_user.id)
+        .options(selectinload(ActiveTimer.case), selectinload(ActiveTimer.client))
+    )
+    if lock:
+        query = query.with_for_update()
+    return await db.scalar(query)
 
 
 def _resolve_duration_and_amount(
@@ -366,6 +405,178 @@ async def create_time_entry(
             actor_id=current_user.id,
             event_type="time_entry_added",
             title="Time entry added",
+            metadata_json={"time_entry_id": entry.id},
+        )
+    await db.commit()
+    return _serialize(await _get_time_entry_or_404(db, current_user.organization_id, entry.id))
+
+
+@router.get("/active-timer", response_model=ActiveTimerResponse | None)
+async def get_active_timer(
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(role_guard(ALLOWED)),
+):
+    timer = await _get_active_timer(db, current_user)
+    return _serialize_timer(timer) if timer else None
+
+
+@router.post("/timer/start", response_model=ActiveTimerResponse, status_code=status.HTTP_201_CREATED)
+async def start_timer(
+    payload: TimerStartRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(role_guard(ALLOWED)),
+):
+    if await _get_active_timer(db, current_user):
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="You already have an active timer")
+    if payload.case_id is not None:
+        accessible_case = await db.scalar(
+            select(Case).where(
+                Case.id == payload.case_id,
+                Case.organization_id == current_user.organization_id,
+                accessible_case_condition(current_user),
+            )
+        )
+        if not accessible_case:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Case not found")
+    case, client, _, _ = await _validate_related_records(
+        db,
+        org_id=current_user.organization_id,
+        case_id=payload.case_id,
+        client_id=payload.client_id,
+        user_id=current_user.id,
+        invoice_id=None,
+    )
+    now = datetime.now(timezone.utc)
+    timer = ActiveTimer(
+        organization_id=current_user.organization_id,
+        user_id=current_user.id,
+        case_id=case.id if case else None,
+        client_id=client.id if client else case.client_id if case else None,
+        description=payload.description.strip() if payload.description and payload.description.strip() else None,
+        billing_type="professional_fee" if payload.billable else "non_billable",
+        currency=normalize_currency(payload.currency),
+        is_paused=False,
+        started_at=now,
+        paused_at=None,
+        paused_seconds=0,
+        created_at=now,
+        updated_at=now,
+    )
+    db.add(timer)
+    try:
+        await db.commit()
+    except IntegrityError as exc:
+        await db.rollback()
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="You already have an active timer") from exc
+    return _serialize_timer(await _get_active_timer(db, current_user), now)
+
+
+@router.patch("/timer", response_model=ActiveTimerResponse)
+async def update_timer(
+    payload: TimerUpdateRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(role_guard(ALLOWED)),
+):
+    timer = await _get_active_timer(db, current_user, lock=True)
+    if not timer:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No active timer")
+    updates = payload.model_dump(exclude_unset=True)
+    if "description" in updates:
+        timer.description = updates["description"].strip() if updates["description"] and updates["description"].strip() else None
+    if updates.get("billable") is not None:
+        timer.billing_type = "professional_fee" if updates["billable"] else "non_billable"
+    timer.updated_at = datetime.now(timezone.utc)
+    await db.commit()
+    return _serialize_timer(await _get_active_timer(db, current_user))
+
+
+@router.post("/timer/pause", response_model=ActiveTimerResponse)
+async def pause_timer(
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(role_guard(ALLOWED)),
+):
+    timer = await _get_active_timer(db, current_user, lock=True)
+    if not timer:
+        raise HTTPException(status_code=404, detail="No active timer")
+    now = datetime.now(timezone.utc)
+    if not timer.is_paused:
+        timer.is_paused = True
+        timer.paused_at = now
+        timer.updated_at = now
+        await db.commit()
+    return _serialize_timer(await _get_active_timer(db, current_user), now)
+
+
+@router.post("/timer/resume", response_model=ActiveTimerResponse)
+async def resume_timer(
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(role_guard(ALLOWED)),
+):
+    timer = await _get_active_timer(db, current_user, lock=True)
+    if not timer:
+        raise HTTPException(status_code=404, detail="No active timer")
+    now = datetime.now(timezone.utc)
+    if timer.is_paused and timer.paused_at:
+        timer.paused_seconds += max(0, int((now - timer.paused_at).total_seconds()))
+        timer.is_paused = False
+        timer.paused_at = None
+        timer.updated_at = now
+        await db.commit()
+    return _serialize_timer(await _get_active_timer(db, current_user), now)
+
+
+@router.post("/timer/stop", response_model=TimeEntryResponse)
+async def stop_timer(
+    payload: TimerUpdateRequest | None = None,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(role_guard(ALLOWED)),
+):
+    timer = await _get_active_timer(db, current_user, lock=True)
+    if not timer:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No active timer")
+    updates = payload.model_dump(exclude_unset=True) if payload else {}
+    now = datetime.now(timezone.utc)
+    description = updates.get("description", timer.description)
+    billable = updates.get("billable", timer.billing_type == "professional_fee")
+    billing_type = "professional_fee" if billable else "non_billable"
+    duration_minutes = max(1, (_timer_elapsed(timer, now) + 59) // 60)
+    resolved_rate, rate_is_manual = await _resolve_rate_inputs(
+        db,
+        current_user=current_user,
+        entry_user_id=current_user.id,
+        currency=timer.currency,
+        billing_type=billing_type,
+        provided_hourly_rate=None,
+        provided_rate_is_manual=False,
+    )
+    hourly_rate = resolved_rate if billable else None
+    amount = _round_money(_entry_hours(duration_minutes) * hourly_rate) if hourly_rate else ZERO
+    entry = TimeEntry(
+        organization_id=current_user.organization_id,
+        case_id=timer.case_id,
+        client_id=timer.client_id,
+        user_id=current_user.id,
+        invoice_id=None,
+        description=description.strip() if description and description.strip() else None,
+        start_time=timer.started_at,
+        end_time=now,
+        duration_minutes=duration_minutes,
+        billing_type=billing_type,
+        currency=timer.currency,
+        hourly_rate=hourly_rate,
+        rate_is_manual=rate_is_manual,
+        amount=amount,
+        status="billable" if billable else "non_billable",
+        created_at=now,
+        updated_at=now,
+    )
+    db.add(entry)
+    await db.delete(timer)
+    await db.flush()
+    if entry.case_id:
+        await create_case_timeline_event(
+            db, organization_id=current_user.organization_id, case_id=entry.case_id,
+            actor_id=current_user.id, event_type="time_entry_added", title="Timer time entry added",
             metadata_json={"time_entry_id": entry.id},
         )
     await db.commit()

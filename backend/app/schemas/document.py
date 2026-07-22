@@ -21,6 +21,17 @@ class DocumentResponse(BaseModel):
     version_note: str | None = None
     created_at: datetime
     updated_at: datetime
+    case_title: str | None = None
+    client_name: str | None = None
+    uploader_name: str | None = None
+
+
+class DocumentListResponse(BaseModel):
+    items: list[DocumentResponse] = Field(default_factory=list)
+    total: int
+    page: int
+    per_page: int
+    total_pages: int
 
 
 class DocumentUpdate(BaseModel):

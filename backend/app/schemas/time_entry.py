@@ -115,3 +115,33 @@ class TimeEntryListResponse(BaseModel):
     page: int
     per_page: int
     total_pages: int
+
+
+class TimerStartRequest(BaseModel):
+    case_id: int | None = None
+    client_id: int | None = None
+    description: str | None = None
+    billable: bool = True
+    currency: str = "USD"
+
+
+class TimerUpdateRequest(BaseModel):
+    description: str | None = None
+    billable: bool | None = None
+
+
+class ActiveTimerResponse(BaseModel):
+    id: int
+    case_id: int | None
+    client_id: int | None
+    description: str | None
+    billable: bool
+    currency: str
+    is_paused: bool
+    started_at: datetime
+    paused_at: datetime | None
+    paused_seconds: int
+    server_now: datetime
+    elapsed_seconds: int
+    case_title: str | None = None
+    client_name: str | None = None
