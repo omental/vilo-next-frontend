@@ -10,6 +10,8 @@ class NotificationResponse(BaseModel):
     is_read: bool
     metadata: dict | None = None
     created_at: datetime
+    popup_dismissed_at: datetime | None = None
+    email_status: str | None = None
 
 
 class NotificationListResponse(BaseModel):
@@ -22,3 +24,12 @@ class NotificationListResponse(BaseModel):
 
 class MarkNotificationsReadRequest(BaseModel):
     notification_ids: list[int] = Field(default_factory=list)
+
+
+class PopupReminderListResponse(BaseModel):
+    items: list[NotificationResponse] = Field(default_factory=list)
+
+
+class PopupDismissResponse(BaseModel):
+    ok: bool = True
+    popup_dismissed_at: datetime

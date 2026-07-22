@@ -60,6 +60,9 @@ class CalendarDBStub:
     async def commit(self):
         return None
 
+    async def execute(self, query, *args, **kwargs):
+        return None
+
     async def refresh(self, obj):
         return None
 

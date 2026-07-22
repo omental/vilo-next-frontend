@@ -1,14 +1,17 @@
 import asyncio
 import logging
 import smtplib
+from datetime import datetime, timezone
 from email.message import EmailMessage
+from html import escape
+from urllib.parse import urljoin
 
 from app.core.config import settings
 
 logger = logging.getLogger(__name__)
 
 
-async def send_email(to_email: str, subject: str, html_body: str, text_body: str | None = None) -> None:
+async def send_email(to_email: str, subject: str, html_body: str, text_body: str | None = None) -> bool:
     def _send():
         msg = EmailMessage()
         msg["Subject"] = subject
@@ -25,8 +28,10 @@ async def send_email(to_email: str, subject: str, html_body: str, text_body: str
 
     try:
         await asyncio.to_thread(_send)
+        return True
     except Exception:
         logger.exception("Failed to send email to %s with subject %s", to_email, subject)
+        return False
 
 
 def _invite_template(name: str, invite_link: str, role: str) -> tuple[str, str, str]:
@@ -115,3 +120,74 @@ def build_task_assignment_email(*, assignee_name: str, task_title: str, task_id:
 def build_document_shared_email(*, client_name: str, document_title: str, document_id: int) -> tuple[str, str, str]:
     link = f"{settings.app_base_url}/portal/documents"
     return _document_shared_template(client_name, document_title, link if document_id else link)
+
+
+def build_reminder_email(
+    *,
+    recipient_name: str,
+    category: str,
+    record_title: str,
+    scheduled_at: datetime | str | None,
+    link: str,
+    case_title: str | None = None,
+    client_name: str | None = None,
+    description: str | None = None,
+) -> tuple[str, str, str]:
+    category_subject = {
+        "Task Due Soon": "Task Reminder",
+        "Task Due": "Task Reminder",
+        "Task Overdue": "Overdue Task",
+        "Court Event Reminder": "Court Event Reminder",
+        "Meeting Reminder": "Meeting Reminder",
+        "Deadline Reminder": "Deadline Reminder",
+        "Calendar Event Reminder": "Calendar Reminder",
+        "Event Starting": "Calendar Reminder",
+    }.get(category, "Reminder")
+    subject = f"VILO {category_subject}: {record_title}"
+    if isinstance(scheduled_at, str):
+        try:
+            scheduled_at = datetime.fromisoformat(scheduled_at.replace("Z", "+00:00"))
+        except ValueError:
+            scheduled_at = None
+    if scheduled_at is not None:
+        if scheduled_at.tzinfo is None:
+            scheduled_at = scheduled_at.replace(tzinfo=timezone.utc)
+        scheduled_text = scheduled_at.astimezone(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+    else:
+        scheduled_text = "Not scheduled"
+    absolute_link = urljoin(f"{settings.app_base_url.rstrip('/')}/", (link or "/dashboard").lstrip("/"))
+
+    safe_name = escape(recipient_name or "there")
+    safe_category = escape(category)
+    safe_title = escape(record_title)
+    safe_date = escape(scheduled_text)
+    safe_link = escape(absolute_link, quote=True)
+    detail_rows = []
+    text_rows = []
+    if case_title:
+        detail_rows.append(f"<p><strong>Case:</strong> {escape(case_title)}</p>")
+        text_rows.append(f"Case: {case_title}")
+    if client_name:
+        detail_rows.append(f"<p><strong>Client:</strong> {escape(client_name)}</p>")
+        text_rows.append(f"Client: {client_name}")
+    if description:
+        detail_rows.append(f"<p>{escape(description)}</p>")
+        text_rows.append(description)
+
+    html = f"""
+    <h2>{safe_category}</h2>
+    <p>Hello {safe_name},</p>
+    <p><strong>{safe_title}</strong></p>
+    <p><strong>Date and time:</strong> {safe_date}</p>
+    {''.join(detail_rows)}
+    <p><a href="{safe_link}">Open in VILO</a></p>
+    """
+    text = "\n".join([
+        category,
+        f"Hello {recipient_name or 'there'},",
+        record_title,
+        f"Date and time: {scheduled_text}",
+        *text_rows,
+        f"Open in VILO: {absolute_link}",
+    ])
+    return subject, html, text

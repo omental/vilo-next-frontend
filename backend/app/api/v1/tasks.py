@@ -16,6 +16,7 @@ from app.services.email import build_task_assignment_email
 from app.services.jobs import enqueue_email
 from app.services.notifications import create_notification
 from app.services.timeline import create_case_timeline_event
+from app.services.reminders import suppress_obsolete_reminders
 
 router = APIRouter(prefix="/tasks", tags=["tasks"])
 ALLOWED_STAFF = ["partner", "admin", "lawyer", "paralegal"]
@@ -395,6 +396,11 @@ async def update_task(
 ):
     task = await get_task_or_404(db, current_user.organization_id, task_id)
     updates = payload.model_dump(exclude_unset=True)
+    reminder_material_fields = {"due_date", "reminder_at", "status", "archived_at", "assigned_to", "case_id", "client_id", "title"}
+    if reminder_material_fields.intersection(updates):
+        await suppress_obsolete_reminders(
+            db, organization_id=current_user.organization_id, entity="task", entity_id=task.id,
+        )
 
     normalized_status, normalized_priority, normalized_task_type = validate_values(
         updates.get("status"),
@@ -474,6 +480,10 @@ async def complete_task(
     task.completed_at = now
     task.updated_at = now
 
+    await suppress_obsolete_reminders(
+        db, organization_id=current_user.organization_id, entity="task", entity_id=task.id, now=now,
+    )
+
     if task.case_id:
         await create_case_timeline_event(
             db,
@@ -500,6 +510,9 @@ async def archive_task(
     now = datetime.now(timezone.utc)
     task.archived_at = now
     task.updated_at = now
+    await suppress_obsolete_reminders(
+        db, organization_id=current_user.organization_id, entity="task", entity_id=task.id, now=now,
+    )
     await db.commit()
     await db.refresh(task)
     return serialize(task)
@@ -515,5 +528,8 @@ async def delete_task(
     now = datetime.now(timezone.utc)
     task.archived_at = task.archived_at or now
     task.updated_at = now
+    await suppress_obsolete_reminders(
+        db, organization_id=current_user.organization_id, entity="task", entity_id=task.id, now=now,
+    )
     await db.commit()
     return {"ok": True, "archived": True}

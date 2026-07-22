@@ -14,6 +14,8 @@ async def create_notification(
     body: str | None = None,
     metadata_json: dict | None = None,
     dedupe_key: str | None = None,
+    popup_dismissed_at: datetime | None = None,
+    email_status: str | None = None,
 ) -> Notification:
     notification = Notification(
         organization_id=organization_id,
@@ -24,6 +26,9 @@ async def create_notification(
         is_read=False,
         dedupe_key=dedupe_key,
         metadata_json=metadata_json,
+        popup_dismissed_at=popup_dismissed_at,
+        email_status=email_status,
+        email_attempts=0,
         created_at=datetime.now(timezone.utc),
     )
     db.add(notification)

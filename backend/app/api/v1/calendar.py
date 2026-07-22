@@ -12,6 +12,7 @@ from app.models.user import User
 from app.schemas.calendar_event import CalendarEventCreate, CalendarEventResponse, CalendarEventUpdate
 from app.api.v1.tasks import is_task_overdue, normalize_priority, normalize_status
 from app.services.timeline import create_case_timeline_event
+from app.services.reminders import suppress_obsolete_reminders
 
 router = APIRouter(prefix="/calendar/events", tags=["calendar"])
 ALLOWED_STAFF = ["partner", "admin", "lawyer", "paralegal"]
@@ -185,6 +186,10 @@ async def update_event(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Event not found")
 
     updates = payload.model_dump(exclude_unset=True)
+    if {"start_at", "reminder_at", "case_id", "event_type", "title"}.intersection(updates):
+        await suppress_obsolete_reminders(
+            db, organization_id=current_user.organization_id, entity="calendar_event", entity_id=event.id,
+        )
     validate_type(updates.get("event_type"))
     if "case_id" in updates:
         await validate_case(db, current_user.organization_id, updates["case_id"])
@@ -209,6 +214,9 @@ async def delete_event(
     )
     if not event:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Event not found")
+    await suppress_obsolete_reminders(
+        db, organization_id=current_user.organization_id, entity="calendar_event", entity_id=event.id,
+    )
     await db.delete(event)
     await db.commit()
     return {"ok": True}

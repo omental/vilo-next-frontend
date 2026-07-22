@@ -4,6 +4,7 @@ import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import { Navbar } from "../../../components/layout/Navbar";
 import { Sidebar } from "../../../components/layout/Sidebar";
+import { ReminderPopups } from "../../../components/notifications/ReminderPopups";
 import { apiRequest } from "../../../lib/api";
 import { clearAuth, getCachedUser, getToken, setCachedUser } from "../../../lib/auth";
 
@@ -55,6 +56,7 @@ export default function DashboardShell({ children }) {
         <div className="dashboard-content-container">
           <Navbar onMenuClick={() => setIsMobileSidebarOpen(true)} user={user} onLogout={logout} />
           {children}
+          {user && user.role !== "client" ? <ReminderPopups /> : null}
         </div>
       </main>
     </div>

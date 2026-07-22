@@ -64,6 +64,9 @@ class TaskDBStub:
     async def commit(self):
         self.commits += 1
 
+    async def execute(self, query, *args, **kwargs):
+        return None
+
     async def refresh(self, obj):
         return None
 
