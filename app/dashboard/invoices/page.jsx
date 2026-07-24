@@ -20,7 +20,7 @@ const initialForm = {
   client_id: "",
   case_id: "",
   invoice_number: "",
-  currency: "USD",
+  currency: "JMD",
   issue_date: new Date().toISOString().slice(0, 10),
   due_date: "",
   notes: "",
@@ -36,7 +36,7 @@ const initialBillingTax = {
   invoice_tax_rate: "0.00",
 };
 
-function formatMoney(value, currency = "USD") {
+function formatMoney(value, currency = "JMD") {
   return new Intl.NumberFormat("en-US", { style: "currency", currency }).format(Number(value || 0));
 }
 
@@ -91,7 +91,7 @@ function createTimeEntryLine(entry) {
     hours: entry.duration_minutes ? (Number(entry.duration_minutes) / 60).toFixed(2) : "0.00",
     rate: String(entry.hourly_rate || 0),
     staff_name: entry.staff_name || "Staff",
-    currency: entry.currency || "USD",
+    currency: entry.currency || "JMD",
   };
 }
 
@@ -148,7 +148,7 @@ function InvoicesPageContent() {
     return cases.filter((row) => Number(row.client_id) === selectedClientId);
   }, [cases, selectedClientId]);
   const availableBillableEntries = useMemo(
-    () => (billableEntries || []).filter((entry) => (entry.currency || "USD") === form.currency),
+    () => (billableEntries || []).filter((entry) => (entry.currency || "JMD") === form.currency),
     [billableEntries, form.currency],
   );
 
@@ -314,7 +314,7 @@ function InvoicesPageContent() {
 
   function openCreateModal() {
     setCreateError("");
-    const defaultAccount = resolveDefaultPaymentAccount(paymentAccounts, "USD");
+    const defaultAccount = resolveDefaultPaymentAccount(paymentAccounts, "JMD");
     const nextForm = {
       ...initialForm,
       client_id: requestedClientId,
@@ -331,7 +331,7 @@ function InvoicesPageContent() {
     setCreateOpen(false);
     setCreateError("");
     setTimeEntryError("");
-    const defaultAccount = resolveDefaultPaymentAccount(paymentAccounts, "USD");
+    const defaultAccount = resolveDefaultPaymentAccount(paymentAccounts, "JMD");
     const nextForm = {
       ...initialForm,
       client_id: requestedClientId,
@@ -420,8 +420,8 @@ function InvoicesPageContent() {
   async function handleCreate(event) {
     event.preventDefault();
     if (saving) return;
-    if (!form.client_id || !form.case_id || !form.issue_date) {
-      setCreateError("Client, matter, and issue date are required.");
+    if (!form.client_id || !form.issue_date) {
+      setCreateError("Client and issue date are required.");
       return;
     }
     if (!form.payment_account_id) {
@@ -455,7 +455,7 @@ function InvoicesPageContent() {
         method: "POST",
         body: JSON.stringify({
           client_id: Number(form.client_id),
-          case_id: Number(form.case_id),
+          case_id: form.case_id ? Number(form.case_id) : null,
           invoice_number: form.invoice_number.trim() || null,
           currency: form.currency,
           issue_date: form.issue_date,
@@ -470,7 +470,9 @@ function InvoicesPageContent() {
       await load();
       router.push(`/dashboard/invoices/${created.id}`);
     } catch (err) {
-      setCreateError(err.message || "Failed to create invoice");
+      setCreateError(!err.message || err.message === "Request failed"
+        ? "Invoice could not be created. Please check the required fields."
+        : err.message);
     } finally {
       setSaving(false);
     }
@@ -653,9 +655,9 @@ function InvoicesPageContent() {
                       </select>
                     </div>
                     <div>
-                      <label>Matter / Case *</label>
-                      <select value={form.case_id} onChange={(event) => setForm((current) => ({ ...current, case_id: event.target.value, line_items: current.line_items.filter((item) => !item.time_entry_id).length ? current.line_items.filter((item) => !item.time_entry_id) : [makeManualLineItem()] }))} required>
-                        <option value="">Select matter</option>
+                      <label>Matter / Case</label>
+                      <select value={form.case_id} onChange={(event) => setForm((current) => ({ ...current, case_id: event.target.value, line_items: current.line_items.filter((item) => !item.time_entry_id).length ? current.line_items.filter((item) => !item.time_entry_id) : [makeManualLineItem()] }))}>
+                        <option value="">No related matter</option>
                         {caseOptions.map((row) => <option key={row.id} value={row.id}>{row.title}</option>)}
                       </select>
                     </div>
@@ -672,8 +674,8 @@ function InvoicesPageContent() {
                     <div>
                       <label>Currency *</label>
                       <select value={form.currency} onChange={(event) => setForm((current) => ({ ...current, currency: event.target.value }))} required>
-                        <option value="USD">USD</option>
                         <option value="JMD">JMD</option>
+                        <option value="USD">USD</option>
                       </select>
                     </div>
                   </div>

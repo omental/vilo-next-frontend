@@ -2,7 +2,7 @@
 
 import { Suspense, useEffect, useMemo, useRef, useState } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
-import { apiDownload, apiRequest, apiUpload } from "../../../lib/api";
+import { apiDownload, apiRequest, apiUpload, apiView } from "../../../lib/api";
 import { getCachedUser } from "../../../lib/auth";
 import { DiscardChangesDialog, useModalCloseGuard } from "../../../components/useModalCloseGuard";
 
@@ -782,6 +782,7 @@ function DocumentsPageContent() {
                                 </button>
                                 {menuOpenId === document.id ? (
                                   <div className="case-actions-menu documents-actions-menu">
+                                    <button type="button" onClick={() => apiView(`/api/v1/documents/${document.id}/view`).catch((err) => setError(err.message || "Document could not be loaded"))}>View</button>
                                     <button type="button" onClick={() => apiDownload(`/api/v1/documents/${document.id}/download`).catch((err) => setError(err.message || "Download failed"))}>Download</button>
                                     {isDocxDocument(document) ? (
                                       <button type="button" onClick={() => openOnlyOfficeModal(document)}>Open in Word Editor</button>

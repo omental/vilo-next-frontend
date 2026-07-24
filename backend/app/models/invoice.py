@@ -14,7 +14,7 @@ class Invoice(Base):
     client_id: Mapped[int] = mapped_column(ForeignKey("clients.id", ondelete="RESTRICT"), index=True, nullable=False)
     case_id: Mapped[int | None] = mapped_column(ForeignKey("cases.id", ondelete="SET NULL"), index=True, nullable=True)
     invoice_number: Mapped[str] = mapped_column(String(40), nullable=False)
-    currency: Mapped[str] = mapped_column(String(10), nullable=False, default="USD")
+    currency: Mapped[str] = mapped_column(String(10), nullable=False, default="JMD")
     status: Mapped[str] = mapped_column(String(30), nullable=False, default="draft")
     issue_date: Mapped[date] = mapped_column(Date, nullable=False)
     due_date: Mapped[date | None] = mapped_column(Date, nullable=True)

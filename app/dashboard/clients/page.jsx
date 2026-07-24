@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Suspense, useEffect, useMemo, useState } from "react";
-import { apiRequest, apiUpload } from "../../../lib/api";
+import { apiRequest, apiUpload, apiView } from "../../../lib/api";
 import ClientIntakeModal from "../../../components/dashboard/ClientIntakeModal";
 
 function isArchived(client) {
@@ -43,6 +43,7 @@ function ClientsPageContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const [clients, setClients] = useState([]);
+  const [drafts, setDrafts] = useState([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
@@ -57,6 +58,7 @@ function ClientsPageContent() {
 
   const [actionOpenId, setActionOpenId] = useState(null);
   const [createOpen, setCreateOpen] = useState(false);
+  const [selectedDraft, setSelectedDraft] = useState(null);
   const [editClient, setEditClient] = useState(null);
   const [deleteClient, setDeleteClient] = useState(null);
 
@@ -64,8 +66,12 @@ function ClientsPageContent() {
     setLoading(true);
     setError("");
     try {
-      const data = await apiRequest("/api/v1/clients");
+      const [data, draftData] = await Promise.all([
+        apiRequest("/api/v1/clients"),
+        apiRequest("/api/v1/clients/intake-drafts").catch(() => []),
+      ]);
       setClients(data || []);
+      setDrafts(draftData || []);
     } catch (err) {
       setError(err.message || "Failed to load clients");
     } finally {
@@ -88,24 +94,74 @@ function ClientsPageContent() {
     await apiUpload(`/api/v1/clients/${clientId}/id-documents`, formData);
   }
 
-  async function handleCreate(payload, idFile) {
+  async function uploadDraftAttachment(draftId, file) {
+    const formData = new FormData();
+    formData.append("file", file);
+    return apiUpload(`/api/v1/clients/intake-drafts/${draftId}/attachment`, formData);
+  }
+
+  async function handleCreate(payload, idFile, options = {}) {
     if (saving) return;
     setSaving(true);
     setError("");
     setSuccess("");
     try {
-      const created = await apiRequest("/api/v1/clients", {
+      if (selectedDraft && idFile) {
+        const attachment = await uploadDraftAttachment(selectedDraft.id, idFile);
+        setSelectedDraft((current) => ({ ...current, attachment }));
+      }
+      const includeAttachment = options.removeDraftAttachment ? "false" : "true";
+      const created = await apiRequest(selectedDraft ? `/api/v1/clients/intake-drafts/${selectedDraft.id}/complete?include_attachment=${includeAttachment}` : "/api/v1/clients", {
         method: "POST",
         body: JSON.stringify(payload),
       });
-      await uploadClientIdFile(created.id, idFile);
+      if (!selectedDraft) await uploadClientIdFile(created.id, idFile);
       setCreateOpen(false);
+      setSelectedDraft(null);
       await load();
       setSuccess("Client created successfully.");
     } catch (err) {
       setError(err.message || "Failed to create client");
     } finally {
       setSaving(false);
+    }
+  }
+
+  async function saveClientDraft(draftForm, idFile, options = {}) {
+    if (saving) return;
+    setSaving(true);
+    setError("");
+    let saved = null;
+    try {
+      saved = await apiRequest(selectedDraft ? `/api/v1/clients/intake-drafts/${selectedDraft.id}` : "/api/v1/clients/intake-drafts", {
+        method: selectedDraft ? "PATCH" : "POST",
+        body: JSON.stringify({ payload: draftForm }),
+      });
+      if (idFile) {
+        await uploadDraftAttachment(saved.id, idFile);
+      } else if (options.removeDraftAttachment && selectedDraft?.attachment) {
+        await apiRequest(`/api/v1/clients/intake-drafts/${saved.id}/attachment`, { method: "DELETE" });
+      }
+      setCreateOpen(false);
+      setSelectedDraft(null);
+      await load();
+      setSuccess("Client intake saved as draft.");
+    } catch (err) {
+      if (saved) setSelectedDraft({ ...saved, attachment: selectedDraft?.attachment || null });
+      setError(err.message || "Client intake draft could not be saved.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function discardClientDraft() {
+    if (!selectedDraft) return;
+    try {
+      await apiRequest(`/api/v1/clients/intake-drafts/${selectedDraft.id}`, { method: "DELETE" });
+      setSelectedDraft(null);
+      await load();
+    } catch (err) {
+      setError(err.message || "Client intake draft could not be discarded.");
     }
   }
 
@@ -182,6 +238,7 @@ function ClientsPageContent() {
     const q = search.trim().toLowerCase();
     let rows = decorated;
 
+    if (tab === "draft") return [];
     if (tab === "active") rows = rows.filter((row) => !row.archived);
     if (tab === "archived") rows = rows.filter((row) => row.archived);
 
@@ -224,6 +281,7 @@ function ClientsPageContent() {
           <button type="button" className={tab === "all" ? "case-tab-btn is-active" : "case-tab-btn"} onClick={() => setTab("all")}>All ({allCount})</button>
           <button type="button" className={tab === "active" ? "case-tab-btn is-active" : "case-tab-btn"} onClick={() => setTab("active")}>Active ({activeCount})</button>
           <button type="button" className={tab === "archived" ? "case-tab-btn is-active" : "case-tab-btn"} onClick={() => setTab("archived")}>Archived ({archivedCount})</button>
+          <button type="button" className={tab === "draft" ? "case-tab-btn is-active" : "case-tab-btn"} onClick={() => setTab("draft")}>Intake Drafts ({drafts.length})</button>
         </div>
 
         <div className="clients-toolbar-row">
@@ -247,11 +305,14 @@ function ClientsPageContent() {
         </div>
 
         <div className="case-tab-panel">
-          <h2>Client Entries</h2>
+          <h2>{tab === "draft" ? "Incomplete Client Intakes" : "Client Entries"}</h2>
+          {tab === "draft" ? (
+            drafts.length ? <div className="vilo-table-wrap"><table className="team-table"><thead><tr><th>Name</th><th>Last Updated</th><th>Actions</th></tr></thead><tbody>{drafts.map((draft) => <tr key={draft.id}><td>{[draft.payload?.first_name, draft.payload?.last_name].filter(Boolean).join(" ") || draft.payload?.company_name || "Untitled intake"}</td><td>{new Date(draft.updated_at).toLocaleString()}</td><td><div className="vilo-table-actions"><button type="button" className="vilo-btn vilo-btn--secondary vilo-btn--xs" onClick={() => { setSelectedDraft(draft); setCreateOpen(true); }}>Open</button><button type="button" className="vilo-btn vilo-btn--danger vilo-btn--xs" onClick={async () => { setSelectedDraft(draft); await apiRequest(`/api/v1/clients/intake-drafts/${draft.id}`, { method: "DELETE" }); setSelectedDraft(null); await load(); }}>Discard</button></div></td></tr>)}</tbody></table></div> : <div className="vilo-state-block"><p className="vilo-state">No client intake drafts.</p></div>
+          ) : null}
           {loading ? <div className="vilo-state-block"><p className="vilo-state vilo-state--loading">Loading clients...</p></div> : null}
-          {!loading && !filtered.length ? <div className="vilo-state-block"><p className="vilo-state">No clients matched your current filters.</p></div> : null}
+          {tab !== "draft" && !loading && !filtered.length ? <div className="vilo-state-block"><p className="vilo-state">No clients matched your current filters.</p></div> : null}
 
-          {!loading && filtered.length ? (
+          {tab !== "draft" && !loading && filtered.length ? (
             <div className="vilo-table-wrap case-table-wrap">
               <table className="team-table">
                 <thead>
@@ -306,10 +367,15 @@ function ClientsPageContent() {
       <ClientIntakeModal
         open={createOpen}
         mode="create"
+        client={selectedDraft ? { _draftForm: selectedDraft.payload } : null}
+        draftAttachment={selectedDraft?.attachment || null}
         saving={saving}
         apiError={error}
-        onClose={() => setCreateOpen(false)}
+        onClose={() => { setCreateOpen(false); setSelectedDraft(null); }}
         onSubmit={handleCreate}
+        onSaveDraft={saveClientDraft}
+        onDiscardDraft={discardClientDraft}
+        onViewDraftAttachment={() => apiView(`/api/v1/clients/intake-drafts/${selectedDraft.id}/attachment/view`)}
       />
 
       <ClientIntakeModal

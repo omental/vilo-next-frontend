@@ -446,6 +446,7 @@ export default function CaseDetailPage() {
               <div className="case-summary-box"><span>Expected Completion:</span><strong>{expectedCompletion}</strong></div>
               <div className="case-summary-box"><span>Status:</span><strong><span className={`vilo-badge vilo-badge--${item.status}`}>{item.status}</span></strong></div>
               <div className="case-summary-box"><span>Priority:</span><strong><span className={`vilo-badge vilo-badge--priority-${item.priority}`}>{item.priority}</span></strong></div>
+              <div className="case-summary-box"><span>Expected Completion:</span><strong>{item.expected_completion_date || "Not set"}</strong></div>
             </div>
             <div className="case-summary-description">
               <span>Description:</span>

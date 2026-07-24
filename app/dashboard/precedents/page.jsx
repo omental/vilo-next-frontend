@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { apiDownload, apiRequest, apiUpload } from "../../../lib/api";
+import { apiDownload, apiRequest, apiUpload, apiView } from "../../../lib/api";
 import { getCachedUser } from "../../../lib/auth";
 
 const PRACTICE_TABS = [
@@ -217,10 +217,21 @@ export default function PrecedentsPage() {
   const [cases, setCases] = useState([]);
   const [casesLoading, setCasesLoading] = useState(false);
   const [casesError, setCasesError] = useState("");
+  const [practiceAreas, setPracticeAreas] = useState([]);
+  const [practiceAreaOpen, setPracticeAreaOpen] = useState(false);
+  const [practiceAreaName, setPracticeAreaName] = useState("");
+  const [practiceAreaError, setPracticeAreaError] = useState("");
 
   const role = currentUser?.role || "";
   const canManage = roleCanManage(role);
   const canView = roleCanView(role);
+
+  useEffect(() => {
+    if (!canView) return;
+    apiRequest("/api/v1/precedents/practice-areas")
+      .then((rows) => setPracticeAreas(rows || []))
+      .catch(() => setPracticeAreas([]));
+  }, [canView]);
 
   useEffect(() => {
     if (currentUser) return;
@@ -451,6 +462,33 @@ export default function PrecedentsPage() {
       await apiDownload(`/api/v1/precedents/${detail.id}/download`);
     } catch (err) {
       setDetailError(err.message || "Failed to download precedent");
+    }
+  }
+
+  async function handleView() {
+    if (!detail?.has_file) return;
+    setDetailError("");
+    try {
+      await apiView(`/api/v1/precedents/${detail.id}/view`);
+    } catch (err) {
+      setDetailError(err.message || "Document could not be loaded");
+    }
+  }
+
+  async function addPracticeArea(event) {
+    event.preventDefault();
+    setPracticeAreaError("");
+    try {
+      const created = await apiRequest("/api/v1/precedents/practice-areas", {
+        method: "POST",
+        body: JSON.stringify({ name: practiceAreaName }),
+      });
+      setPracticeAreas((rows) => [...rows.filter((row) => row.id !== created.id), created].sort((a, b) => a.name.localeCompare(b.name)));
+      setCreateForm((current) => ({ ...current, practice_area: created.name }));
+      setPracticeAreaName("");
+      setPracticeAreaOpen(false);
+    } catch (err) {
+      setPracticeAreaError(err.message || "Practice area could not be added.");
     }
   }
 
@@ -775,6 +813,7 @@ export default function PrecedentsPage() {
               {!editOpen && !copyOpen ? (
                 <div className="precedents-modal__actions precedents-modal__actions--split">
                   <div className="precedents-modal__actions-group">
+                    {detail.has_file ? <button type="button" className="vilo-btn vilo-btn--secondary" onClick={handleView}>View</button> : null}
                     {detail.has_file ? <button type="button" className="vilo-btn vilo-btn--secondary" onClick={handleDownload}>Download</button> : null}
                     <button type="button" className="vilo-btn vilo-btn--primary" onClick={openCopyModal}>Use for Case</button>
                   </div>
@@ -935,6 +974,7 @@ export default function PrecedentsPage() {
               >
                 <option value="">Select practice area</option>
                 {PRACTICE_TABS.filter((tab) => tab.value).map((tab) => <option key={tab.value} value={tab.value}>{tab.label}</option>)}
+                {practiceAreas.filter((area) => !PRACTICE_TABS.some((tab) => tab.value.toLowerCase() === area.name.toLowerCase())).map((area) => <option key={`custom-${area.id}`} value={area.name}>{area.name}</option>)}
               </select>
 
               <select
@@ -946,6 +986,7 @@ export default function PrecedentsPage() {
                 {DOCUMENT_TYPE_OPTIONS.filter((option) => option.value).map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
               </select>
             </div>
+            <button type="button" className="vilo-btn vilo-btn--secondary vilo-btn--xs" onClick={() => setPracticeAreaOpen(true)}>+ Add Practice Area</button>
 
             <input
               placeholder="Tags separated by commas"
@@ -979,6 +1020,18 @@ export default function PrecedentsPage() {
             </div>
           </form>
         </Modal>
+      ) : null}
+      {practiceAreaOpen ? (
+        <div className="vilo-modal-overlay vilo-modal-overlay--nested" onClick={() => setPracticeAreaOpen(false)}>
+          <div className="vilo-modal vilo-confirm-modal" onClick={(event) => event.stopPropagation()}>
+            <div className="vilo-modal__header"><h3>Add Practice Area</h3><button type="button" className="vilo-btn vilo-btn--ghost vilo-btn--xs" onClick={() => setPracticeAreaOpen(false)}>Close</button></div>
+            <form className="vilo-modal__body vilo-form-grid" onSubmit={addPracticeArea}>
+              <div><label>Practice Area Name</label><input value={practiceAreaName} onChange={(event) => setPracticeAreaName(event.target.value)} maxLength={100} required autoFocus /></div>
+              {practiceAreaError ? <p className="vilo-state vilo-state--error">{practiceAreaError}</p> : null}
+              <div className="vilo-table-actions"><button type="button" className="vilo-btn vilo-btn--secondary" onClick={() => setPracticeAreaOpen(false)}>Cancel</button><button type="submit" className="vilo-btn vilo-btn--primary">Add Practice Area</button></div>
+            </form>
+          </div>
+        </div>
       ) : null}
     </section>
   );

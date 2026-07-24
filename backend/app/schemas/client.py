@@ -64,3 +64,26 @@ class ClientResponse(BaseModel):
     assigned_user_ids: list[int]
     created_at: datetime
     updated_at: datetime
+
+
+class ClientIntakeDraftUpsert(BaseModel):
+    payload: dict = Field(default_factory=dict)
+
+
+class ClientIntakeDraftAttachmentResponse(BaseModel):
+    id: int
+    file_name: str
+    file_type: str | None
+    file_size: int
+    created_at: datetime
+    updated_at: datetime
+
+
+class ClientIntakeDraftResponse(BaseModel):
+    id: int
+    organization_id: int
+    created_by: int
+    payload: dict
+    attachment: ClientIntakeDraftAttachmentResponse | None = None
+    created_at: datetime
+    updated_at: datetime

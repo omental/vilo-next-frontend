@@ -198,6 +198,8 @@ function CalendarPageContent() {
   const [modalOpen, setModalOpen] = useState(false);
   const [form, setForm] = useState(initialForm);
   const [modalInitialForm, setModalInitialForm] = useState(initialForm);
+  const [editingEvent, setEditingEvent] = useState(null);
+  const [deleteEventTarget, setDeleteEventTarget] = useState(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
@@ -355,14 +357,28 @@ function CalendarPageContent() {
       router.push(`/dashboard/tasks/${item.task_id || item.id}`);
       return;
     }
-    const params = new URLSearchParams(searchParams.toString());
-    params.delete("create");
-    params.delete("date");
-    params.delete("task_id");
-    params.set("event_id", String(item.id));
     setSelectedDate(new Date(item.start));
     setSelectedMonth(startOfMonth(item.start));
-    router.push(`/dashboard/calendar?${params.toString()}`);
+    const start = new Date(item.start_at);
+    const end = item.end_at ? new Date(item.end_at) : null;
+    const reminder = item.reminder_at ? new Date(item.reminder_at) : null;
+    const nextForm = {
+      ...initialForm,
+      title: item.title || "",
+      event_type: item.event_type || "note",
+      date: ymd(start),
+      start_time: `${String(start.getHours()).padStart(2, "0")}:${String(start.getMinutes()).padStart(2, "0")}`,
+      end_time: end ? `${String(end.getHours()).padStart(2, "0")}:${String(end.getMinutes()).padStart(2, "0")}` : "",
+      reminder_choice: reminder ? "custom" : "",
+      custom_reminder_at: reminder ? `${ymd(reminder)}T${String(reminder.getHours()).padStart(2, "0")}:${String(reminder.getMinutes()).padStart(2, "0")}` : "",
+      case_id: item.case_id ? String(item.case_id) : "",
+      location: item.location || "",
+      description: item.description || "",
+    };
+    setEditingEvent(item);
+    setForm(nextForm);
+    setModalInitialForm(nextForm);
+    setModalOpen(true);
   }
 
   function selectCalendarDate(date) {
@@ -382,6 +398,7 @@ function CalendarPageContent() {
       end_time: "10:00",
     };
     setForm(nextForm);
+    setEditingEvent(null);
     setModalInitialForm(nextForm);
     setModalOpen(true);
     if (syncQuery) {
@@ -396,6 +413,7 @@ function CalendarPageContent() {
     setModalOpen(false);
     setForm(initialForm);
     setModalInitialForm(initialForm);
+    setEditingEvent(null);
     const params = new URLSearchParams(searchParams.toString());
     params.delete("create");
     params.delete("date");
@@ -403,7 +421,7 @@ function CalendarPageContent() {
     router.replace(next ? `/dashboard/calendar?${next}` : "/dashboard/calendar");
   }
 
-  async function createEvent(event) {
+  async function saveEvent(event) {
     event.preventDefault();
     if (saving) return;
     setError("");
@@ -419,8 +437,8 @@ function CalendarPageContent() {
       const startAt = new Date(`${form.date}T${form.start_time}`);
       const endAt = form.end_time ? new Date(`${form.date}T${form.end_time}`) : null;
       const reminderAt = computeReminderAt(form);
-      await apiRequest("/api/v1/calendar/events", {
-        method: "POST",
+      await apiRequest(editingEvent ? `/api/v1/calendar/events/${editingEvent.id}` : "/api/v1/calendar/events", {
+        method: editingEvent ? "PATCH" : "POST",
         body: JSON.stringify({
           case_id: form.case_id ? Number(form.case_id) : null,
           title: form.title,
@@ -433,11 +451,28 @@ function CalendarPageContent() {
         }),
       });
 
-      setSuccess(reminderAt ? "Event created with reminder." : "Event created successfully.");
+      setSuccess(editingEvent ? "Event updated successfully." : (reminderAt ? "Event created with reminder." : "Event created successfully."));
       closeModal();
       await load();
     } catch (err) {
-      setError(err.message || "Unable to create event. Please review the form and try again.");
+      setError(err.message || `Unable to ${editingEvent ? "update" : "create"} event. Please review the form and try again.`);
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function deleteSelectedEvent() {
+    if (!deleteEventTarget || saving) return;
+    setSaving(true);
+    setError("");
+    try {
+      await apiRequest(`/api/v1/calendar/events/${deleteEventTarget.id}`, { method: "DELETE" });
+      setDeleteEventTarget(null);
+      closeModal();
+      setSuccess("Event deleted successfully.");
+      await load();
+    } catch (err) {
+      setError(err.message || "Event could not be deleted.");
     } finally {
       setSaving(false);
     }
@@ -719,13 +754,13 @@ function CalendarPageContent() {
           <div className="vilo-modal calendar-event-modal" onClick={(event) => event.stopPropagation()}>
             <div className="vilo-modal__header calendar-event-modal__header">
               <div>
-                <h3>Add Event</h3>
-                <p className="calendar-event-modal__copy">Create an event for {form.date || selectedDateKey}.</p>
+                <h3>{editingEvent ? "Edit Event" : "Add Event"}</h3>
+                <p className="calendar-event-modal__copy">{editingEvent ? "Update this calendar event." : `Create an event for ${form.date || selectedDateKey}.`}</p>
               </div>
               <button className="calendar-event-modal__close" type="button" onClick={eventCloseGuard.requestClose} aria-label="Close add event form">×</button>
             </div>
 
-            <form onSubmit={createEvent}>
+            <form onSubmit={saveEvent}>
               <div className="vilo-modal__body calendar-event-modal__body">
                 <div className="calendar-event-modal__section">
                   <div className="calendar-event-modal__field">
@@ -794,12 +829,27 @@ function CalendarPageContent() {
               </div>
 
               <div className="calendar-event-modal__footer">
+                {editingEvent ? <button type="button" className="vilo-btn vilo-btn--danger" onClick={() => setDeleteEventTarget(editingEvent)} disabled={saving}>Delete</button> : null}
                 <button type="button" className="vilo-btn vilo-btn--secondary" onClick={eventCloseGuard.requestClose} disabled={saving}>Cancel</button>
-                <button type="submit" className="vilo-btn vilo-btn--primary" disabled={saving}>{saving ? "Saving..." : "Create Event"}</button>
+                <button type="submit" className="vilo-btn vilo-btn--primary" disabled={saving}>{saving ? "Saving..." : editingEvent ? "Save Event" : "Create Event"}</button>
               </div>
             </form>
           </div>
           <DiscardChangesDialog open={eventCloseGuard.confirmDiscard} onKeepEditing={eventCloseGuard.keepEditing} onDiscard={eventCloseGuard.discard} />
+        </div>
+      ) : null}
+      {deleteEventTarget ? (
+        <div className="vilo-modal-overlay vilo-modal-overlay--nested" onClick={() => setDeleteEventTarget(null)}>
+          <div className="vilo-modal vilo-confirm-modal" onClick={(event) => event.stopPropagation()}>
+            <div className="vilo-modal__header"><h3>Delete Event</h3></div>
+            <div className="vilo-modal__body">
+              <p>Delete <strong>{deleteEventTarget.title}</strong>? This action cannot be undone.</p>
+              <div className="vilo-table-actions">
+                <button type="button" className="vilo-btn vilo-btn--secondary" onClick={() => setDeleteEventTarget(null)}>Cancel</button>
+                <button type="button" className="vilo-btn vilo-btn--danger" onClick={deleteSelectedEvent} disabled={saving}>{saving ? "Deleting..." : "Delete Event"}</button>
+              </div>
+            </div>
+          </div>
         </div>
       ) : null}
     </section>

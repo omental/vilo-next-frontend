@@ -103,7 +103,10 @@ class ReportsDBStub:
                 currency="USD",
                 status="partially_paid",
                 issue_date=date(2026, 6, 9),
-                due_date=date(2026, 6, 30),
+                # Keep this partially-paid invoice deterministically non-overdue.
+                # The report's production overdue calculation intentionally uses
+                # the real current date.
+                due_date=date(2099, 6, 30),
                 subtotal=Decimal("100.00"),
                 tax_amount=Decimal("15.00"),
                 total=Decimal("115.00"),

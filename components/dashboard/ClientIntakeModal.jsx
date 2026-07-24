@@ -27,6 +27,7 @@ function readMetaLine(notes, label) {
 }
 
 function parseClient(client) {
+  if (client?._draftForm) return { ...initialState, ...client._draftForm };
   const name = String(client?.name || "").trim();
   const [first_name = "", ...rest] = name.split(" ");
   const last_name = rest.join(" ").trim();
@@ -72,24 +73,34 @@ function isCorporateType(type) {
   return String(type || "").toLowerCase() === "corporate";
 }
 
-export default function ClientIntakeModal({ open, mode = "create", client = null, saving = false, apiError = "", onClose, onSubmit }) {
+export default function ClientIntakeModal({
+  open, mode = "create", client = null, draftAttachment = null, saving = false, apiError = "",
+  onClose, onSubmit, onSaveDraft, onDiscardDraft, onViewDraftAttachment,
+}) {
   const [form, setForm] = useState(initialState);
   const [initialForm, setInitialForm] = useState(initialState);
   const [idFile, setIdFile] = useState(null);
   const [errors, setErrors] = useState({});
+  const [attachmentRemoved, setAttachmentRemoved] = useState(false);
+  const [attachmentError, setAttachmentError] = useState("");
 
   useEffect(() => {
     if (!open) return;
     setErrors({});
     setIdFile(null);
+    setAttachmentRemoved(false);
+    setAttachmentError("");
     const next = client ? parseClient(client) : initialState;
     setForm(next);
     setInitialForm(next);
   }, [open, client]);
 
   const title = useMemo(() => (mode === "edit" ? "Edit Client" : "Client Intake Form"), [mode]);
-  const dirty = useMemo(() => JSON.stringify(form) !== JSON.stringify(initialForm) || Boolean(idFile), [form, initialForm, idFile]);
-  const closeGuard = useModalCloseGuard({ open, isDirty: dirty, isSubmitting: saving, onClose });
+  const dirty = useMemo(
+    () => JSON.stringify(form) !== JSON.stringify(initialForm) || Boolean(idFile) || attachmentRemoved,
+    [attachmentRemoved, form, initialForm, idFile],
+  );
+  const closeGuard = useModalCloseGuard({ open, isDirty: dirty, isSubmitting: saving, onClose, onDiscard: onDiscardDraft });
 
   if (!open) return null;
 
@@ -112,7 +123,7 @@ export default function ClientIntakeModal({ open, mode = "create", client = null
     e.preventDefault();
     if (saving) return;
     if (!validate()) return;
-    await onSubmit(payloadFromState(form, client), idFile);
+    await onSubmit(payloadFromState(form, client), idFile, { removeDraftAttachment: attachmentRemoved });
   }
 
   const corporate = isCorporateType(form.client_type);
@@ -150,17 +161,41 @@ export default function ClientIntakeModal({ open, mode = "create", client = null
 
           <div className="client-upload-block">
             <p>Upload ID</p>
+            {draftAttachment && !attachmentRemoved ? (
+              <div className="client-draft-attachment">
+                <div>
+                  <strong>Saved attachment: {draftAttachment.file_name}</strong>
+                  <span>{draftAttachment.file_size ? `${Math.ceil(draftAttachment.file_size / 1024)} KB` : "Stored securely"}</span>
+                </div>
+                <div className="vilo-table-actions">
+                  <button type="button" className="vilo-btn vilo-btn--secondary vilo-btn--xs" onClick={async () => {
+                    setAttachmentError("");
+                    try {
+                      await onViewDraftAttachment?.();
+                    } catch (err) {
+                      setAttachmentError(err.message || "Stored attachment could not be loaded.");
+                    }
+                  }}>View</button>
+                  <button type="button" className="vilo-btn vilo-btn--danger vilo-btn--xs" onClick={() => { setAttachmentRemoved(true); setIdFile(null); }}>Remove</button>
+                </div>
+              </div>
+            ) : null}
             <label className="client-upload-dropzone">
-              <strong>Drag &amp; drop or Browse</strong>
-              <span>PDF, DOC/DOCX, JPG, PNG. Max file size 50MB</span>
+              <strong>{draftAttachment && !attachmentRemoved ? "Replace saved attachment" : "Drag & drop or Browse"}</strong>
+              <span>PDF, DOC/DOCX, JPG, PNG. Max file size 10MB</span>
               <input
                 type="file"
                 accept=".pdf,.doc,.docx,.jpg,.jpeg,.png"
-                onChange={(e) => setIdFile(e.target.files?.[0] || null)}
+                onChange={(e) => {
+                  setIdFile(e.target.files?.[0] || null);
+                  if (e.target.files?.[0]) setAttachmentRemoved(false);
+                }}
                 style={{ display: "none" }}
               />
             </label>
-            {idFile ? <p className="vilo-state">Selected file: {idFile.name}</p> : null}
+            {idFile ? <p className="vilo-state">Selected replacement: {idFile.name}</p> : null}
+            {attachmentRemoved && !idFile ? <p className="vilo-state">The saved attachment will be removed when you save or complete this intake.</p> : null}
+            {attachmentError ? <p className="vilo-state vilo-state--error">{attachmentError}</p> : null}
           </div>
 
           <div>
@@ -177,7 +212,16 @@ export default function ClientIntakeModal({ open, mode = "create", client = null
           </div>
         </form>
       </div>
-      <DiscardChangesDialog open={closeGuard.confirmDiscard} onKeepEditing={closeGuard.keepEditing} onDiscard={closeGuard.discard} />
+      <DiscardChangesDialog
+        open={closeGuard.confirmDiscard}
+        onKeepEditing={closeGuard.keepEditing}
+        onDiscard={closeGuard.discard}
+        onSaveDraft={mode === "create" && onSaveDraft ? async () => {
+          await onSaveDraft(form, idFile, { removeDraftAttachment: attachmentRemoved });
+          closeGuard.keepEditing();
+        } : undefined}
+        saving={saving}
+      />
     </div>
   );
 }

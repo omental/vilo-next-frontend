@@ -3,8 +3,7 @@
 import Link from "next/link";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useParams } from "next/navigation";
-import { apiDownload, apiRequest, apiUpload } from "../../../../lib/api";
-import { getToken } from "../../../../lib/auth";
+import { apiBlob, apiDownload, apiRequest, apiUpload } from "../../../../lib/api";
 import ClientIntakeModal from "../../../../components/dashboard/ClientIntakeModal";
 
 function formatDate(value) {
@@ -367,16 +366,10 @@ export default function ClientDetailPage() {
     setPreviewError("");
     setPreviewUrl("");
     try {
-      const token = getToken();
-      const base = process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:8000";
-      const response = await fetch(`${base}/api/v1/clients/${id}/id-documents/${row.id}/download`, {
-        headers: token ? { Authorization: `Bearer ${token}` } : {},
-      });
-      if (!response.ok) throw new Error("Failed to load preview");
-      const blob = await response.blob();
+      const blob = await apiBlob(`/api/v1/clients/${id}/id-documents/${row.id}/view`);
       setPreviewUrl(URL.createObjectURL(blob));
     } catch (err) {
-      setPreviewError(err.message || "Failed to load preview");
+      setPreviewError(err.message || "Document could not be loaded");
     } finally {
       setPreviewLoading(false);
     }

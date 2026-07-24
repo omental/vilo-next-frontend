@@ -66,6 +66,9 @@ class CalendarDBStub:
     async def refresh(self, obj):
         return None
 
+    async def delete(self, obj):
+        self.deleted = obj
+
 
 def build_client(role: str, db: CalendarDBStub, org_id: int = 1):
     user = DummyUser(id=1, organization_id=org_id, name=f"{role} user", email="u@example.com", role=UserRole(role))
@@ -152,3 +155,40 @@ def test_client_role_cannot_mutate_calendar_events():
         assert res.status_code == 403
     finally:
         cleanup(client)
+
+
+def test_authorized_staff_can_update_calendar_event():
+    event = _event()
+    db = CalendarDBStub(scalar_values=[event])
+    client = build_client("lawyer", db)
+    try:
+        res = client.patch(f"/api/v1/calendar/events/{event.id}", json={"title": "Updated Hearing", "location": "Courtroom 2"})
+        assert res.status_code == 200
+        assert res.json()["title"] == "Updated Hearing"
+        assert res.json()["location"] == "Courtroom 2"
+    finally:
+        cleanup(client)
+
+
+def test_authorized_staff_can_delete_calendar_event():
+    event = _event()
+    db = CalendarDBStub(scalar_values=[event])
+    client = build_client("admin", db)
+    try:
+        res = client.delete(f"/api/v1/calendar/events/{event.id}")
+        assert res.status_code == 200
+        assert res.json() == {"ok": True}
+        assert db.deleted is event
+    finally:
+        cleanup(client)
+
+
+def test_cross_org_event_update_and_delete_are_hidden():
+    for method in ("patch", "delete"):
+        db = CalendarDBStub(scalar_values=[None])
+        client = build_client("partner", db)
+        try:
+            response = client.patch("/api/v1/calendar/events/999", json={"title": "No"}) if method == "patch" else client.delete("/api/v1/calendar/events/999")
+            assert response.status_code == 404
+        finally:
+            cleanup(client)

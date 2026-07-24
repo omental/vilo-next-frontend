@@ -30,7 +30,7 @@ from app.schemas.document import (
     OnlyOfficeSessionResponse,
 )
 from app.services.audit import log_audit_event
-from app.services.document_storage import MAX_UPLOAD_BYTES, persist_file, safe_original_name
+from app.services.document_storage import MAX_UPLOAD_BYTES, persist_file, resolve_stored_file, safe_original_name
 from app.services.email import build_document_shared_email
 from app.services.jobs import enqueue_email
 from app.services.notifications import create_notification
@@ -605,10 +605,26 @@ async def download_document(
     doc = await get_org_document(db, document_id, current_user)
     if not doc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document not found")
-    path = Path(doc.file_path)
-    if not path.exists():
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Stored file not found")
+    path = resolve_stored_file(doc.file_path, STORAGE_ROOT)
     return FileResponse(path=str(path), filename=doc.file_name, media_type=doc.file_type or "application/octet-stream")
+
+
+@router.get("/{document_id}/view")
+async def view_document(
+    document_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(role_guard(ALLOWED_STAFF)),
+):
+    doc = await get_org_document(db, document_id, current_user)
+    if not doc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document not found")
+    path = resolve_stored_file(doc.file_path, STORAGE_ROOT)
+    return FileResponse(
+        path=str(path),
+        filename=doc.file_name,
+        media_type=doc.file_type or "application/octet-stream",
+        content_disposition_type="inline",
+    )
 
 
 @router.patch("/{document_id}", response_model=DocumentResponse)

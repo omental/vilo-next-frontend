@@ -10,8 +10,9 @@ const initialForm = {
   title: "",
   description: "",
   client_id: "",
-  status: "draft",
+  status: "active",
   priority: "medium",
+  expected_completion_date: "",
   assigned_user_ids: [],
 };
 
@@ -27,7 +28,7 @@ function CasesPageContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const titleInputRef = useRef(null);
-  const formCardRef = useRef(null);
+  const [draftCaseId, setDraftCaseId] = useState(null);
   const [cases, setCases] = useState([]);
   const [clients, setClients] = useState([]);
   const [team, setTeam] = useState([]);
@@ -119,11 +120,13 @@ function CasesPageContent() {
     setCreateOpen(shouldOpen);
   }, [searchParams]);
 
-  useEffect(() => {
-    if (!createOpen) return;
-    formCardRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
-    titleInputRef.current?.focus();
-  }, [createOpen]);
+  useEffect(() => { if (createOpen) titleInputRef.current?.focus(); }, [createOpen]);
+
+  function resetCreateModal() {
+    setCreateOpen(false);
+    setDraftCaseId(null);
+    setForm(initialForm);
+  }
 
   async function createCase(e) {
     e.preventDefault();
@@ -132,15 +135,16 @@ function CasesPageContent() {
     setError("");
     setSuccess("");
     try {
-      await apiRequest("/api/v1/cases", {
-        method: "POST",
+      await apiRequest(draftCaseId ? `/api/v1/cases/${draftCaseId}` : "/api/v1/cases", {
+        method: draftCaseId ? "PATCH" : "POST",
         body: JSON.stringify({
           ...form,
           client_id: Number(form.client_id),
+          status: "active",
+          expected_completion_date: form.expected_completion_date || null,
         }),
       });
-      setForm(initialForm);
-      setCreateOpen(false);
+      resetCreateModal();
       setSuccess("Case created successfully.");
       await loadCases();
     } catch (err) {
@@ -148,6 +152,61 @@ function CasesPageContent() {
     } finally {
       setSaving(false);
     }
+  }
+
+  async function saveCaseDraft() {
+    if (saving) return;
+    setSaving(true);
+    setError("");
+    try {
+      const body = {
+        ...form,
+        title: form.title.trim() || null,
+        client_id: form.client_id ? Number(form.client_id) : null,
+        status: "draft",
+        expected_completion_date: form.expected_completion_date || null,
+      };
+      await apiRequest(draftCaseId ? `/api/v1/cases/${draftCaseId}` : "/api/v1/cases", {
+        method: draftCaseId ? "PATCH" : "POST",
+        body: JSON.stringify(body),
+      });
+      createCloseGuard.keepEditing();
+      resetCreateModal();
+      setSuccess("Case saved as draft.");
+      await loadCases();
+    } catch (err) {
+      setError(err.message || "Draft could not be saved.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function discardCreateChanges() {
+    if (draftCaseId) {
+      try {
+        await apiRequest(`/api/v1/cases/${draftCaseId}`, { method: "DELETE" });
+        await loadCases();
+      } catch (err) {
+        setError(err.message || "Draft could not be discarded.");
+        return;
+      }
+    }
+    resetCreateModal();
+  }
+
+  function openDraft(caseRow) {
+    setDraftCaseId(caseRow.id);
+    setForm({
+      title: caseRow.title || "",
+      description: caseRow.description || "",
+      client_id: caseRow.client_id ? String(caseRow.client_id) : "",
+      status: "draft",
+      priority: caseRow.priority || "medium",
+      expected_completion_date: caseRow.expected_completion_date || "",
+      assigned_user_ids: (caseRow.assigned_users || []).map((user) => user.id),
+    });
+    setCreateOpen(true);
+    setMenuOpenId(null);
   }
 
   function toggleUser(userId) {
@@ -173,6 +232,7 @@ function CasesPageContent() {
           description: editCase.description || "",
           status: editCase.status,
           priority: editCase.priority,
+          expected_completion_date: editCase.expected_completion_date || null,
         }),
       });
       setEditCase(null);
@@ -233,6 +293,8 @@ function CasesPageContent() {
     setEditInitialCase(null);
   }
 
+  const createDirty = createOpen && (draftCaseId !== null || JSON.stringify(form) !== JSON.stringify(initialForm));
+  const createCloseGuard = useModalCloseGuard({ open: createOpen, isDirty: createDirty, isSubmitting: saving, onClose: resetCreateModal, onDiscard: discardCreateChanges });
   const editCaseDirty = Boolean(editCase) && JSON.stringify(editCase) !== JSON.stringify(editInitialCase);
   const editCloseGuard = useModalCloseGuard({ open: Boolean(editCase), isDirty: editCaseDirty, isSubmitting: saving, onClose: closeEditCase });
 
@@ -245,67 +307,47 @@ function CasesPageContent() {
           className={createOpen ? "vilo-btn vilo-btn--secondary" : "vilo-btn vilo-btn--primary"}
           aria-expanded={createOpen}
           onClick={() => {
-            setCreateOpen((open) => !open);
+            if (createOpen) createCloseGuard.requestClose();
+            else setCreateOpen(true);
             setSuccess("");
           }}
         >
-          {createOpen ? "Hide Form" : "Create Case"}
+          Create Case
         </button>
       </div>
 
       {success ? <div className="vilo-state-block"><p className="vilo-state">{success}</p></div> : null}
 
       {createOpen ? (
-        <article ref={formCardRef} className="dashboard-card vilo-form-card vilo-collapsible-card">
-          <form className="vilo-form-grid vilo-collapsible-card__body" onSubmit={createCase}>
-            <input ref={titleInputRef} placeholder="Case title" value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} required />
-            <textarea placeholder="Description" value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} />
-
-            <select value={form.client_id} onChange={(e) => setForm({ ...form, client_id: e.target.value })} required>
-              <option value="">Select client</option>
-              {clients.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
-            </select>
-
-            <div className="vilo-form-row-two">
-              <select value={form.status} onChange={(e) => setForm({ ...form, status: e.target.value })}>
-                <option value="draft">draft</option>
-                <option value="active">active</option>
-                <option value="closed">closed</option>
-                <option value="archived">archived</option>
-              </select>
-
-              <select value={form.priority} onChange={(e) => setForm({ ...form, priority: e.target.value })}>
-                <option value="low">low</option>
-                <option value="medium">medium</option>
-                <option value="high">high</option>
-              </select>
+        <div className="vilo-modal-overlay" onClick={createCloseGuard.requestClose}>
+          <div className="vilo-modal vilo-modal--intake case-create-modal" onClick={(event) => event.stopPropagation()}>
+            <div className="vilo-modal__header">
+              <h3>{draftCaseId ? "Complete Draft Case" : "Create Case"}</h3>
+              <button type="button" className="vilo-btn vilo-btn--ghost vilo-btn--xs" onClick={createCloseGuard.requestClose}>Close</button>
             </div>
-
-            <div className="vilo-checkbox-grid">
-              <div className="case-assign-heading"><p>Assign Users</p></div>
-              <select value="" onChange={(e) => { if (!e.target.value) return; toggleUser(Number(e.target.value)); }}>
-                <option value="">Select team member</option>
-                {team.filter((user) => !form.assigned_user_ids.includes(user.id)).map((user) => (
-                  <option key={user.id} value={user.id}>{user.name} ({user.role})</option>
-                ))}
-              </select>
-              <div className="case-assigned-list">
-                {form.assigned_user_ids.length ? form.assigned_user_ids.map((userId) => {
-                  const member = team.find((u) => u.id === userId);
-                  if (!member) return null;
-                  return (
-                    <span key={userId} className="case-assigned-pill">
-                      {member.name} ({member.role})
-                      <button type="button" onClick={() => toggleUser(userId)} aria-label={`Remove ${member.name}`}>×</button>
-                    </span>
-                  );
-                }) : <span className="case-assigned-empty">No team members selected.</span>}
+            <form className="vilo-modal__body vilo-form-grid" onSubmit={createCase}>
+              <div><label>Case Title *</label><input ref={titleInputRef} placeholder="Case title" value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} required /></div>
+              <div><label>Description</label><textarea placeholder="Description" value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} /></div>
+              <div className="vilo-form-row-two">
+                <div><label>Client *</label><select value={form.client_id} onChange={(e) => setForm({ ...form, client_id: e.target.value })} required><option value="">Select client</option>{clients.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}</select></div>
+                <div><label>Priority</label><select value={form.priority} onChange={(e) => setForm({ ...form, priority: e.target.value })}><option value="low">Low</option><option value="medium">Medium</option><option value="high">High</option></select></div>
               </div>
-            </div>
-
-            <button type="submit" disabled={saving}>{saving ? "Creating..." : "Create Case"}</button>
-          </form>
-        </article>
+              <div><label>Expected Completion Date</label><input type="date" value={form.expected_completion_date} onChange={(e) => setForm({ ...form, expected_completion_date: e.target.value })} /></div>
+              <div className="vilo-checkbox-grid">
+                <div className="case-assign-heading"><p>Assign Users</p></div>
+                <select value="" onChange={(e) => { if (e.target.value) toggleUser(Number(e.target.value)); }}><option value="">Select team member</option>{team.filter((user) => !form.assigned_user_ids.includes(user.id)).map((user) => <option key={user.id} value={user.id}>{user.name} ({user.role})</option>)}</select>
+                <div className="case-assigned-list">{form.assigned_user_ids.length ? form.assigned_user_ids.map((userId) => { const member = team.find((u) => u.id === userId); return member ? <span key={userId} className="case-assigned-pill">{member.name} ({member.role})<button type="button" onClick={() => toggleUser(userId)} aria-label={`Remove ${member.name}`}>×</button></span> : null; }) : <span className="case-assigned-empty">No team members selected.</span>}</div>
+              </div>
+              {error ? <p className="vilo-state vilo-state--error">{error}</p> : null}
+              <div className="vilo-modal__footer case-create-footer">
+                <button type="button" className="vilo-btn vilo-btn--secondary" onClick={createCloseGuard.requestClose}>Cancel</button>
+                <button type="button" className="vilo-btn vilo-btn--secondary" onClick={saveCaseDraft} disabled={saving}>{saving ? "Saving..." : "Save as Draft"}</button>
+                <button type="submit" className="vilo-btn vilo-btn--primary" disabled={saving}>{saving ? "Saving..." : draftCaseId ? "Complete Case" : "Create Case"}</button>
+              </div>
+            </form>
+          </div>
+          <DiscardChangesDialog open={createCloseGuard.confirmDiscard} onSaveDraft={saveCaseDraft} onKeepEditing={createCloseGuard.keepEditing} onDiscard={createCloseGuard.discard} saving={saving} />
+        </div>
       ) : null}
 
       <article className="dashboard-card vilo-table-card">
@@ -346,7 +388,7 @@ function CasesPageContent() {
               <tbody>
                 {cases.map((c) => (
                   <tr key={c.id} className="cases-row-link" onClick={() => { if (menuOpenId !== c.id) router.push(`/dashboard/cases/${c.id}`); }}>
-                    <td><Link href={`/dashboard/cases/${c.id}`} className="cases-title-link">{c.title}</Link></td>
+                    <td><Link href={`/dashboard/cases/${c.id}`} className="cases-title-link">{c.title || "Untitled draft"}</Link></td>
                     <td><span className={`vilo-badge vilo-badge--${c.status}`}>{c.status}</span></td>
                     <td><span className={`vilo-badge vilo-badge--priority-${c.priority}`}>{c.priority}</span></td>
                     <td>{c.client_name || `#${c.client_id}`}</td>
@@ -362,7 +404,7 @@ function CasesPageContent() {
                         {menuOpenId === c.id ? (
                           <div className="case-actions-menu">
                             <Link href={`/dashboard/cases/${c.id}`}>View</Link>
-                            <button type="button" onClick={() => openEditCase(c)}>Edit</button>
+                            <button type="button" onClick={() => c.status === "draft" ? openDraft(c) : openEditCase(c)}>{c.status === "draft" ? "Open Draft" : "Edit"}</button>
                             {c.status === "archived" ? <button type="button" onClick={() => restoreCase(c)}>Restore</button> : <button type="button" className="is-danger" onClick={() => setArchiveCase(c)}>Archive</button>}
                           </div>
                         ) : null}
@@ -411,6 +453,7 @@ function CasesPageContent() {
                     <option value="high">high</option>
                   </select>
                 </div>
+                <div><label>Expected Completion Date</label><input type="date" value={editCase.expected_completion_date || ""} onChange={(e) => setEditCase((p) => ({ ...p, expected_completion_date: e.target.value }))} /></div>
                 <div className="vilo-table-actions">
                   <button type="button" className="vilo-btn vilo-btn--secondary" onClick={editCloseGuard.requestClose} disabled={saving}>Cancel</button>
                   <button type="submit" className="vilo-btn vilo-btn--primary" disabled={saving}>{saving ? "Saving..." : "Save Changes"}</button>

@@ -14,6 +14,7 @@ from app.db.session import get_db
 from app.models.case import Case
 from app.models.document import Document
 from app.models.precedent import Precedent
+from app.models.practice_area import PracticeArea
 from app.models.user import User
 from app.schemas.precedent import (
     PrecedentCopyToCaseRequest,
@@ -23,9 +24,11 @@ from app.schemas.precedent import (
     PrecedentResponse,
     PrecedentSummaryResponse,
     PrecedentUpdate,
+    PracticeAreaCreate,
+    PracticeAreaResponse,
 )
 from app.services.audit import log_audit_event
-from app.services.document_storage import build_text_filename, persist_file, safe_original_name
+from app.services.document_storage import build_text_filename, persist_file, resolve_stored_file, safe_original_name
 from app.services.timeline import create_case_timeline_event
 
 router = APIRouter(prefix="/precedents", tags=["precedents"])
@@ -115,8 +118,12 @@ def build_copy_payload(precedent: Precedent, requested_name: str | None, overrid
         return title, override_text.encode("utf-8"), "text/plain"
 
     if precedent.file_path and precedent.file_name:
+        # Copy-to-case predates the shared serving helper. Keep the exact
+        # existing storage reference semantics here; view/download still use
+        # the constrained resolver and the copied destination is generated
+        # inside DOCUMENT_STORAGE_ROOT.
         source_path = Path(precedent.file_path)
-        if not source_path.exists():
+        if not source_path.is_file():
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Stored precedent file not found")
         return title, source_path.read_bytes(), precedent.file_type
 
@@ -125,6 +132,48 @@ def build_copy_payload(precedent: Precedent, requested_name: str | None, overrid
         return title, precedent.content_text.encode("utf-8"), "text/plain"
 
     raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Precedent has no file or text content to copy")
+
+
+@router.get("/practice-areas", response_model=list[PracticeAreaResponse])
+async def list_practice_areas(
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(role_guard(VIEW_ROLES)),
+):
+    rows = await db.scalars(
+        select(PracticeArea).where(PracticeArea.organization_id == current_user.organization_id).order_by(PracticeArea.name.asc())
+    )
+    return [PracticeAreaResponse(id=row.id, name=row.name) for row in rows.all()]
+
+
+@router.post("/practice-areas", response_model=PracticeAreaResponse, status_code=201)
+async def create_practice_area(
+    payload: PracticeAreaCreate,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(role_guard(MANAGE_ROLES)),
+):
+    name = " ".join(payload.name.split())
+    if not name:
+        raise HTTPException(status_code=422, detail="Practice area name is required")
+    normalized = name.casefold()
+    existing = await db.scalar(
+        select(PracticeArea).where(
+            PracticeArea.organization_id == current_user.organization_id,
+            PracticeArea.normalized_name == normalized,
+        )
+    )
+    if existing:
+        raise HTTPException(status_code=409, detail="That practice area already exists")
+    row = PracticeArea(
+        organization_id=current_user.organization_id,
+        name=name,
+        normalized_name=normalized,
+        created_by=current_user.id,
+        created_at=datetime.now(timezone.utc),
+    )
+    db.add(row)
+    await db.commit()
+    await db.refresh(row)
+    return PracticeAreaResponse(id=row.id, name=row.name)
 
 
 def build_copy_filename(precedent: Precedent, title: str, override_text: str | None) -> str:
@@ -345,10 +394,24 @@ async def download_precedent(
     precedent = await get_precedent_or_404(db, precedent_id, current_user.organization_id)
     if not precedent.file_path or not precedent.file_name:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Precedent file not found")
-    path = Path(precedent.file_path)
-    if not path.exists():
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Stored precedent file not found")
+    path = resolve_stored_file(precedent.file_path, PRECEDENT_STORAGE_ROOT)
     return FileResponse(path=str(path), filename=precedent.file_name, media_type=precedent.file_type or "application/octet-stream")
+
+
+@router.get("/{precedent_id}/view")
+async def view_precedent(
+    precedent_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(role_guard(VIEW_ROLES)),
+):
+    precedent = await get_precedent_or_404(db, precedent_id, current_user.organization_id)
+    path = resolve_stored_file(precedent.file_path, PRECEDENT_STORAGE_ROOT)
+    return FileResponse(
+        path=str(path),
+        media_type=precedent.file_type or "application/octet-stream",
+        content_disposition_type="inline",
+        filename=precedent.file_name or path.name,
+    )
 
 
 @router.post("/{precedent_id}/archive", response_model=PrecedentResponse)

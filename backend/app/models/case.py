@@ -1,6 +1,6 @@
-from datetime import datetime
+from datetime import date, datetime
 import enum
-from sqlalchemy import DateTime, Enum, ForeignKey, String, Text, UniqueConstraint
+from sqlalchemy import CheckConstraint, Date, DateTime, Enum, ForeignKey, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base
@@ -21,12 +21,19 @@ class CasePriority(str, enum.Enum):
 
 class Case(Base):
     __tablename__ = "cases"
+    __table_args__ = (
+        CheckConstraint(
+            "status = 'draft' OR (title IS NOT NULL AND client_id IS NOT NULL)",
+            name="ck_cases_non_draft_required_fields",
+        ),
+    )
 
     id: Mapped[int] = mapped_column(primary_key=True, index=True)
     organization_id: Mapped[int] = mapped_column(ForeignKey("organizations.id", ondelete="CASCADE"), index=True, nullable=False)
-    title: Mapped[str] = mapped_column(String(255), nullable=False)
+    title: Mapped[str | None] = mapped_column(String(255), nullable=True)
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
-    client_id: Mapped[int] = mapped_column(ForeignKey("clients.id", ondelete="RESTRICT"), index=True, nullable=False)
+    client_id: Mapped[int | None] = mapped_column(ForeignKey("clients.id", ondelete="RESTRICT"), index=True, nullable=True)
+    expected_completion_date: Mapped[date | None] = mapped_column(Date, nullable=True)
     status: Mapped[CaseStatus] = mapped_column(Enum(CaseStatus, name="casestatus"), default=CaseStatus.draft, nullable=False)
     priority: Mapped[CasePriority] = mapped_column(Enum(CasePriority, name="casepriority"), default=CasePriority.medium, nullable=False)
     created_by: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="RESTRICT"), index=True, nullable=False)

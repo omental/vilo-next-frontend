@@ -466,8 +466,6 @@ async def update_invoice(invoice_id: int, payload: InvoiceUpdate, db: AsyncSessi
     next_client_id = updates["client_id"] if "client_id" in updates else inv.client_id
     next_case_id = updates["case_id"] if "case_id" in updates else inv.case_id
     next_currency = normalize_currency(updates["currency"]) if "currency" in updates and updates["currency"] is not None else inv.currency
-    if next_case_id is None:
-        raise HTTPException(status_code=400, detail="Invoice must be linked to a matter")
     await validate_client_case(db, current_user.organization_id, next_client_id, next_case_id)
     payment_account = await resolve_invoice_payment_account(
         db,

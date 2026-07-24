@@ -78,3 +78,12 @@ class PrecedentListFilters(BaseModel):
     sort: str = "updated_at"
     limit: int = 50
     offset: int = 0
+
+
+class PracticeAreaCreate(BaseModel):
+    name: str = Field(min_length=1, max_length=100)
+
+
+class PracticeAreaResponse(BaseModel):
+    id: int
+    name: str

@@ -19,6 +19,16 @@ router = APIRouter(prefix="/cases", tags=["cases"])
 ALLOWED_STAFF = ["partner", "admin", "lawyer", "paralegal"]
 
 
+def validate_case_required_fields(case_status, title: str | None, client_id: int | None) -> None:
+    normalized_status = getattr(case_status, "value", case_status)
+    if normalized_status == "draft":
+        return
+    if not (title or "").strip():
+        raise HTTPException(status_code=422, detail="Title is required to complete a case")
+    if client_id is None:
+        raise HTTPException(status_code=422, detail="Client is required to complete a case")
+
+
 async def get_case_or_404(db: AsyncSession, case_id: int, current_user: User) -> Case:
     case = await db.scalar(
         scope_cases(select(Case), current_user)
@@ -49,6 +59,7 @@ def serialize_case(case: Case) -> CaseResponse:
         client_id=case.client_id,
         status=case.status.value,
         priority=case.priority.value,
+        expected_completion_date=getattr(case, "expected_completion_date", None),
         created_by=case.created_by,
         assigned_users=assigned_users,
         created_at=case.created_at,
@@ -77,25 +88,29 @@ async def create_case(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(role_guard(ALLOWED_STAFF)),
 ):
-    client = await db.scalar(
-        select(Client).where(
-            Client.id == payload.client_id,
-            Client.organization_id == current_user.organization_id,
+    client = None
+    if payload.client_id is not None:
+        client = await db.scalar(
+            select(Client).where(
+                Client.id == payload.client_id,
+                Client.organization_id == current_user.organization_id,
+            )
         )
-    )
-    if not client:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Client must belong to your organization")
+        if not client:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Client must belong to your organization")
+    validate_case_required_fields(payload.status, payload.title, payload.client_id)
 
     users = await validate_assignments(db, current_user.organization_id, payload.assigned_user_ids)
     now = datetime.now(timezone.utc)
 
     case = Case(
         organization_id=current_user.organization_id,
-        title=payload.title,
+        title=(payload.title or "").strip() or None,
         description=payload.description,
         client_id=payload.client_id,
         status=payload.status,
         priority=payload.priority,
+        expected_completion_date=payload.expected_completion_date,
         created_by=current_user.id,
         created_at=now,
         updated_at=now,
@@ -158,8 +173,8 @@ async def query_cases(
         term = f"%{normalized_search}%"
         filters.append(or_(Case.title.ilike(term), Client.name.ilike(term), cast(Case.id, String).ilike(f"%{numeric_reference}%")))
 
-    base = select(Case).join(Client, Client.id == Case.client_id).where(and_(*filters))
-    total = int((await db.scalar(select(func.count(Case.id)).join(Client, Client.id == Case.client_id).where(and_(*filters)))) or 0)
+    base = select(Case).outerjoin(Client, Client.id == Case.client_id).where(and_(*filters))
+    total = int((await db.scalar(select(func.count(Case.id)).outerjoin(Client, Client.id == Case.client_id).where(and_(*filters)))) or 0)
     rows = await db.scalars(
         base.options(
             selectinload(Case.client),
@@ -225,6 +240,10 @@ async def update_case(
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Client must belong to your organization")
 
     updates = payload.model_dump(exclude_unset=True, exclude={"assigned_user_ids"})
+    next_status = updates.get("status", case.status)
+    next_title = updates.get("title", case.title)
+    next_client_id = updates.get("client_id", case.client_id)
+    validate_case_required_fields(next_status, next_title, next_client_id)
     for key, value in updates.items():
         setattr(case, key, value)
 

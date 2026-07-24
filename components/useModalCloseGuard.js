@@ -62,7 +62,7 @@ export function useModalCloseGuard({ open, isDirty, isSubmitting = false, onClos
   };
 }
 
-export function DiscardChangesDialog({ open, onKeepEditing, onDiscard }) {
+export function DiscardChangesDialog({ open, onKeepEditing, onDiscard, onSaveDraft, saving = false }) {
   const [mounted, setMounted] = useState(false);
   const dialogRef = useRef(null);
   const keepButtonRef = useRef(null);
@@ -139,8 +139,9 @@ export function DiscardChangesDialog({ open, onKeepEditing, onDiscard }) {
         </div>
         <div className="vilo-discard-card__body">
           <div className="vilo-table-actions">
-            <button ref={keepButtonRef} className="vilo-btn vilo-btn--secondary" type="button" onClick={onKeepEditing}>Keep editing</button>
-            <button className="vilo-btn vilo-btn--primary" type="button" onClick={onDiscard}>Discard</button>
+            {onSaveDraft ? <button className="vilo-btn vilo-btn--primary" type="button" onClick={onSaveDraft} disabled={saving}>{saving ? "Saving..." : "Save as Draft"}</button> : null}
+            <button className="vilo-btn vilo-btn--danger" type="button" onClick={onDiscard} disabled={saving}>Discard Changes</button>
+            <button ref={keepButtonRef} className="vilo-btn vilo-btn--secondary" type="button" onClick={onKeepEditing} disabled={saving}>Continue Editing</button>
           </div>
         </div>
       </div>

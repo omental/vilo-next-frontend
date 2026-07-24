@@ -61,9 +61,9 @@ class InvoiceClientSummary(BaseModel):
 
 class InvoiceCreate(BaseModel):
     client_id: int
-    case_id: int
+    case_id: int | None = None
     invoice_number: str | None = None
-    currency: str = "USD"
+    currency: str = "JMD"
     issue_date: date
     due_date: date | None = None
     notes: str | None = None

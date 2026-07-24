@@ -5239,6 +5239,29 @@ button {
   margin: 0.9rem 0;
 }
 
+.client-draft-attachment {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  margin-bottom: 0.75rem;
+  padding: 0.75rem 0.85rem;
+  border: 1px solid #ded8ef;
+  border-radius: 12px;
+  background: #f8f6ff;
+}
+
+.client-draft-attachment strong,
+.client-draft-attachment span {
+  display: block;
+}
+
+.client-draft-attachment span {
+  margin-top: 0.2rem;
+  color: #7a768f;
+  font-size: 0.8rem;
+}
+
 .client-upload-block p {
   margin: 0 0 0.35rem;
   color: #56516a;
@@ -6846,8 +6869,16 @@ button {
 
 .calendar-event-modal {
   width: min(760px, 100%);
-  max-height: min(92vh, 860px);
+  max-height: calc(100dvh - 2rem);
   display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.calendar-event-modal > form {
+  display: flex;
+  flex: 1;
+  min-height: 0;
   flex-direction: column;
 }
 
@@ -6865,7 +6896,8 @@ button {
   display: grid;
   gap: 1rem;
   padding: 1.15rem 1.2rem 1rem;
-  overflow: auto;
+  overflow-y: auto;
+  overscroll-behavior: contain;
 }
 
 .calendar-event-modal__grid {
@@ -6938,9 +6970,30 @@ button {
   align-items: center;
   justify-content: flex-end;
   gap: 0.75rem;
-  padding: 1rem 1.2rem 1.2rem;
+  padding: 1rem 1.2rem max(1.2rem, env(safe-area-inset-bottom));
   border-top: 1px solid #f0edf8;
   background: #fff;
+}
+
+.case-create-modal {
+  max-height: calc(100dvh - 2rem);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.case-create-modal .vilo-modal__body {
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.case-create-footer {
+  position: sticky;
+  bottom: 0;
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.65rem;
+  padding-bottom: max(1rem, env(safe-area-inset-bottom));
 }
 
 .calendar-event-modal__actions {
