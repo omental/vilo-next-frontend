@@ -229,6 +229,7 @@ function InvoiceDetailInner() {
     if (!invoice) return;
     setEditForm({
       client_id: String(invoice.client_id || ""),
+      manual_client_name: invoice.manual_client_name || "",
       case_id: String(invoice.case_id || ""),
       invoice_number: invoice.invoice_number || "",
       currency: invoice.currency || currency,
@@ -424,10 +425,6 @@ function InvoiceDetailInner() {
 
   async function submitEditInvoice(event) {
     event.preventDefault();
-    if (!editForm?.case_id) {
-      setFormError("Matter is required.");
-      return;
-    }
     if (!editForm.payment_account_id) {
       setFormError("Payment account is required for this invoice currency.");
       return;
@@ -438,8 +435,9 @@ function InvoiceDetailInner() {
       await apiRequest(`/api/v1/invoices/${id}`, {
         method: "PATCH",
         body: JSON.stringify({
-          client_id: Number(editForm.client_id),
-          case_id: Number(editForm.case_id),
+          client_id: editForm.client_id ? Number(editForm.client_id) : null,
+          manual_client_name: editForm.manual_client_name?.trim() || null,
+          case_id: editForm.case_id ? Number(editForm.case_id) : null,
           invoice_number: editForm.invoice_number || null,
           currency: editForm.currency,
           issue_date: editForm.issue_date,
@@ -543,7 +541,7 @@ function InvoiceDetailInner() {
           </div>
           <div className="invoice-party-card">
             <span className="invoice-party-label">Bill To</span>
-            <strong>{invoice.client?.name || `Client #${invoice.client_id}`}</strong>
+            <strong>{invoice.client?.name || invoice.manual_client_name || "Manual recipient"}</strong>
             {invoice.client?.address ? <span>{invoice.client.address}</span> : null}
             {invoice.client?.email ? <span>{invoice.client.email}</span> : null}
             {invoice.client?.phone ? <span>{invoice.client.phone}</span> : null}
@@ -733,7 +731,7 @@ function InvoiceDetailInner() {
               <input type="date" value={editForm.due_date} onChange={(event) => setEditForm((current) => ({ ...current, due_date: event.target.value }))} />
             </div>
             <div className="vilo-form-row-two">
-              <input value={editForm.client_id} readOnly placeholder="Client ID" />
+              <input value={editForm.client_id ? `Client #${editForm.client_id}` : editForm.manual_client_name || "Manual recipient"} readOnly placeholder="Invoice recipient" />
               <input value={`${billingTax.invoice_tax_label}: ${Number(billingTax.invoice_tax_rate || 0).toFixed(2)}% from firm billing settings`} readOnly />
             </div>
 

@@ -3675,6 +3675,36 @@ button {
   padding-top: 0.1rem;
 }
 
+.precedents-practice-row {
+  align-items: start;
+}
+
+.precedents-practice-field {
+  min-width: 0;
+}
+
+.precedents-practice-field select {
+  width: 100%;
+}
+
+.precedents-add-practice-action {
+  display: inline-flex;
+  margin-top: 0.45rem;
+  border: 0;
+  background: transparent;
+  padding: 0.15rem 0;
+  color: #5142e5;
+  font-weight: 650;
+  font-size: 0.84rem;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.precedents-add-practice-action:hover,
+.precedents-add-practice-action:focus-visible {
+  color: #3325bd;
+}
+
 .precedents-form-grid textarea {
   min-height: 110px;
 }
@@ -4971,6 +5001,94 @@ button {
   margin: 0.25rem 0 0;
   color: #7a768f;
   font-size: 0.88rem;
+}
+
+.invoice-client-combobox {
+  position: relative;
+}
+
+.invoice-client-options {
+  position: absolute;
+  z-index: 25;
+  top: calc(100% - 1px);
+  left: 0;
+  right: 0;
+  max-height: 280px;
+  overflow-y: auto;
+  border: 1px solid #ddd7ed;
+  border-radius: 12px;
+  background: #fff;
+  box-shadow: 0 14px 30px rgba(41, 31, 77, 0.16);
+}
+
+.invoice-client-options button {
+  width: 100%;
+  display: grid;
+  gap: 0.2rem;
+  border: 0;
+  border-bottom: 1px solid #f0edf6;
+  background: #fff;
+  padding: 0.72rem 0.85rem;
+  text-align: left;
+  color: #4b465d;
+}
+
+.invoice-client-options button:hover,
+.invoice-client-options button.is-active {
+  background: #f5f2ff;
+}
+
+.invoice-client-options button span,
+.invoice-client-options__state {
+  color: #7a768f;
+  font-size: 0.78rem;
+}
+
+.invoice-client-options__manual strong {
+  color: #5142e5;
+}
+
+.invoice-client-options__state {
+  margin: 0;
+  padding: 0.8rem 0.85rem;
+}
+
+.invoice-client-options__state.is-error,
+.vilo-field-error {
+  color: #b42318;
+}
+
+.invoice-recipient-mode {
+  margin: 0.38rem 0 0;
+  color: #5d5574;
+  font-size: 0.78rem;
+}
+
+.invoice-recipient-mode.is-manual {
+  color: #5142e5;
+}
+
+.vilo-field-error {
+  margin: 0.35rem 0 0;
+  font-size: 0.78rem;
+  line-height: 1.4;
+}
+
+.invoice-line-item-row__error {
+  grid-column: 1 / -1;
+}
+
+.invoice-validation-summary {
+  border: 1px solid #f2b8b5;
+  border-radius: 12px;
+  background: #fff5f4;
+  padding: 0.85rem 1rem;
+  color: #8f1d18;
+}
+
+.invoice-validation-summary ul {
+  margin: 0.5rem 0 0;
+  padding-left: 1.15rem;
 }
 
 .invoice-create-form {
@@ -6869,10 +6987,16 @@ button {
 
 .calendar-event-modal {
   width: min(760px, 100%);
-  max-height: calc(100dvh - 2rem);
+  max-height: min(90vh, calc(100vh - 2rem));
+  max-height: min(90dvh, calc(100dvh - 2rem));
   display: flex;
   flex-direction: column;
   overflow: hidden;
+}
+
+.calendar-event-overlay {
+  overflow-y: auto;
+  overscroll-behavior: contain;
 }
 
 .calendar-event-modal > form {
@@ -6880,9 +7004,11 @@ button {
   flex: 1;
   min-height: 0;
   flex-direction: column;
+  overflow: hidden;
 }
 
 .calendar-event-modal__header {
+  flex-shrink: 0;
   padding: 1.1rem 1.2rem 1rem;
 }
 
@@ -6894,6 +7020,8 @@ button {
 
 .calendar-event-modal__body {
   display: grid;
+  flex: 1 1 auto;
+  min-height: 0;
   gap: 1rem;
   padding: 1.15rem 1.2rem 1rem;
   overflow-y: auto;
@@ -6967,6 +7095,7 @@ button {
 
 .calendar-event-modal__footer {
   display: flex;
+  flex-shrink: 0;
   align-items: center;
   justify-content: flex-end;
   gap: 0.75rem;

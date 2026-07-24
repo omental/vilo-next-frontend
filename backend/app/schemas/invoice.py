@@ -1,7 +1,7 @@
 from datetime import date, datetime
 from decimal import Decimal
 
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 
 def _normalize_currency(value: str) -> str:
@@ -12,10 +12,12 @@ def _normalize_currency(value: str) -> str:
 
 
 class InvoiceLineItemCreate(BaseModel):
-    line_type: str
+    model_config = ConfigDict(extra="forbid")
+
+    line_type: str = Field(min_length=1)
     description: str = Field(min_length=1)
     quantity: Decimal | None = Field(default=None, gt=Decimal("0"))
-    unit_price: Decimal | None = Field(default=None, ge=Decimal("0"))
+    unit_price: Decimal | None = Field(default=None, gt=Decimal("0"))
     amount: Decimal | None = Field(default=None, ge=Decimal("0"))
     time_entry_id: int | None = None
     staff_user_id: int | None = None
@@ -26,6 +28,10 @@ class InvoiceLineItemCreate(BaseModel):
     def validate_pricing_fields(self):
         if self.time_entry_id is None and (self.quantity is None or self.unit_price is None):
             raise ValueError("quantity and unit_price are required when time_entry_id is not supplied")
+        if self.time_entry_id is None and self.amount is not None:
+            calculated = (self.quantity * self.unit_price).quantize(Decimal("0.01"))
+            if self.amount.quantize(Decimal("0.01")) != calculated:
+                raise ValueError("amount must equal quantity multiplied by unit_price")
         return self
 
 
@@ -60,7 +66,10 @@ class InvoiceClientSummary(BaseModel):
 
 
 class InvoiceCreate(BaseModel):
-    client_id: int
+    model_config = ConfigDict(extra="forbid")
+
+    client_id: int | None = None
+    manual_client_name: str | None = Field(default=None, max_length=255)
     case_id: int | None = None
     invoice_number: str | None = None
     currency: str = "JMD"
@@ -69,16 +78,32 @@ class InvoiceCreate(BaseModel):
     notes: str | None = None
     payment_instructions: str | None = None
     payment_account_id: int | None = None
-    line_items: list[InvoiceLineItemCreate] = []
+    line_items: list[InvoiceLineItemCreate] = Field(min_length=1)
+    subtotal: Decimal | None = Field(default=None, ge=Decimal("0"))
+    tax_amount: Decimal | None = Field(default=None, ge=Decimal("0"))
+    total: Decimal | None = Field(default=None, ge=Decimal("0"))
 
     @field_validator("currency")
     @classmethod
     def validate_currency(cls, value: str) -> str:
         return _normalize_currency(value)
 
+    @model_validator(mode="after")
+    def validate_invoice(self):
+        manual_name = (self.manual_client_name or "").strip()
+        self.manual_client_name = manual_name or None
+        if (self.client_id is None) == (self.manual_client_name is None):
+            raise ValueError("Provide exactly one of client_id or manual_client_name")
+        if self.manual_client_name and self.case_id is not None:
+            raise ValueError("Manual invoice recipients cannot be linked to a case")
+        if self.due_date is not None and self.due_date < self.issue_date:
+            raise ValueError("due_date cannot be before issue_date")
+        return self
+
 
 class InvoiceUpdate(BaseModel):
     client_id: int | None = None
+    manual_client_name: str | None = Field(default=None, max_length=255)
     case_id: int | None = None
     invoice_number: str | None = None
     status: str | None = None
@@ -156,7 +181,8 @@ class InvoicePaymentResponse(BaseModel):
 class InvoiceResponse(BaseModel):
     id: int
     organization_id: int
-    client_id: int
+    client_id: int | None
+    manual_client_name: str | None = None
     case_id: int | None
     invoice_number: str
     currency: str
@@ -181,7 +207,7 @@ class InvoiceResponse(BaseModel):
     void_reason: str | None = None
     payment_account: InvoicePaymentAccountSummary | None = None
     organization: InvoiceOrganizationSummary
-    client: InvoiceClientSummary
+    client: InvoiceClientSummary | None
     matter_title: str | None = None
     line_items: list[InvoiceLineItemResponse] = []
     payments: list[InvoicePaymentResponse] = []

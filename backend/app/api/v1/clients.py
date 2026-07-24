@@ -4,7 +4,7 @@ from uuid import uuid4
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, UploadFile, status
 from fastapi.responses import FileResponse
-from sqlalchemy import inspect, select
+from sqlalchemy import inspect, or_, select
 from sqlalchemy.exc import IntegrityError, NoInspectionAvailable
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm.attributes import NO_VALUE
@@ -241,6 +241,8 @@ async def create_client(
 @router.get("", response_model=list[ClientResponse])
 async def list_clients(
     status_filter: str = Query("all", alias="status"),
+    q: str | None = Query(default=None, max_length=100),
+    limit: int | None = Query(default=None, ge=1, le=100),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(role_guard(ALLOWED_STAFF)),
 ):
@@ -255,8 +257,20 @@ async def list_clients(
         query = query.where(Client.archived_at.is_not(None))
     elif status_filter != "all":
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="status must be one of: all, active, archived")
+    if q and q.strip():
+        search = f"%{q.strip()}%"
+        query = query.where(
+            or_(
+                Client.name.ilike(search),
+                Client.email.ilike(search),
+                Client.trn_no.ilike(search),
+            )
+        )
 
-    rows = await db.scalars(query.order_by(Client.created_at.desc()))
+    query = query.order_by(Client.name.asc() if q and q.strip() else Client.created_at.desc())
+    if limit is not None:
+        query = query.limit(limit)
+    rows = await db.scalars(query)
     return [to_response(c) for c in rows.all()]
 
 

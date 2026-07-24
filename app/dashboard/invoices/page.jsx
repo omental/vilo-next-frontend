@@ -5,6 +5,7 @@ import { Suspense, useEffect, useMemo, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { getCachedUser, setCachedUser } from "../../../lib/auth";
 import { apiDownload, apiRequest } from "../../../lib/api";
+import { invoiceErrorsByField, normalizeInvoicePayload } from "../../../lib/invoicePayload";
 import { DiscardChangesDialog, useModalCloseGuard } from "../../../components/useModalCloseGuard";
 
 const LINE_ITEM_TYPE_OPTIONS = [
@@ -18,6 +19,7 @@ const LINE_ITEM_TYPE_OPTIONS = [
 
 const initialForm = {
   client_id: "",
+  manual_client_name: "",
   case_id: "",
   invoice_number: "",
   currency: "JMD",
@@ -108,7 +110,12 @@ function InvoicesPageContent() {
   const searchParams = useSearchParams();
   const [currentUser, setCurrentUser] = useState(getCachedUser());
   const [items, setItems] = useState([]);
-  const [clients, setClients] = useState([]);
+  const [clientResults, setClientResults] = useState([]);
+  const [clientSearch, setClientSearch] = useState("");
+  const [clientSearchOpen, setClientSearchOpen] = useState(false);
+  const [clientSearchLoading, setClientSearchLoading] = useState(false);
+  const [clientSearchError, setClientSearchError] = useState("");
+  const [activeClientIndex, setActiveClientIndex] = useState(-1);
   const [cases, setCases] = useState([]);
   const [paymentAccounts, setPaymentAccounts] = useState([]);
   const [billingTax, setBillingTax] = useState(initialBillingTax);
@@ -120,6 +127,7 @@ function InvoicesPageContent() {
   const [loadingTrustBalance, setLoadingTrustBalance] = useState(false);
   const [error, setError] = useState("");
   const [createError, setCreateError] = useState("");
+  const [createFieldErrors, setCreateFieldErrors] = useState({});
   const [timeEntryError, setTimeEntryError] = useState("");
   const [trustBalanceError, setTrustBalanceError] = useState("");
   const [createOpen, setCreateOpen] = useState(false);
@@ -156,15 +164,13 @@ function InvoicesPageContent() {
     setLoading(true);
     setError("");
     try {
-      const [invoiceRows, clientRows, caseRows, accountRows, taxSettings] = await Promise.all([
+      const [invoiceRows, caseRows, accountRows, taxSettings] = await Promise.all([
         apiRequest("/api/v1/invoices"),
-        apiRequest("/api/v1/clients"),
         apiRequest("/api/v1/cases").catch(() => []),
         apiRequest("/api/v1/settings/payment-accounts").catch(() => []),
         apiRequest("/api/v1/settings/billing-tax").catch(() => initialBillingTax),
       ]);
       setItems(invoiceRows || []);
-      setClients(clientRows || []);
       setCases(caseRows || []);
       setPaymentAccounts(accountRows || []);
       setBillingTax(taxSettings || initialBillingTax);
@@ -178,6 +184,49 @@ function InvoicesPageContent() {
   useEffect(() => {
     load();
   }, []);
+
+  useEffect(() => {
+    if (!createOpen) return;
+    let cancelled = false;
+    const timer = window.setTimeout(async () => {
+      setClientSearchLoading(true);
+      setClientSearchError("");
+      try {
+        const query = clientSearch.trim();
+        const rows = await apiRequest(`/api/v1/clients?status=active&limit=20${query ? `&q=${encodeURIComponent(query)}` : ""}`);
+        if (!cancelled) {
+          setClientResults(rows || []);
+          setActiveClientIndex(-1);
+        }
+      } catch (err) {
+        if (!cancelled) {
+          setClientResults([]);
+          setClientSearchError(err.message || "Unable to search clients.");
+        }
+      } finally {
+        if (!cancelled) setClientSearchLoading(false);
+      }
+    }, clientSearch.trim() ? 250 : 0);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+  }, [clientSearch, createOpen]);
+
+  useEffect(() => {
+    if (!createOpen || !form.client_id) return;
+    let cancelled = false;
+    apiRequest(`/api/v1/clients/${form.client_id}`)
+      .then((client) => {
+        if (cancelled) return;
+        setClientSearch(client.name || "");
+        setClientResults((rows) => rows.some((row) => row.id === client.id) ? rows : [client, ...rows]);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [createOpen, form.client_id]);
 
   useEffect(() => {
     const closeMenus = () => setActionsOpenId(null);
@@ -314,6 +363,9 @@ function InvoicesPageContent() {
 
   function openCreateModal() {
     setCreateError("");
+    setCreateFieldErrors({});
+    setClientSearch("");
+    setClientSearchOpen(false);
     const defaultAccount = resolveDefaultPaymentAccount(paymentAccounts, "JMD");
     const nextForm = {
       ...initialForm,
@@ -330,6 +382,9 @@ function InvoicesPageContent() {
   function closeCreateModal() {
     setCreateOpen(false);
     setCreateError("");
+    setCreateFieldErrors({});
+    setClientSearch("");
+    setClientSearchOpen(false);
     setTimeEntryError("");
     const defaultAccount = resolveDefaultPaymentAccount(paymentAccounts, "JMD");
     const nextForm = {
@@ -382,6 +437,53 @@ function InvoicesPageContent() {
     });
   }
 
+  function selectInvoiceClient(client) {
+    setForm((current) => ({
+      ...current,
+      client_id: String(client.id),
+      manual_client_name: "",
+      case_id: "",
+      line_items: [makeManualLineItem()],
+    }));
+    setClientSearch(client.name || "");
+    setClientSearchOpen(false);
+    setCreateFieldErrors((current) => ({ ...current, client_id: undefined, manual_client_name: undefined }));
+  }
+
+  function useManualInvoiceRecipient() {
+    const name = clientSearch.trim();
+    if (!name) return;
+    setForm((current) => ({
+      ...current,
+      client_id: "",
+      manual_client_name: name,
+      case_id: "",
+      line_items: current.line_items.filter((item) => !item.time_entry_id).length
+        ? current.line_items.filter((item) => !item.time_entry_id)
+        : [makeManualLineItem()],
+    }));
+    setClientSearchOpen(false);
+    setCreateFieldErrors((current) => ({ ...current, client_id: undefined, manual_client_name: undefined, case_id: undefined }));
+  }
+
+  function handleClientSearchKeyDown(event) {
+    const optionCount = clientResults.length + (clientSearch.trim() ? 1 : 0);
+    if (event.key === "ArrowDown") {
+      event.preventDefault();
+      setClientSearchOpen(true);
+      setActiveClientIndex((current) => Math.min(current + 1, optionCount - 1));
+    } else if (event.key === "ArrowUp") {
+      event.preventDefault();
+      setActiveClientIndex((current) => Math.max(current - 1, 0));
+    } else if (event.key === "Enter" && clientSearchOpen && activeClientIndex >= 0) {
+      event.preventDefault();
+      if (activeClientIndex < clientResults.length) selectInvoiceClient(clientResults[activeClientIndex]);
+      else useManualInvoiceRecipient();
+    } else if (event.key === "Escape") {
+      setClientSearchOpen(false);
+    }
+  }
+
   async function refreshTimeEntries() {
     if (!form.case_id) return;
     setLoadingTimeEntries(true);
@@ -420,59 +522,27 @@ function InvoicesPageContent() {
   async function handleCreate(event) {
     event.preventDefault();
     if (saving) return;
-    if (!form.client_id || !form.issue_date) {
-      setCreateError("Client and issue date are required.");
+    const { payload, errors } = normalizeInvoicePayload(form, billingTax.invoice_tax_rate);
+    setCreateFieldErrors(errors);
+    if (Object.keys(errors).length) {
+      setCreateError("Please correct the highlighted invoice fields.");
       return;
     }
-    if (!form.payment_account_id) {
-      setCreateError("A payment account is required for this invoice currency.");
-      return;
-    }
-
-    const cleanLineItems = form.line_items
-      .filter((row) => row.time_entry_id || row.description.trim())
-      .map((row) => {
-        if (row.time_entry_id) {
-          return {
-            line_type: row.line_type,
-            description: row.description.trim() || "Time entry",
-            time_entry_id: Number(row.time_entry_id),
-          };
-        }
-        return {
-          line_type: row.line_type,
-          description: row.description.trim(),
-          quantity: Number(row.quantity || 0),
-          unit_price: Number(row.unit_price || 0),
-          amount: Number(calculateLineAmount(row.quantity, row.unit_price)),
-        };
-      });
 
     setSaving(true);
     setCreateError("");
     try {
       const created = await apiRequest("/api/v1/invoices", {
         method: "POST",
-        body: JSON.stringify({
-          client_id: Number(form.client_id),
-          case_id: form.case_id ? Number(form.case_id) : null,
-          invoice_number: form.invoice_number.trim() || null,
-          currency: form.currency,
-          issue_date: form.issue_date,
-          due_date: form.due_date || null,
-          notes: form.notes.trim() || null,
-          payment_instructions: form.payment_instructions.trim() || null,
-          payment_account_id: Number(form.payment_account_id),
-          line_items: cleanLineItems,
-        }),
+        body: JSON.stringify(payload),
       });
       closeCreateModal();
       await load();
       router.push(`/dashboard/invoices/${created.id}`);
     } catch (err) {
-      setCreateError(!err.message || err.message === "Request failed"
-        ? "Invoice could not be created. Please check the required fields."
-        : err.message);
+      const backendErrors = invoiceErrorsByField(err.errors);
+      setCreateFieldErrors(backendErrors);
+      setCreateError(err.message || "Invoice validation failed.");
     } finally {
       setSaving(false);
     }
@@ -590,7 +660,7 @@ function InvoicesPageContent() {
                 {items.map((row) => (
                   <tr key={row.id}>
                     <td>{row.invoice_number}</td>
-                    <td>{row.client?.name || `Client #${row.client_id}`}</td>
+                    <td>{row.client?.name || row.manual_client_name || "Manual recipient"}</td>
                     <td>{row.matter_title || (row.case_id ? `Matter #${row.case_id}` : "-")}</td>
                     <td>{formatDate(row.issue_date)}</td>
                     <td>{formatDate(row.due_date)}</td>
@@ -647,19 +717,76 @@ function InvoicesPageContent() {
                 <section className="invoice-form-section">
                   <div className="invoice-form-section__heading"><h4>1. Client + Matter</h4></div>
                   <div className="vilo-form-row-two">
-                    <div>
-                      <label>Client *</label>
-                      <select value={form.client_id} onChange={(event) => setForm((current) => ({ ...current, client_id: event.target.value, case_id: "", line_items: [makeManualLineItem()] }))} required>
-                        <option value="">Select client</option>
-                        {clients.map((client) => <option key={client.id} value={client.id}>{client.name}</option>)}
-                      </select>
+                    <div className="invoice-client-combobox">
+                      <label htmlFor="invoice-client-search">Client / Invoice Recipient *</label>
+                      <input
+                        id="invoice-client-search"
+                        type="search"
+                        role="combobox"
+                        aria-autocomplete="list"
+                        aria-controls="invoice-client-options"
+                        aria-expanded={clientSearchOpen}
+                        aria-activedescendant={activeClientIndex >= 0 ? `invoice-client-option-${activeClientIndex}` : undefined}
+                        value={clientSearch}
+                        placeholder="Search by name, email, or reference"
+                        autoComplete="off"
+                        onFocus={() => setClientSearchOpen(true)}
+                        onBlur={() => window.setTimeout(() => setClientSearchOpen(false), 150)}
+                        onKeyDown={handleClientSearchKeyDown}
+                        onChange={(event) => {
+                          setClientSearch(event.target.value);
+                          setClientSearchOpen(true);
+                          setForm((current) => ({ ...current, client_id: "", manual_client_name: "", case_id: "" }));
+                        }}
+                      />
+                      {clientSearchOpen ? (
+                        <div className="invoice-client-options" id="invoice-client-options" role="listbox">
+                          {clientSearchLoading ? <p className="invoice-client-options__state">Searching clients...</p> : null}
+                          {clientSearchError ? <p className="invoice-client-options__state is-error">{clientSearchError}</p> : null}
+                          {!clientSearchLoading && !clientSearchError && !clientResults.length ? <p className="invoice-client-options__state">No matching clients.</p> : null}
+                          {clientResults.map((client, index) => (
+                            <button
+                              id={`invoice-client-option-${index}`}
+                              key={client.id}
+                              type="button"
+                              role="option"
+                              aria-selected={activeClientIndex === index}
+                              className={activeClientIndex === index ? "is-active" : ""}
+                              onMouseDown={(event) => event.preventDefault()}
+                              onClick={() => selectInvoiceClient(client)}
+                            >
+                              <strong>{client.name}</strong>
+                              <span>{[client.email, client.trn_no ? `Ref: ${client.trn_no}` : null].filter(Boolean).join(" · ") || `Client #${client.id}`}</span>
+                            </button>
+                          ))}
+                          {clientSearch.trim() ? (
+                            <button
+                              id={`invoice-client-option-${clientResults.length}`}
+                              type="button"
+                              role="option"
+                              aria-selected={activeClientIndex === clientResults.length}
+                              className={`invoice-client-options__manual${activeClientIndex === clientResults.length ? " is-active" : ""}`}
+                              onMouseDown={(event) => event.preventDefault()}
+                              onClick={useManualInvoiceRecipient}
+                            >
+                              <strong>Use “{clientSearch.trim()}” as a manual invoice recipient</strong>
+                              <span>Applies to this invoice only; no Client record will be created.</span>
+                            </button>
+                          ) : null}
+                        </div>
+                      ) : null}
+                      {form.client_id ? <p className="invoice-recipient-mode">Existing VILO client selected.</p> : null}
+                      {form.manual_client_name ? <p className="invoice-recipient-mode is-manual">Manual recipient: <strong>{form.manual_client_name}</strong> · this invoice only.</p> : null}
+                      {createFieldErrors.client_id ? <p className="vilo-field-error">{createFieldErrors.client_id}</p> : null}
+                      {createFieldErrors.manual_client_name ? <p className="vilo-field-error">{createFieldErrors.manual_client_name}</p> : null}
                     </div>
                     <div>
                       <label>Matter / Case</label>
-                      <select value={form.case_id} onChange={(event) => setForm((current) => ({ ...current, case_id: event.target.value, line_items: current.line_items.filter((item) => !item.time_entry_id).length ? current.line_items.filter((item) => !item.time_entry_id) : [makeManualLineItem()] }))}>
-                        <option value="">No related matter</option>
+                      <select disabled={!form.client_id} value={form.case_id} onChange={(event) => setForm((current) => ({ ...current, case_id: event.target.value, line_items: current.line_items.filter((item) => !item.time_entry_id).length ? current.line_items.filter((item) => !item.time_entry_id) : [makeManualLineItem()] }))}>
+                        <option value="">{form.manual_client_name ? "Not available for manual recipients" : "No related matter"}</option>
                         {caseOptions.map((row) => <option key={row.id} value={row.id}>{row.title}</option>)}
                       </select>
+                      {createFieldErrors.case_id ? <p className="vilo-field-error">{createFieldErrors.case_id}</p> : null}
                     </div>
                   </div>
                 </section>
@@ -683,21 +810,24 @@ function InvoicesPageContent() {
                     <div>
                       <label>Issue Date *</label>
                       <input type="date" value={form.issue_date} onChange={(event) => setForm((current) => ({ ...current, issue_date: event.target.value }))} required />
+                      {createFieldErrors.issue_date ? <p className="vilo-field-error">{createFieldErrors.issue_date}</p> : null}
                     </div>
                     <div>
                       <label>Due Date</label>
                       <input type="date" value={form.due_date} onChange={(event) => setForm((current) => ({ ...current, due_date: event.target.value }))} />
+                      {createFieldErrors.due_date ? <p className="vilo-field-error">{createFieldErrors.due_date}</p> : null}
                     </div>
                   </div>
                 </section>
 
                 <section className="invoice-form-section">
                   <div className="invoice-form-section__heading"><h4>3. Payment Account</h4></div>
-                  <label>Payment Account *</label>
-                  <select value={form.payment_account_id} onChange={(event) => setForm((current) => ({ ...current, payment_account_id: event.target.value }))} required disabled={!filteredPaymentAccounts.length}>
-                    <option value="">{paymentAccountWarning || "Select payment account"}</option>
+                  <label>Payment Account</label>
+                  <select value={form.payment_account_id} onChange={(event) => setForm((current) => ({ ...current, payment_account_id: event.target.value }))} disabled={!filteredPaymentAccounts.length}>
+                    <option value="">{paymentAccountWarning || "Use default payment account"}</option>
                     {filteredPaymentAccounts.map((account) => <option key={account.id} value={account.id}>{account.account_name} · {account.bank_name}{account.is_default ? " · Default" : ""}</option>)}
                   </select>
+                  {createFieldErrors.payment_account_id || createFieldErrors.currency ? <p className="vilo-field-error">{createFieldErrors.payment_account_id || createFieldErrors.currency}</p> : null}
                   {paymentAccountWarning ? (
                     <article className="settings-info-banner invoice-payment-warning">
                       <strong>No payment account configured for this currency.</strong>
@@ -784,9 +914,11 @@ function InvoicesPageContent() {
                         <input type="number" step="0.01" min="0" value={item.unit_price} onChange={(event) => updateLineItem(index, { unit_price: event.target.value })} placeholder="Unit price" />
                         <input type="text" value={formatMoney(item.amount || 0, form.currency)} readOnly className="invoice-line-item-row__amount" />
                         <button type="button" className="vilo-btn vilo-btn--ghost vilo-btn--xs" onClick={() => removeLineItem(index)}>Remove</button>
+                        {Object.entries(createFieldErrors).filter(([field]) => field.startsWith(`line_items.${index}.`)).map(([field, message]) => <p key={field} className="vilo-field-error invoice-line-item-row__error">{message}</p>)}
                       </div>
                     )
                   ))}
+                  {createFieldErrors.line_items ? <p className="vilo-field-error">{createFieldErrors.line_items}</p> : null}
                 </section>
 
                 <section className="invoice-form-section">
@@ -814,13 +946,20 @@ function InvoicesPageContent() {
                   </article>
                 </section>
 
-                {createError ? <p className="vilo-state vilo-state--error">{createError}</p> : null}
+                {createError ? (
+                  <div className="invoice-validation-summary" role="alert">
+                    <strong>{createError}</strong>
+                    {Object.entries(createFieldErrors).length ? (
+                      <ul>{Object.entries(createFieldErrors).map(([field, message]) => <li key={field}>{message}</li>)}</ul>
+                    ) : null}
+                  </div>
+                ) : null}
               </div>
 
               <div className="vilo-modal__footer invoice-create-footer">
                 <div className="vilo-table-actions invoice-create-actions">
                   <button className="vilo-btn vilo-btn--secondary" type="button" onClick={createCloseGuard.requestClose} disabled={saving}>Cancel</button>
-                  <button className="vilo-btn vilo-btn--primary" type="submit" disabled={saving || !form.payment_account_id}>{saving ? "Creating..." : "Create Invoice"}</button>
+                  <button className="vilo-btn vilo-btn--primary" type="submit" disabled={saving}>{saving ? "Creating..." : "Create Invoice"}</button>
                 </div>
               </div>
             </form>

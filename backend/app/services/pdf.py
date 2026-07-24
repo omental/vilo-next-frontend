@@ -67,6 +67,12 @@ def build_firm_details(org: Organization | None) -> list[str]:
     return details
 
 
+def resolve_invoice_recipient_name(invoice: Invoice, client: Client | None) -> str:
+    if client and client.name:
+        return client.name
+    return (getattr(invoice, "manual_client_name", None) or "Invoice recipient").strip()
+
+
 def _new_pdf_path(prefix: str) -> tuple[Path, str]:
     STORAGE_DIR.mkdir(parents=True, exist_ok=True)
     stamp = datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S")
@@ -111,7 +117,10 @@ async def generate_invoice_pdf(invoice_id: int, *, db: AsyncSession, organizatio
         raise HTTPException(status_code=404, detail="Invoice not found")
 
     org = await db.scalar(select(Organization).where(Organization.id == organization_id))
-    client = await db.scalar(select(Client).where(Client.id == inv.client_id, Client.organization_id == organization_id))
+    client = None
+    if inv.client_id is not None:
+        client = await db.scalar(select(Client).where(Client.id == inv.client_id, Client.organization_id == organization_id))
+    recipient_name = resolve_invoice_recipient_name(inv, client)
     trust_applied = Decimal(str((await db.scalar(
         select(func.coalesce(func.sum(TrustTransaction.amount), 0)).where(
             TrustTransaction.organization_id == organization_id,
@@ -129,7 +138,7 @@ async def generate_invoice_pdf(invoice_id: int, *, db: AsyncSession, organizatio
             [Paragraph("Bill From", styles["ViloH2"]), Paragraph("Bill To", styles["ViloH2"]), Paragraph("Invoice", styles["ViloH2"])],
             [
                 Paragraph("<br/>".join(_safe_text(line) for line in build_firm_details(org)), styles["ViloBody"]),
-                Paragraph(f"{_safe_text(client.name if client else f'Client #{inv.client_id}')}<br/>{_safe_text(getattr(client, 'email', None))}<br/>{_safe_text(getattr(client, 'phone', None))}", styles["ViloBody"]),
+                Paragraph(f"{_safe_text(recipient_name)}<br/>{_safe_text(getattr(client, 'email', None))}<br/>{_safe_text(getattr(client, 'phone', None))}", styles["ViloBody"]),
                 Paragraph(
                     f"Invoice #: {_safe_text(inv.invoice_number)}<br/>Issue Date: {inv.issue_date}<br/>Due Date: {inv.due_date or '-'}<br/>Status: {_safe_text(inv.status)}",
                     styles["ViloBody"],

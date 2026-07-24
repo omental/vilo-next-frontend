@@ -10,6 +10,7 @@ from sqlalchemy.orm import selectinload
 
 from app.api.deps import get_current_user, role_guard
 from app.db.session import get_db
+from app.errors import InvoiceValidationError
 from app.models.case import Case
 from app.models.client import Client
 from app.models.enums import UserRole
@@ -113,9 +114,11 @@ def org_ser(org: Organization | None) -> InvoiceOrganizationSummary:
     )
 
 
-def client_ser(client: Client | None, fallback_id: int) -> InvoiceClientSummary:
+def client_ser(client: Client | None, fallback_id: int | None) -> InvoiceClientSummary | None:
+    if client is None:
+        return None
     return InvoiceClientSummary(
-        id=getattr(client, "id", fallback_id),
+        id=getattr(client, "id", fallback_id or 0),
         name=getattr(client, "name", None) or f"Client #{fallback_id}",
         email=getattr(client, "email", None),
         phone=getattr(client, "phone", None),
@@ -173,6 +176,37 @@ async def validate_client_case(db: AsyncSession, org_id: int, client_id: int, ca
         case = await db.scalar(select(Case).where(Case.id == case_id, Case.organization_id == org_id))
         if not case: raise HTTPException(status_code=400, detail="Case must belong to your organization")
         if case.client_id != client_id: raise HTTPException(status_code=400, detail="Case does not belong to client")
+    return client, case
+
+
+async def validate_invoice_recipient(
+    db: AsyncSession,
+    organization_id: int,
+    *,
+    client_id: int | None,
+    manual_client_name: str | None,
+    case_id: int | None,
+):
+    manual_name = (manual_client_name or "").strip() or None
+    if client_id is None and manual_name is None:
+        raise InvoiceValidationError([{"field": "client_id", "message": "Select a client or enter a manual invoice recipient."}])
+    if client_id is not None and manual_name is not None:
+        raise InvoiceValidationError([{"field": "manual_client_name", "message": "Use either an existing client or a manual recipient, not both."}])
+    if manual_name is not None:
+        if case_id is not None:
+            raise InvoiceValidationError([{"field": "case_id", "message": "A manual invoice recipient cannot be linked to a case."}])
+        return None, None
+
+    client = await db.scalar(select(Client).where(Client.id == client_id, Client.organization_id == organization_id))
+    if not client:
+        raise InvoiceValidationError([{"field": "client_id", "message": "The selected client is invalid or unavailable."}], status_code=400)
+    case = None
+    if case_id is not None:
+        case = await db.scalar(select(Case).where(Case.id == case_id, Case.organization_id == organization_id))
+        if not case:
+            raise InvoiceValidationError([{"field": "case_id", "message": "The selected case is invalid or unavailable."}], status_code=400)
+        if case.client_id != client_id:
+            raise InvoiceValidationError([{"field": "case_id", "message": "The selected case does not belong to the selected client."}], status_code=400)
     return client, case
 
 
@@ -245,7 +279,7 @@ async def sync_invoice_line_items(
     for item in line_items:
         quantity = Decimal(str(item.quantity or 0))
         unit_price = Decimal(str(item.unit_price or 0))
-        amount = Decimal(str(item.amount)) if item.amount is not None else (quantity * unit_price)
+        amount = quantity * unit_price
         time_entry_id = None
         staff_user_id = item.staff_user_id
         hours = Decimal(str(item.hours or 0)) if item.hours is not None else None
@@ -294,6 +328,21 @@ async def sync_invoice_line_items(
         )
 
 
+def validate_submitted_totals(payload: InvoiceCreate, *, subtotal: Decimal, tax_amount: Decimal, total: Decimal) -> None:
+    expected = {
+        "subtotal": money(subtotal),
+        "tax_amount": money(tax_amount),
+        "total": money(total),
+    }
+    errors = []
+    for field, calculated in expected.items():
+        submitted = getattr(payload, field)
+        if submitted is not None and money(submitted) != calculated:
+            errors.append({"field": field, "message": f"Expected {calculated:.2f} based on the invoice line items."})
+    if errors:
+        raise InvoiceValidationError(errors)
+
+
 def _round_quantity(duration_minutes: int | None) -> Decimal:
     if not duration_minutes:
         return Decimal("0.00")
@@ -302,21 +351,40 @@ def _round_quantity(duration_minutes: int | None) -> Decimal:
 
 @router.post("", response_model=InvoiceResponse)
 async def create_invoice(payload: InvoiceCreate, db: AsyncSession = Depends(get_db), current_user: User = Depends(role_guard(ALLOWED))):
-    _, case = await validate_client_case(db, current_user.organization_id, payload.client_id, payload.case_id)
+    _, case = await validate_invoice_recipient(
+        db,
+        current_user.organization_id,
+        client_id=payload.client_id,
+        manual_client_name=payload.manual_client_name,
+        case_id=payload.case_id,
+    )
     organization = await get_organization_or_404(db, current_user.organization_id)
     currency = normalize_currency(payload.currency)
-    payment_account = await resolve_invoice_payment_account(
-        db,
-        organization_id=current_user.organization_id,
-        currency=currency,
-        payment_account_id=payload.payment_account_id,
-    )
+    try:
+        payment_account = await resolve_invoice_payment_account(
+            db,
+            organization_id=current_user.organization_id,
+            currency=currency,
+            payment_account_id=payload.payment_account_id,
+        )
+    except HTTPException as exc:
+        message = str(exc.detail)
+        field = "currency" if "currency must match" in message.lower() else "payment_account_id"
+        raise InvoiceValidationError([{"field": field, "message": message}], status_code=exc.status_code) from exc
+    try:
+        invoice_number = await resolve_invoice_number(db, current_user.organization_id, payload.invoice_number)
+    except HTTPException as exc:
+        raise InvoiceValidationError(
+            [{"field": "invoice_number", "message": str(exc.detail)}],
+            status_code=exc.status_code,
+        ) from exc
     now = datetime.now(timezone.utc)
     inv = Invoice(
         organization_id=current_user.organization_id,
         client_id=payload.client_id,
+        manual_client_name=payload.manual_client_name,
         case_id=payload.case_id,
-        invoice_number=await resolve_invoice_number(db, current_user.organization_id, payload.invoice_number),
+        invoice_number=invoice_number,
         currency=currency,
         status="draft",
         issue_date=payload.issue_date,
@@ -334,15 +402,20 @@ async def create_invoice(payload: InvoiceCreate, db: AsyncSession = Depends(get_
         updated_at=now,
     )
     db.add(inv); await db.flush()
-    await sync_invoice_line_items(
-        db,
-        invoice=inv,
-        organization_id=current_user.organization_id,
-        line_items=payload.line_items,
-        created_at=now,
-    )
-    inv.tax_amount = calculate_invoice_tax(sum((li.amount for li in inv.line_items), Decimal("0")), organization)
+    try:
+        await sync_invoice_line_items(
+            db,
+            invoice=inv,
+            organization_id=current_user.organization_id,
+            line_items=payload.line_items,
+            created_at=now,
+        )
+    except HTTPException as exc:
+        raise InvoiceValidationError([{"field": "line_items", "message": str(exc.detail)}], status_code=exc.status_code) from exc
+    calculated_subtotal = sum((li.amount for li in inv.line_items), Decimal("0"))
+    inv.tax_amount = calculate_invoice_tax(calculated_subtotal, organization)
     recalc(inv)
+    validate_submitted_totals(payload, subtotal=inv.subtotal, tax_amount=inv.tax_amount, total=inv.total)
     if case:
         await create_case_timeline_event(db, organization_id=current_user.organization_id, case_id=case.id, actor_id=current_user.id, event_type="invoice_created", title=f"Invoice created: {inv.invoice_number}", metadata_json={"invoice_id": inv.id})
     await db.commit(); inv = await get_invoice_or_404(db, current_user.organization_id, inv.id)
@@ -358,12 +431,12 @@ async def generate_from_case(case_id: int, db: AsyncSession = Depends(get_db), c
     payment_account = await resolve_invoice_payment_account(
         db,
         organization_id=current_user.organization_id,
-        currency="USD",
+        currency="JMD",
         payment_account_id=None,
     )
     inv = Invoice(
         organization_id=current_user.organization_id, client_id=case.client_id, case_id=case.id,
-        invoice_number=await next_invoice_number(db, current_user.organization_id), currency="USD", status="draft",
+        invoice_number=await next_invoice_number(db, current_user.organization_id), currency="JMD", status="draft",
         issue_date=date.today(), due_date=None, subtotal=Decimal("0"), tax_amount=Decimal("0"), total=Decimal("0"),
         paid_amount=Decimal("0"), balance_due=Decimal("0"), notes="Generated from case", payment_instructions=payment_account.payment_instructions, payment_account_id=payment_account.id, created_by=current_user.id, created_at=now, updated_at=now,
     )
@@ -464,9 +537,16 @@ async def update_invoice(invoice_id: int, payload: InvoiceUpdate, db: AsyncSessi
     st = updates.get("status")
     if st and st not in VALID_STATUS: raise HTTPException(status_code=400, detail="Invalid invoice status")
     next_client_id = updates["client_id"] if "client_id" in updates else inv.client_id
+    next_manual_client_name = updates["manual_client_name"] if "manual_client_name" in updates else inv.manual_client_name
     next_case_id = updates["case_id"] if "case_id" in updates else inv.case_id
     next_currency = normalize_currency(updates["currency"]) if "currency" in updates and updates["currency"] is not None else inv.currency
-    await validate_client_case(db, current_user.organization_id, next_client_id, next_case_id)
+    await validate_invoice_recipient(
+        db,
+        current_user.organization_id,
+        client_id=next_client_id,
+        manual_client_name=next_manual_client_name,
+        case_id=next_case_id,
+    )
     payment_account = await resolve_invoice_payment_account(
         db,
         organization_id=current_user.organization_id,
@@ -503,8 +583,6 @@ async def mark_sent(invoice_id: int, request: Request, background_tasks: Backgro
     inv = await get_invoice_or_404(db, current_user.organization_id, invoice_id)
     if inv.voided_at is not None:
         raise HTTPException(status_code=400, detail="Voided invoices cannot be sent")
-    if inv.case_id is None:
-        raise HTTPException(status_code=400, detail="Invoice must be linked to a matter")
     inv.status = "sent"; inv.updated_at = datetime.now(timezone.utc)
     linked_te_ids = [li.time_entry_id for li in inv.line_items if li.time_entry_id]
     linked_ex_ids = [li.expense_id for li in inv.line_items if li.expense_id]

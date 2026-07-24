@@ -2,11 +2,14 @@ import asyncio
 from contextlib import asynccontextmanager, suppress
 
 from fastapi import FastAPI, Request
+from fastapi.exception_handlers import request_validation_exception_handler as default_request_validation_exception_handler
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import Response
+from fastapi.responses import JSONResponse, Response
 
 from app.api.v1 import api_router
 from app.db.session import SessionLocal
+from app.errors import InvoiceValidationError
 from app.services.reminders import REMINDER_POLL_INTERVAL_SECONDS, process_due_reminders
 
 
@@ -49,6 +52,42 @@ app.add_middleware(
 )
 
 app.include_router(api_router)
+
+
+@app.exception_handler(InvoiceValidationError)
+async def invoice_validation_exception_handler(request: Request, exc: InvoiceValidationError):
+    return JSONResponse(
+        status_code=exc.status_code,
+        content={"detail": "Invoice validation failed", "errors": exc.errors},
+    )
+
+
+@app.exception_handler(RequestValidationError)
+async def request_validation_exception_handler(request: Request, exc: RequestValidationError):
+    if request.method == "POST" and request.url.path.rstrip("/") == "/api/v1/invoices":
+        errors = []
+        for item in exc.errors():
+            location = [str(part) for part in item.get("loc", ()) if part not in {"body"}]
+            field = ".".join(location) or "invoice"
+            error_type = item.get("type", "")
+            message = item.get("msg", "Invalid value.")
+            if error_type == "missing":
+                message = "This field is required."
+            elif message.startswith("Value error, "):
+                message = message.removeprefix("Value error, ")
+            if field == "invoice" and "exactly one of client_id or manual_client_name" in message:
+                field = "client_id"
+                message = "Select a client or enter a manual invoice recipient, but not both."
+            elif field == "invoice" and "Manual invoice recipients cannot be linked to a case" in message:
+                field = "case_id"
+            elif field == "invoice" and "due_date cannot be before issue_date" in message:
+                field = "due_date"
+            errors.append({"field": field, "message": message})
+        return JSONResponse(
+            status_code=422,
+            content={"detail": "Invoice validation failed", "errors": errors},
+        )
+    return await default_request_validation_exception_handler(request, exc)
 
 
 @app.options("/{full_path:path}")

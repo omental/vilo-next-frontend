@@ -218,6 +218,7 @@ export default function PrecedentsPage() {
   const [casesLoading, setCasesLoading] = useState(false);
   const [casesError, setCasesError] = useState("");
   const [practiceAreas, setPracticeAreas] = useState([]);
+  const [practiceAreasError, setPracticeAreasError] = useState("");
   const [practiceAreaOpen, setPracticeAreaOpen] = useState(false);
   const [practiceAreaName, setPracticeAreaName] = useState("");
   const [practiceAreaError, setPracticeAreaError] = useState("");
@@ -225,12 +226,29 @@ export default function PrecedentsPage() {
   const role = currentUser?.role || "";
   const canManage = roleCanManage(role);
   const canView = roleCanView(role);
+  const practiceTabs = useMemo(() => {
+    const known = new Set(PRACTICE_TABS.map((tab) => tab.value.toLocaleLowerCase()));
+    const dynamic = [];
+    [...practiceAreas.map((area) => area.name), ...precedents.map((row) => row.practice_area)]
+      .filter(Boolean)
+      .forEach((value) => {
+        const key = String(value).toLocaleLowerCase();
+        if (known.has(key)) return;
+        known.add(key);
+        dynamic.push({ value, label: formatPracticeArea(value) });
+      });
+    return [...PRACTICE_TABS, ...dynamic.sort((a, b) => a.label.localeCompare(b.label))];
+  }, [practiceAreas, precedents]);
 
   useEffect(() => {
     if (!canView) return;
+    setPracticeAreasError("");
     apiRequest("/api/v1/precedents/practice-areas")
       .then((rows) => setPracticeAreas(rows || []))
-      .catch(() => setPracticeAreas([]));
+      .catch((err) => {
+        setPracticeAreas([]);
+        setPracticeAreasError(err.message || "Practice areas could not be loaded.");
+      });
   }, [canView]);
 
   useEffect(() => {
@@ -478,10 +496,15 @@ export default function PrecedentsPage() {
   async function addPracticeArea(event) {
     event.preventDefault();
     setPracticeAreaError("");
+    const normalizedName = practiceAreaName.trim().replace(/\s+/g, " ");
+    if (!normalizedName) {
+      setPracticeAreaError("Practice area name is required.");
+      return;
+    }
     try {
       const created = await apiRequest("/api/v1/precedents/practice-areas", {
         method: "POST",
-        body: JSON.stringify({ name: practiceAreaName }),
+        body: JSON.stringify({ name: normalizedName }),
       });
       setPracticeAreas((rows) => [...rows.filter((row) => row.id !== created.id), created].sort((a, b) => a.name.localeCompare(b.name)));
       setCreateForm((current) => ({ ...current, practice_area: created.name }));
@@ -637,7 +660,7 @@ export default function PrecedentsPage() {
 
       <div className="precedents-shell">
         <div className="precedents-tabs" role="tablist" aria-label="Precedent categories">
-          {PRACTICE_TABS.map((tab) => (
+          {practiceTabs.map((tab) => (
             <button
               key={tab.label}
               type="button"
@@ -966,27 +989,35 @@ export default function PrecedentsPage() {
               onChange={(event) => setCreateForm((current) => ({ ...current, description: event.target.value }))}
             />
 
-            <div className="vilo-form-row-two">
-              <select
-                value={createForm.practice_area}
-                onChange={(event) => setCreateForm((current) => ({ ...current, practice_area: event.target.value }))}
-                required
-              >
-                <option value="">Select practice area</option>
-                {PRACTICE_TABS.filter((tab) => tab.value).map((tab) => <option key={tab.value} value={tab.value}>{tab.label}</option>)}
-                {practiceAreas.filter((area) => !PRACTICE_TABS.some((tab) => tab.value.toLowerCase() === area.name.toLowerCase())).map((area) => <option key={`custom-${area.id}`} value={area.name}>{area.name}</option>)}
-              </select>
+            <div className="vilo-form-row-two precedents-practice-row">
+              <div className="precedents-practice-field">
+                <label htmlFor="precedent-practice-area">Practice Area *</label>
+                <select
+                  id="precedent-practice-area"
+                  value={createForm.practice_area}
+                  onChange={(event) => setCreateForm((current) => ({ ...current, practice_area: event.target.value }))}
+                  required
+                >
+                  <option value="">Select practice area</option>
+                  {practiceTabs.filter((tab) => tab.value).map((tab) => <option key={tab.value} value={tab.value}>{tab.label}</option>)}
+                </select>
+                <button type="button" className="precedents-add-practice-action" onClick={() => { setPracticeAreaError(""); setPracticeAreaOpen(true); }}>+ Add Practice Area</button>
+                {practiceAreasError ? <p className="vilo-field-error">{practiceAreasError}</p> : null}
+              </div>
 
-              <select
-                value={createForm.document_type}
-                onChange={(event) => setCreateForm((current) => ({ ...current, document_type: event.target.value }))}
-                required
-              >
-                <option value="">Select document type</option>
-                {DOCUMENT_TYPE_OPTIONS.filter((option) => option.value).map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
-              </select>
+              <div>
+                <label htmlFor="precedent-document-type">Document Type *</label>
+                <select
+                  id="precedent-document-type"
+                  value={createForm.document_type}
+                  onChange={(event) => setCreateForm((current) => ({ ...current, document_type: event.target.value }))}
+                  required
+                >
+                  <option value="">Select document type</option>
+                  {DOCUMENT_TYPE_OPTIONS.filter((option) => option.value).map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+                </select>
+              </div>
             </div>
-            <button type="button" className="vilo-btn vilo-btn--secondary vilo-btn--xs" onClick={() => setPracticeAreaOpen(true)}>+ Add Practice Area</button>
 
             <input
               placeholder="Tags separated by commas"

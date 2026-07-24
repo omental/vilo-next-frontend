@@ -750,7 +750,7 @@ function CalendarPageContent() {
       </div>
 
       {modalOpen ? (
-        <div className="vilo-modal-overlay" onClick={eventCloseGuard.requestClose}>
+        <div className="vilo-modal-overlay calendar-event-overlay" onClick={eventCloseGuard.requestClose}>
           <div className="vilo-modal calendar-event-modal" onClick={(event) => event.stopPropagation()}>
             <div className="vilo-modal__header calendar-event-modal__header">
               <div>

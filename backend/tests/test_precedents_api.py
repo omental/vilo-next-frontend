@@ -66,6 +66,9 @@ class PrecedentDBStub:
                 obj.id = idx
 
     async def commit(self):
+        await self.flush()
+
+    async def rollback(self):
         return None
 
     async def refresh(self, obj):
@@ -140,6 +143,17 @@ def _case_obj(case_id=31, org_id=1, client_id=41):
     )
 
 
+def _practice_area_obj(area_id=61, org_id=1, name="Technology Law"):
+    return SimpleNamespace(
+        id=area_id,
+        organization_id=org_id,
+        name=name,
+        normalized_name=name.casefold(),
+        created_by=10,
+        created_at=datetime.now(timezone.utc),
+    )
+
+
 @pytest.fixture(autouse=True)
 def stub_side_effects(monkeypatch):
     async def _noop(*args, **kwargs):
@@ -184,6 +198,89 @@ def test_lawyer_cannot_create_master_precedent():
             json={"name": "X", "practice_area": "civil", "document_type": "motion"},
         )
         assert res.status_code == 403
+    finally:
+        cleanup(client)
+
+
+def test_partner_can_create_and_immediately_retrieve_tenant_practice_area():
+    db = PrecedentDBStub(scalar_values=[None])
+    client = build_client("partner", db)
+    try:
+        created = client.post("/api/v1/precedents/practice-areas", json={"name": "  Technology   Law  "})
+        assert created.status_code == 201
+        assert created.json()["name"] == "Technology Law"
+        area = db.added[0]
+        assert area.organization_id == 1
+        assert area.normalized_name == "technology law"
+
+        db.scalars_values.append([area])
+        listed = client.get("/api/v1/precedents/practice-areas")
+        assert listed.status_code == 200
+        assert listed.json() == [{"id": area.id, "name": "Technology Law"}]
+    finally:
+        cleanup(client)
+
+
+def test_practice_area_duplicate_is_case_insensitive_and_tenant_scoped():
+    existing = _practice_area_obj(name="Technology Law")
+    db = PrecedentDBStub(scalar_values=[existing])
+    client = build_client("admin", db, org_id=1)
+    try:
+        duplicate = client.post("/api/v1/precedents/practice-areas", json={"name": "technology law"})
+        assert duplicate.status_code == 409
+        assert duplicate.json()["detail"] == "That practice area already exists"
+        assert db.added == []
+    finally:
+        cleanup(client)
+
+    other_tenant_db = PrecedentDBStub(scalar_values=[None])
+    client = build_client("admin", other_tenant_db, org_id=2)
+    try:
+        created = client.post("/api/v1/precedents/practice-areas", json={"name": "Technology Law"})
+        assert created.status_code == 201
+        assert other_tenant_db.added[0].organization_id == 2
+    finally:
+        cleanup(client)
+
+
+def test_lawyer_cannot_create_practice_area():
+    db = PrecedentDBStub()
+    client = build_client("lawyer", db)
+    try:
+        assert client.post("/api/v1/precedents/practice-areas", json={"name": "Technology Law"}).status_code == 403
+    finally:
+        cleanup(client)
+
+
+def test_new_practice_area_name_can_be_assigned_to_precedent_and_legacy_category_serializes():
+    custom = _precedent_obj()
+    custom.practice_area = "Technology Law"
+    db = PrecedentDBStub(scalar_values=[custom])
+    client = build_client("partner", db)
+    try:
+        response = client.post(
+            "/api/v1/precedents",
+            json={
+                "name": "Technology Agreement",
+                "practice_area": "Technology Law",
+                "document_type": "agreement",
+                "content_text": "Terms",
+            },
+        )
+        assert response.status_code == 200
+        assert response.json()["practice_area"] == "Technology Law"
+        assert db.added[0].practice_area == "Technology Law"
+    finally:
+        cleanup(client)
+
+    legacy = _precedent_obj()
+    legacy.practice_area = "employment"
+    db = PrecedentDBStub(scalars_values=[[legacy]])
+    client = build_client("paralegal", db)
+    try:
+        listed = client.get("/api/v1/precedents")
+        assert listed.status_code == 200
+        assert listed.json()["items"][0]["practice_area"] == "employment"
     finally:
         cleanup(client)
 
