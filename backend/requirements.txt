@@ -2,6 +2,7 @@ fastapi==0.115.12
 uvicorn[standard]==0.34.2
 SQLAlchemy==2.0.41
 asyncpg==0.30.0
+aiosqlite==0.21.0
 alembic==1.15.2
 python-jose[cryptography]==3.4.0
 passlib[bcrypt]==1.7.4

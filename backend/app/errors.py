@@ -3,3 +3,7 @@ class InvoiceValidationError(Exception):
         super().__init__("Invoice validation failed")
         self.errors = errors
         self.status_code = status_code
+
+
+class InvoiceServerError(Exception):
+    pass

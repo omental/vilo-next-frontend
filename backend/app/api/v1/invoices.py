@@ -1,16 +1,17 @@
+import logging
 from datetime import date, datetime, timezone
 from decimal import Decimal
 from pathlib import Path
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Request, status
 from fastapi.responses import FileResponse
-from sqlalchemy import func, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.api.deps import get_current_user, role_guard
 from app.db.session import get_db
-from app.errors import InvoiceValidationError
+from app.errors import InvoiceServerError, InvoiceValidationError
 from app.models.case import Case
 from app.models.client import Client
 from app.models.enums import UserRole
@@ -62,6 +63,7 @@ router = APIRouter(prefix="/invoices", tags=["invoices"])
 ALLOWED = ["partner", "admin", "lawyer", "paralegal"]
 ALLOWED_PAY = ["partner", "admin"]
 VALID_STATUS = {"draft", "sent", "partially_paid", "paid", "overdue", "cancelled"}
+logger = logging.getLogger(__name__)
 
 
 def line_ser(li: InvoiceLineItem) -> InvoiceLineItemResponse:
@@ -228,10 +230,9 @@ async def resolve_invoice_number(db: AsyncSession, org_id: int, requested: str |
     return candidate
 
 
-def recalc(invoice: Invoice):
-    subtotal = sum((li.amount for li in invoice.line_items), Decimal("0"))
-    invoice.subtotal = subtotal
-    invoice.total = subtotal + money(invoice.tax_amount or Decimal("0"))
+def recalc(invoice: Invoice, subtotal: Decimal):
+    invoice.subtotal = money(subtotal)
+    invoice.total = invoice.subtotal + money(invoice.tax_amount or Decimal("0"))
     if invoice.paid_amount is None:
         invoice.paid_amount = Decimal("0")
     invoice.balance_due = max(Decimal("0"), invoice.total - invoice.paid_amount)
@@ -258,24 +259,26 @@ async def sync_invoice_line_items(
     organization_id: int,
     line_items: list[InvoiceLineItemCreate],
     created_at: datetime,
-) -> None:
-    previous_time_entries = (
-        await db.scalars(
-            select(TimeEntry).where(
-                TimeEntry.organization_id == organization_id,
-                TimeEntry.invoice_id == invoice.id,
+    replace_existing: bool,
+) -> list[InvoiceLineItem]:
+    if replace_existing:
+        previous_time_entries = (
+            await db.scalars(
+                select(TimeEntry).where(
+                    TimeEntry.organization_id == organization_id,
+                    TimeEntry.invoice_id == invoice.id,
+                )
             )
-        )
-    ).all()
-    for time_entry in previous_time_entries:
-        time_entry.invoice_id = None
-        if time_entry.status == "invoiced":
-            time_entry.status = "billable"
-        if time_entry.billing_type == "invoiced":
-            time_entry.billing_type = "professional_fee"
+        ).all()
+        for time_entry in previous_time_entries:
+            time_entry.invoice_id = None
+            if time_entry.status == "invoiced":
+                time_entry.status = "billable"
+            if time_entry.billing_type == "invoiced":
+                time_entry.billing_type = "professional_fee"
 
-    invoice.line_items.clear()
-    await db.flush()
+    replacement_rows: list[InvoiceLineItem] = []
+    seen_time_entry_ids: set[int] = set()
     for item in line_items:
         quantity = Decimal(str(item.quantity or 0))
         unit_price = Decimal(str(item.unit_price or 0))
@@ -288,6 +291,12 @@ async def sync_invoice_line_items(
         line_type = validate_invoice_line_type(item.line_type)
 
         if item.time_entry_id is not None:
+            if item.time_entry_id in seen_time_entry_ids:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="A time entry can only appear once on an invoice",
+                )
+            seen_time_entry_ids.add(item.time_entry_id)
             time_entry = await validate_time_entry_invoice_link(
                 db,
                 organization_id=organization_id,
@@ -309,7 +318,7 @@ async def sync_invoice_line_items(
             time_entry.status = "invoiced"
             time_entry.billing_type = "invoiced"
 
-        invoice.line_items.append(
+        replacement_rows.append(
             InvoiceLineItem(
                 organization_id=organization_id,
                 invoice_id=invoice.id,
@@ -326,6 +335,23 @@ async def sync_invoice_line_items(
                 created_at=created_at,
             )
         )
+
+    if replace_existing:
+        await db.execute(
+            delete(InvoiceLineItem).where(
+                InvoiceLineItem.invoice_id == invoice.id,
+                InvoiceLineItem.organization_id == organization_id,
+            ).execution_options(synchronize_session="fetch")
+        )
+        # The update query loads line_items for the response. Expire only the
+        # already-loaded collection after the awaited delete so the final
+        # selectinload query repopulates it with the replacement rows.
+        db.expire(invoice, ["line_items"])
+
+    for row in replacement_rows:
+        db.add(row)
+    await db.flush()
+    return replacement_rows
 
 
 def validate_submitted_totals(payload: InvoiceCreate, *, subtotal: Decimal, tax_amount: Decimal, total: Decimal) -> None:
@@ -349,8 +375,7 @@ def _round_quantity(duration_minutes: int | None) -> Decimal:
     return (Decimal(duration_minutes) / Decimal("60")).quantize(Decimal("0.01"))
 
 
-@router.post("", response_model=InvoiceResponse)
-async def create_invoice(payload: InvoiceCreate, db: AsyncSession = Depends(get_db), current_user: User = Depends(role_guard(ALLOWED))):
+async def _create_invoice(payload: InvoiceCreate, db: AsyncSession, current_user: User):
     _, case = await validate_invoice_recipient(
         db,
         current_user.organization_id,
@@ -403,23 +428,40 @@ async def create_invoice(payload: InvoiceCreate, db: AsyncSession = Depends(get_
     )
     db.add(inv); await db.flush()
     try:
-        await sync_invoice_line_items(
+        created_line_items = await sync_invoice_line_items(
             db,
             invoice=inv,
             organization_id=current_user.organization_id,
             line_items=payload.line_items,
             created_at=now,
+            replace_existing=False,
         )
     except HTTPException as exc:
         raise InvoiceValidationError([{"field": "line_items", "message": str(exc.detail)}], status_code=exc.status_code) from exc
-    calculated_subtotal = sum((li.amount for li in inv.line_items), Decimal("0"))
+    calculated_subtotal = sum((li.amount for li in created_line_items), Decimal("0"))
     inv.tax_amount = calculate_invoice_tax(calculated_subtotal, organization)
-    recalc(inv)
+    recalc(inv, calculated_subtotal)
     validate_submitted_totals(payload, subtotal=inv.subtotal, tax_amount=inv.tax_amount, total=inv.total)
     if case:
         await create_case_timeline_event(db, organization_id=current_user.organization_id, case_id=case.id, actor_id=current_user.id, event_type="invoice_created", title=f"Invoice created: {inv.invoice_number}", metadata_json={"invoice_id": inv.id})
     await db.commit(); inv = await get_invoice_or_404(db, current_user.organization_id, inv.id)
     return inv_ser(inv)
+
+
+@router.post("", response_model=InvoiceResponse)
+async def create_invoice(payload: InvoiceCreate, db: AsyncSession = Depends(get_db), current_user: User = Depends(role_guard(ALLOWED))):
+    try:
+        return await _create_invoice(payload, db, current_user)
+    except (InvoiceValidationError, HTTPException):
+        await db.rollback()
+        raise
+    except Exception as exc:
+        await db.rollback()
+        logger.exception(
+            "Unexpected invoice creation failure for organization_id=%s",
+            current_user.organization_id,
+        )
+        raise InvoiceServerError() from exc
 
 
 @router.post("/generate-from-case/{case_id}", response_model=InvoiceResponse)
@@ -464,7 +506,7 @@ async def generate_from_case(case_id: int, db: AsyncSession = Depends(get_db), c
 
     await db.flush(); inv = await get_invoice_or_404(db, current_user.organization_id, inv.id)
     inv.tax_amount = calculate_invoice_tax(sum((li.amount for li in inv.line_items), Decimal("0")), organization)
-    recalc(inv); inv.updated_at = now
+    recalc(inv, sum((li.amount for li in inv.line_items), Decimal("0"))); inv.updated_at = now
     await create_case_timeline_event(db, organization_id=current_user.organization_id, case_id=case.id, actor_id=current_user.id, event_type="invoice_created", title=f"Invoice created: {inv.invoice_number}", metadata_json={"invoice_id": inv.id, "time_entries": len(tes), "expenses": len(exs)})
     await db.commit(); inv = await get_invoice_or_404(db, current_user.organization_id, inv.id)
     return inv_ser(inv)
@@ -529,8 +571,7 @@ async def download_invoice_pdf(invoice_id: int, db: AsyncSession = Depends(get_d
     return FileResponse(path=str(file_path), filename=generated.filename, media_type="application/pdf")
 
 
-@router.patch("/{invoice_id}", response_model=InvoiceResponse)
-async def update_invoice(invoice_id: int, payload: InvoiceUpdate, db: AsyncSession = Depends(get_db), current_user: User = Depends(role_guard(ALLOWED))):
+async def _update_invoice(invoice_id: int, payload: InvoiceUpdate, db: AsyncSession, current_user: User):
     inv = await get_invoice_or_404(db, current_user.organization_id, invoice_id)
     organization = await get_organization_or_404(db, current_user.organization_id)
     updates = payload.model_dump(exclude_unset=True)
@@ -565,17 +606,45 @@ async def update_invoice(invoice_id: int, payload: InvoiceUpdate, db: AsyncSessi
     if "payment_instructions" not in updates and account_changed and not inv.payment_instructions:
         inv.payment_instructions = payment_account.payment_instructions
     if "line_items" in updates and updates["line_items"] is not None:
-        await sync_invoice_line_items(
+        replacement_line_items = await sync_invoice_line_items(
             db,
             invoice=inv,
             organization_id=current_user.organization_id,
             line_items=payload.line_items or [],
             created_at=datetime.now(timezone.utc),
+            replace_existing=True,
         )
-    inv.tax_amount = calculate_invoice_tax(sum((li.amount for li in inv.line_items), Decimal("0")), organization)
-    recalc(inv); inv.updated_at = datetime.now(timezone.utc)
+        subtotal = sum((li.amount for li in replacement_line_items), Decimal("0"))
+    else:
+        subtotal = Decimal(str(
+            await db.scalar(
+                select(func.coalesce(func.sum(InvoiceLineItem.amount), 0)).where(
+                    InvoiceLineItem.invoice_id == inv.id,
+                    InvoiceLineItem.organization_id == current_user.organization_id,
+                )
+            ) or 0
+        ))
+    inv.tax_amount = calculate_invoice_tax(subtotal, organization)
+    recalc(inv, subtotal); inv.updated_at = datetime.now(timezone.utc)
     await db.commit(); inv = await get_invoice_or_404(db, current_user.organization_id, invoice_id)
     return inv_ser(inv)
+
+
+@router.patch("/{invoice_id}", response_model=InvoiceResponse)
+async def update_invoice(invoice_id: int, payload: InvoiceUpdate, db: AsyncSession = Depends(get_db), current_user: User = Depends(role_guard(ALLOWED))):
+    try:
+        return await _update_invoice(invoice_id, payload, db, current_user)
+    except (InvoiceValidationError, HTTPException):
+        await db.rollback()
+        raise
+    except Exception as exc:
+        await db.rollback()
+        logger.exception(
+            "Unexpected invoice update failure for organization_id=%s invoice_id=%s",
+            current_user.organization_id,
+            invoice_id,
+        )
+        raise InvoiceServerError() from exc
 
 
 @router.patch("/{invoice_id}/mark-sent", response_model=InvoiceResponse)

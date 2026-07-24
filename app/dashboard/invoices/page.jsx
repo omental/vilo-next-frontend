@@ -561,7 +561,13 @@ function InvoicesPageContent() {
     } catch (err) {
       const backendErrors = invoiceErrorsByField(err.errors);
       setCreateFieldErrors(backendErrors);
-      setCreateError(err.message || "Invoice validation failed.");
+      if (Number(err.status || 0) >= 500) {
+        setCreateError("Invoice could not be created because of a server error. Please try again or contact support.");
+      } else {
+        setCreateError(!err.message || err.message === "Request failed"
+          ? "Invoice could not be created. Please review the highlighted fields and try again."
+          : err.message);
+      }
     } finally {
       setSaving(false);
     }
@@ -914,19 +920,19 @@ function InvoicesPageContent() {
                         </div>
                         <div className="invoice-linked-time-row__meta">
                           <span>{formatMoney(item.amount, form.currency)}</span>
-                          <button type="button" className="vilo-btn vilo-btn--ghost vilo-btn--xs" onClick={() => removeLineItem(index)}>Remove</button>
+                          <button type="button" className="invoice-line-remove" onClick={() => removeLineItem(index)}>Remove</button>
                         </div>
                       </div>
                     ) : (
                       <div className="invoice-line-item-row" key={`line-${index}`}>
-                        <select value={item.line_type} onChange={(event) => updateLineItem(index, { line_type: event.target.value })}>
+                        <select aria-label={`Line item ${index + 1} type`} value={item.line_type} onChange={(event) => updateLineItem(index, { line_type: event.target.value })}>
                           {LINE_ITEM_TYPE_OPTIONS.map(([value, label]) => <option key={value} value={value}>{label}</option>)}
                         </select>
-                        <input value={item.description} onChange={(event) => updateLineItem(index, { description: event.target.value })} placeholder="Description" />
-                        <input type="number" step="0.01" min="0.01" value={item.quantity} onChange={(event) => updateLineItem(index, { quantity: event.target.value })} placeholder="Qty" />
-                        <input type="number" step="0.01" min="0" value={item.unit_price} onChange={(event) => updateLineItem(index, { unit_price: event.target.value })} placeholder="Unit price" />
-                        <input type="text" value={formatMoney(item.amount || 0, form.currency)} readOnly className="invoice-line-item-row__amount" />
-                        <button type="button" className="vilo-btn vilo-btn--ghost vilo-btn--xs" onClick={() => removeLineItem(index)}>Remove</button>
+                        <input aria-label={`Line item ${index + 1} description`} value={item.description} onChange={(event) => updateLineItem(index, { description: event.target.value })} placeholder="Description" />
+                        <input aria-label={`Line item ${index + 1} quantity`} type="number" step="0.01" min="0.01" value={item.quantity} onChange={(event) => updateLineItem(index, { quantity: event.target.value })} placeholder="Qty" />
+                        <input aria-label={`Line item ${index + 1} unit price`} type="number" step="0.01" min="0" value={item.unit_price} onChange={(event) => updateLineItem(index, { unit_price: event.target.value })} placeholder="Unit price" />
+                        <input aria-label={`Line item ${index + 1} amount`} type="text" value={formatMoney(item.amount || 0, form.currency)} readOnly className="invoice-line-item-row__amount" />
+                        <button type="button" className="invoice-line-remove" onClick={() => removeLineItem(index)}>Remove</button>
                         {Object.entries(createFieldErrors).filter(([field]) => field.startsWith(`line_items.${index}.`)).map(([field, message]) => <p key={field} className="vilo-field-error invoice-line-item-row__error">{message}</p>)}
                       </div>
                     )
@@ -949,13 +955,14 @@ function InvoicesPageContent() {
                 </section>
 
                 <section className="invoice-form-section invoice-form-section--trust">
-                  <div className="invoice-form-section__heading"><h4>9. Trust Balance + Apply Button</h4></div>
+                  <div className="invoice-form-section__heading"><h4>9. Trust Information</h4></div>
                   <article className="dashboard-card invoice-trust-banner invoice-trust-banner--create">
-                    <strong>Trust balance</strong>
-                    <span>{loadingTrustBalance ? "Loading trust balance..." : formatMoney(matterTrustBalance || 0, form.currency)}</span>
-                    <p>Trust remains visually and financially separate from invoice revenue, subtotal, tax, and total. Trust can only be applied after the invoice exists.</p>
+                    <div>
+                      <strong>Available matter trust balance</strong>
+                      <span>{loadingTrustBalance ? "Loading..." : formatMoney(matterTrustBalance || 0, form.currency)}</span>
+                    </div>
+                    <p>Trust funds stay separate from earned-fee revenue and can be applied only after this invoice is created.</p>
                     {trustBalanceError ? <p className="vilo-state vilo-state--error">{trustBalanceError}</p> : null}
-                    <button type="button" className="vilo-btn vilo-btn--secondary" disabled>Apply Trust Funds After Create</button>
                   </article>
                 </section>
 

@@ -9,7 +9,7 @@ from fastapi.responses import JSONResponse, Response
 
 from app.api.v1 import api_router
 from app.db.session import SessionLocal
-from app.errors import InvoiceValidationError
+from app.errors import InvoiceServerError, InvoiceValidationError
 from app.services.reminders import REMINDER_POLL_INTERVAL_SECONDS, process_due_reminders
 
 
@@ -59,6 +59,14 @@ async def invoice_validation_exception_handler(request: Request, exc: InvoiceVal
     return JSONResponse(
         status_code=exc.status_code,
         content={"detail": "Invoice validation failed", "errors": exc.errors},
+    )
+
+
+@app.exception_handler(InvoiceServerError)
+async def invoice_server_exception_handler(request: Request, exc: InvoiceServerError):
+    return JSONResponse(
+        status_code=500,
+        content={"detail": "Invoice could not be processed because of a server error."},
     )
 
 
