@@ -23,7 +23,7 @@ const initialForm = {
   case_id: "",
   invoice_number: "",
   currency: "JMD",
-  issue_date: new Date().toISOString().slice(0, 10),
+  issue_date: "",
   due_date: "",
   notes: "",
   payment_instructions: "",
@@ -32,6 +32,19 @@ const initialForm = {
     { line_type: "legal_fee", description: "", quantity: "1", unit_price: "", amount: "", time_entry_id: null },
   ],
 };
+
+function asArray(value) {
+  return Array.isArray(value) ? value : [];
+}
+
+function localToday() {
+  const today = new Date();
+  return [
+    today.getFullYear(),
+    String(today.getMonth() + 1).padStart(2, "0"),
+    String(today.getDate()).padStart(2, "0"),
+  ].join("-");
+}
 
 const initialBillingTax = {
   invoice_tax_label: "GCT",
@@ -152,8 +165,9 @@ function InvoicesPageContent() {
     : "";
   const selectedClientId = Number(form.client_id || 0);
   const caseOptions = useMemo(() => {
-    if (!selectedClientId) return cases;
-    return cases.filter((row) => Number(row.client_id) === selectedClientId);
+    const rows = asArray(cases);
+    if (!selectedClientId) return rows;
+    return rows.filter((row) => Number(row.client_id) === selectedClientId);
   }, [cases, selectedClientId]);
   const availableBillableEntries = useMemo(
     () => (billableEntries || []).filter((entry) => (entry.currency || "JMD") === form.currency),
@@ -170,9 +184,9 @@ function InvoicesPageContent() {
         apiRequest("/api/v1/settings/payment-accounts").catch(() => []),
         apiRequest("/api/v1/settings/billing-tax").catch(() => initialBillingTax),
       ]);
-      setItems(invoiceRows || []);
-      setCases(caseRows || []);
-      setPaymentAccounts(accountRows || []);
+      setItems(asArray(invoiceRows));
+      setCases(asArray(caseRows));
+      setPaymentAccounts(asArray(accountRows));
       setBillingTax(taxSettings || initialBillingTax);
     } catch (err) {
       setError(err.message || "Failed to load invoices");
@@ -195,7 +209,7 @@ function InvoicesPageContent() {
         const query = clientSearch.trim();
         const rows = await apiRequest(`/api/v1/clients?status=active&limit=20${query ? `&q=${encodeURIComponent(query)}` : ""}`);
         if (!cancelled) {
-          setClientResults(rows || []);
+          setClientResults(asArray(rows));
           setActiveClientIndex(-1);
         }
       } catch (err) {
@@ -220,7 +234,10 @@ function InvoicesPageContent() {
       .then((client) => {
         if (cancelled) return;
         setClientSearch(client.name || "");
-        setClientResults((rows) => rows.some((row) => row.id === client.id) ? rows : [client, ...rows]);
+        setClientResults((rows) => {
+          const currentRows = asArray(rows);
+          return currentRows.some((row) => row.id === client.id) ? currentRows : [client, ...currentRows];
+        });
       })
       .catch(() => {});
     return () => {
@@ -253,7 +270,7 @@ function InvoicesPageContent() {
   }, [currentUser]);
 
   useEffect(() => {
-    if (searchParams.get("create") === "1") setCreateOpen(true);
+    if (searchParams.get("create") === "1") openCreateModal();
   }, [searchParams]);
 
   useEffect(() => {
@@ -312,7 +329,7 @@ function InvoicesPageContent() {
         const rows = await apiRequest(`/api/v1/time-entries?case_id=${form.case_id}&status=billable&page=1&per_page=100&sort_by=newest`);
         if (cancelled) return;
         const selectedIds = new Set((form.line_items || []).map((item) => item.time_entry_id).filter(Boolean));
-        setBillableEntries((rows.items || []).filter((entry) => !selectedIds.has(entry.id)));
+        setBillableEntries(asArray(rows?.items).filter((entry) => !selectedIds.has(entry.id)));
       } catch (err) {
         if (cancelled) return;
         setTimeEntryError(err.message || "Failed to load billable time entries.");
@@ -369,6 +386,7 @@ function InvoicesPageContent() {
     const defaultAccount = resolveDefaultPaymentAccount(paymentAccounts, "JMD");
     const nextForm = {
       ...initialForm,
+      issue_date: localToday(),
       client_id: requestedClientId,
       case_id: requestedCaseId,
       payment_account_id: defaultAccount ? String(defaultAccount.id) : "",
@@ -389,6 +407,7 @@ function InvoicesPageContent() {
     const defaultAccount = resolveDefaultPaymentAccount(paymentAccounts, "JMD");
     const nextForm = {
       ...initialForm,
+      issue_date: localToday(),
       client_id: requestedClientId,
       case_id: requestedCaseId,
       payment_account_id: defaultAccount ? String(defaultAccount.id) : "",
@@ -491,7 +510,7 @@ function InvoicesPageContent() {
     try {
       const rows = await apiRequest(`/api/v1/time-entries?case_id=${form.case_id}&status=billable&page=1&per_page=100&sort_by=newest`);
       const selectedIds = new Set((form.line_items || []).map((item) => item.time_entry_id).filter(Boolean));
-      setBillableEntries((rows.items || []).filter((entry) => !selectedIds.has(entry.id)));
+      setBillableEntries(asArray(rows?.items).filter((entry) => !selectedIds.has(entry.id)));
     } catch (err) {
       setTimeEntryError(err.message || "Failed to load billable time entries.");
     } finally {
@@ -593,7 +612,7 @@ function InvoicesPageContent() {
         </div>
         <div className="invoice-page-actions">
           <Link className="vilo-btn vilo-btn--secondary" href="/dashboard/billing">Billing Hub</Link>
-          <button type="button" className="vilo-btn vilo-btn--primary" onClick={openCreateModal} disabled={!clients.length && !loading}>Create Invoice</button>
+          <button type="button" className="vilo-btn vilo-btn--primary" onClick={openCreateModal} disabled={loading}>Create Invoice</button>
         </div>
       </div>
 
@@ -623,12 +642,6 @@ function InvoicesPageContent() {
       </div>
 
       {loading ? <div className="vilo-state-block"><p className="vilo-state vilo-state--loading">Loading invoices...</p></div> : null}
-
-      {!loading && !clients.length ? (
-        <div className="vilo-state-block">
-          <p className="vilo-state">Create at least one client before creating an invoice.</p>
-        </div>
-      ) : null}
 
       {!loading && !error && !items.length ? (
         <div className="vilo-state-block">
